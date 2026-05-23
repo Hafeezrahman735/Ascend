@@ -56,8 +56,6 @@ const GOLD_DIM = '#3A3000';
 const AMBER  = '#FFB347';
 const AMBER_DIM = '#3A2800';
 const TEAL   = '#00E5C3';
-const TEAL_DIM = '#003D35';
-const ROSE_DIM = '#3A0F20';
 const BORDER_SOFT = '#1C1C48';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -128,10 +126,6 @@ function fmtDate(iso: string | null): string {
 function fmtXP(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
-
-// ─── Animated components ─────────────────────────────────────────────────────
-
-const AnimatedView = Animated.createAnimatedComponent(View);
 
 // ─── XP bar fill ─────────────────────────────────────────────────────────────
 
@@ -688,11 +682,6 @@ function RankSection({
 function AchievementItem({ achievement }: { achievement: MergedAchievement }) {
   const { isUnlocked, unlockedAt, progress, icon, name, description, isGoldTier, threshold } = achievement;
   const hasProgress = !isUnlocked && progress > 0;
-  const isLocked = !isUnlocked && progress === 0;
-
-  const topBarColor = isGoldTier
-    ? GOLD
-    : `${Colors.primary}`;
 
   const progressLabel = () => {
     if (typeof threshold === 'number') {
@@ -707,7 +696,7 @@ function AchievementItem({ achievement }: { achievement: MergedAchievement }) {
       backgroundColor: Colors.surface,
       borderRadius: 14, overflow: 'hidden',
       borderWidth: 1, borderColor: Colors.border,
-      opacity: isLocked ? 0.45 : 1,
+      opacity: (!isUnlocked && progress === 0) ? 0.45 : 1,
       flex: 1,
     }}>
       {/* Top accent bar */}
