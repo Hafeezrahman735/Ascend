@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\hafee\\\\Personal Projects\\\\App\\\\mobile\" -Recurse -Include *.ts,*.tsx,*.json)",
+      "Bash(Select-Object -ExpandProperty FullName)"
+    ]
+  }
+}

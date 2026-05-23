@@ -1,0 +1,247 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PrivacySetting {
+  public
+  friends_only
+  private
+}
+
+model User {
+  id             String         @id @default(uuid()) @db.Uuid
+  username       String         @unique @db.VarChar(50)
+  email          String         @unique @db.VarChar(255)
+  passwordHash   String         @map("password_hash") @db.VarChar(255)
+  avatarUrl      String?        @map("avatar_url")
+  privacySetting PrivacySetting @map("privacy_setting") @default(public)
+  pushToken      String?        @map("push_token")
+  notificationPrefs String?     @map("notification_prefs") @db.Text
+  xp             Int            @default(0)
+  level          Int            @default(1)
+  currentStreak  Int            @default(0) @map("current_streak")
+  longestStreak  Int            @default(0) @map("longest_streak")
+  lastActiveDate DateTime?      @map("last_active_date")
+  totalSessions  Int            @default(0) @map("total_sessions")
+  totalFocusTime Int            @default(0) @map("total_focus_time")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  refreshTokens   RefreshToken[]
+  sessions        Session[]
+  streaks         Streak[]
+  goals           Goal[]
+  goalProgress    GoalProgress[]
+  timerState      TimerState?
+  friendshipsReq  Friendship[]   @relation("Requester")
+  friendshipsAddr Friendship[]   @relation("Addressee")
+  tasks           Task[]
+  userAchievs     UserAchievement[]
+  notifications   Notification[]
+  feedEvents      FeedEvent[]
+
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique @db.VarChar(500)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model TimerState {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @unique @map("user_id") @db.Uuid
+  phase         String    @db.VarChar(20)
+  phaseType     String    @db.VarChar(20)
+  remainingSeconds Int   @map("remaining_seconds")
+  totalSeconds  Int       @map("total_seconds")
+  isRunning     Boolean   @map("is_running")
+  pomodoroCount Int       @default(0) @map("pomodoro_count")
+  taskLabel     String?   @map("task_label") @db.VarChar(200)
+  startedAt     DateTime? @map("started_at")
+  pausedAt      DateTime? @map("paused_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("timer_states")
+}
+
+model Session {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  type                  String   @db.VarChar(20)
+  durationSeconds       Int      @map("duration_seconds")
+  plannedDurationSeconds Int?    @map("planned_duration_seconds")
+  taskLabel             String?  @map("task_label") @db.VarChar(200)
+  taskId                String?  @map("task_id") @db.Uuid
+  completedAt           DateTime @map("completed_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  clientSessionId       String?  @unique @map("client_session_id") @db.VarChar(36)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task? @relation("TaskSessions", fields: [taskId], references: [id])
+
+  @@index([userId, completedAt])
+  @@index([taskId])
+  @@map("sessions")
+}
+
+model Goal {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  type        String   @db.VarChar(10)
+  targetCount Int?     @map("target_count")
+  targetHours Int?     @map("target_hours")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalProgress GoalProgress[]
+
+  @@map("goals")
+}
+
+model GoalProgress {
+  id           String    @id @default(uuid()) @db.Uuid
+  goalId       String    @map("goal_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  currentCount Int       @default(0) @map("current_count")
+  periodStart  DateTime  @map("period_start")
+  periodEnd    DateTime  @map("period_end")
+  completedAt  DateTime? @map("completed_at")
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, periodStart])
+  @@map("goal_progress")
+}
+
+model Streak {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @unique @map("user_id") @db.Uuid
+  currentStreak   Int       @default(0) @map("current_streak")
+  longestStreak   Int       @default(0) @map("longest_streak")
+  lastSessionDate DateTime? @map("last_session_date")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
+}
+
+model Friendship {
+  id            String   @id @default(uuid()) @db.Uuid
+  requesterId   String   @map("requester_id") @db.Uuid
+  addresseeId   String   @map("addressee_id") @db.Uuid
+  status        String   @default("pending") @db.VarChar(10)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  requester User @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("Addressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+  @@map("friendships")
+}
+
+enum AchievementCategory {
+  STREAK
+  SESSIONS
+  FOCUS_TIME
+  LEVEL
+  TASKS
+}
+
+model Achievement {
+  id          String              @id @default(cuid())
+  key         String              @unique @db.VarChar(100)
+  title       String              @db.VarChar(200)
+  description String              @db.Text
+  icon        String              @db.VarChar(50)
+  xpReward    Int                 @default(0)
+  category    AchievementCategory
+  threshold   Int
+
+  unlockedBy UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id") @db.Uuid
+  achievementId String   @map("achievement_id")
+  unlockedAt    DateTime @default(now()) @map("unlocked_at")
+  isShared      Boolean  @default(false) @map("is_shared")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model Task {
+  id                String    @id @default(cuid())
+  userId            String    @map("user_id") @db.Uuid
+  title             String    @db.VarChar(100)
+  description       String?   @db.Text
+  dueDate           DateTime? @map("due_date")
+  tags              String[]  @default([])
+  estimatedMinutes  Int?      @map("estimated_minutes")
+  isArchived        Boolean   @default(false) @map("is_archived")
+  isCompleted       Boolean   @default(false) @map("is_completed")
+  completedAt       DateTime? @map("completed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions Session[] @relation("TaskSessions")
+
+  @@index([userId])
+  @@map("tasks")
+}
+
+model FeedEvent {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  eventType String   @map("event_type") @db.VarChar(30)
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("feed_events")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  type      String   @db.VarChar(50)
+  title     String   @db.VarChar(200)
+  body      String   @db.Text
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}

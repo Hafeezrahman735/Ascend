@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Pomodoro",
+    "slug": "pomodoro",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "pomodoro",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#0F0F0F"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourname.pomodoroapp",
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification", "fetch"],
+        "NSUserNotificationUsageDescription": "Pomodoro sends you reminders when your focus session ends and when your friends start focusing."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0F0F0F"
+      },
+      "package": "com.yourname.pomodoroapp",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#FF6B6B"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EXPO_PROJECT_ID"
+      }
+    }
+  }
+}
