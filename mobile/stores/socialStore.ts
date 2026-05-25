@@ -6,6 +6,12 @@ import {
   Session,
   FeedEvent,
   UserSearchResult,
+  SocialPost,
+  StudyGroup,
+  FocusLeaderboardEntry,
+  InAppNotification,
+  UserSocialStats,
+  UserListItem,
 } from '../types';
 import { api } from '../services/api';
 
@@ -23,6 +29,16 @@ interface SocialState {
   isLoading: boolean;
   error: string | null;
 
+  // Social feed v2
+  posts: SocialPost[];
+  postsCursor: string | null;
+  studyGroups: StudyGroup[];
+  selectedGroupId: string | null;
+  focusLeaderboard: FocusLeaderboardEntry[];
+  myFocusEntry: FocusLeaderboardEntry | null;
+  notifications: InAppNotification[];
+  unreadCount: number;
+
   loadFriends: () => Promise<void>;
   sendFriendRequest: (userId: string) => Promise<boolean>;
   removeFriend: (friendshipId: string) => Promise<boolean>;
@@ -36,6 +52,28 @@ interface SocialState {
   cancelRequest: (requestId: string) => Promise<boolean>;
   fetchLeaderboard: (type: string, scope: string) => Promise<void>;
   setActiveTab: (tab: 'feed' | 'friends' | 'requests' | 'rankings') => void;
+
+  // Social feed v2 actions
+  fetchPosts: (groupId?: string) => Promise<void>;
+  fetchMorePosts: () => Promise<void>;
+  toggleReaction: (postId: string, emoji: string, currentUserId: string) => Promise<void>;
+  createPost: (draft: Partial<SocialPost>) => Promise<boolean>;
+  fetchStudyGroups: () => Promise<void>;
+  setSelectedGroup: (groupId: string | null) => void;
+  fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
+  markNotificationsRead: () => void;
+
+  // Profile social stats
+  userSocialStats: UserSocialStats | null;
+  followers: UserListItem[];
+  following: UserListItem[];
+  userPosts: SocialPost[];
+  userPostsCursor: string | null;
+  fetchUserSocialStats: () => Promise<void>;
+  fetchFollowers: () => Promise<void>;
+  fetchFollowing: () => Promise<void>;
+  fetchUserPosts: () => Promise<void>;
+  fetchMoreUserPosts: () => Promise<void>;
 }
 
 export const useSocialStore = create<SocialState>((set, get) => ({
@@ -51,6 +89,21 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   myLeaderboardEntry: null,
   isLoading: false,
   error: null,
+
+  posts: [],
+  postsCursor: null,
+  studyGroups: [],
+  selectedGroupId: null,
+  focusLeaderboard: [],
+  myFocusEntry: null,
+  notifications: [],
+  unreadCount: 0,
+
+  userSocialStats: null,
+  followers: [],
+  following: [],
+  userPosts: [],
+  userPostsCursor: null,
 
   setActiveTab: (tab) => {
     set({ activeTab: tab });
@@ -220,6 +273,198 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       }
     } catch {
       set({ error: 'Failed to load leaderboard' });
+    }
+  },
+
+  fetchPosts: async (groupId?: string) => {
+    set({ isLoading: true });
+    try {
+      const url = groupId
+        ? `/social/posts?groupId=${encodeURIComponent(groupId)}`
+        : '/social/posts';
+      const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>(url);
+      if (response.success && response.data) {
+        set({
+          posts: response.data.posts ?? [],
+          postsCursor: response.data.cursor ?? null,
+          isLoading: false,
+        });
+      } else {
+        set({ posts: [], isLoading: false });
+      }
+    } catch {
+      set({ isLoading: false });
+    }
+  },
+
+  fetchMorePosts: async () => {
+    const { postsCursor, selectedGroupId } = get();
+    if (!postsCursor) return;
+    try {
+      const url = `/social/posts?cursor=${encodeURIComponent(postsCursor)}${selectedGroupId ? `&groupId=${encodeURIComponent(selectedGroupId)}` : ''}`;
+      const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>(url);
+      if (response.success && response.data) {
+        set((state) => ({
+          posts: [...state.posts, ...(response.data?.posts ?? [])],
+          postsCursor: response.data?.cursor ?? null,
+        }));
+      }
+    } catch {
+      // silent
+    }
+  },
+
+  toggleReaction: async (postId: string, emoji: string, currentUserId: string) => {
+    const { posts } = get();
+    const postIdx = posts.findIndex((p) => p.id === postId);
+    if (postIdx === -1) return;
+
+    const post = posts[postIdx];
+    const existing = post.reactions[emoji] ?? [];
+    const hasReacted = existing.includes(currentUserId);
+    const updated = hasReacted
+      ? existing.filter((id) => id !== currentUserId)
+      : [...existing, currentUserId];
+
+    const updatedPost = {
+      ...post,
+      reactions: { ...post.reactions, [emoji]: updated },
+    };
+    const updatedPosts = [...posts];
+    updatedPosts[postIdx] = updatedPost;
+    set({ posts: updatedPosts });
+
+    try {
+      await api.post(`/social/posts/${postId}/react`, { emoji });
+    } catch {
+      // revert
+      set({ posts });
+    }
+  },
+
+  createPost: async (draft: Partial<SocialPost>) => {
+    try {
+      const response = await api.post<SocialPost>('/social/posts', draft);
+      if (response.success && response.data) {
+        set((state) => ({ posts: [response.data!, ...state.posts] }));
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+
+  fetchStudyGroups: async () => {
+    try {
+      const response = await api.get<StudyGroup[]>('/social/groups');
+      if (response.success && response.data) {
+        set({ studyGroups: response.data });
+      } else {
+        set({ studyGroups: [] });
+      }
+    } catch {
+      set({ studyGroups: [] });
+    }
+  },
+
+  setSelectedGroup: (groupId: string | null) => {
+    set({ selectedGroupId: groupId });
+  },
+
+  fetchFocusLeaderboard: async (scope: string, period: string) => {
+    set({ isLoading: true });
+    try {
+      const response = await api.get<{
+        entries: FocusLeaderboardEntry[];
+        myEntry: FocusLeaderboardEntry | null;
+      }>(`/social/focus-leaderboard?scope=${encodeURIComponent(scope)}&period=${encodeURIComponent(period)}`);
+      if (response.success && response.data) {
+        set({
+          focusLeaderboard: response.data.entries ?? [],
+          myFocusEntry: response.data.myEntry ?? null,
+          isLoading: false,
+        });
+      } else {
+        set({ focusLeaderboard: [], myFocusEntry: null, isLoading: false });
+      }
+    } catch {
+      set({ focusLeaderboard: [], myFocusEntry: null, isLoading: false });
+    }
+  },
+
+  markNotificationsRead: () => {
+    set((state) => ({
+      notifications: state.notifications.map((n) => ({ ...n, isRead: true })),
+      unreadCount: 0,
+    }));
+  },
+
+  fetchUserSocialStats: async () => {
+    try {
+      const response = await api.get<UserSocialStats>('/social/stats/me');
+      if (response.success && response.data) {
+        set({ userSocialStats: response.data });
+      } else {
+        set({ userSocialStats: null });
+      }
+    } catch {
+      set({ userSocialStats: null });
+    }
+  },
+
+  fetchFollowers: async () => {
+    try {
+      const response = await api.get<UserListItem[]>('/social/followers');
+      if (response.success && response.data) {
+        set({ followers: response.data });
+      } else {
+        set({ followers: [] });
+      }
+    } catch {
+      set({ followers: [] });
+    }
+  },
+
+  fetchFollowing: async () => {
+    try {
+      const response = await api.get<UserListItem[]>('/social/following');
+      if (response.success && response.data) {
+        set({ following: response.data });
+      } else {
+        set({ following: [] });
+      }
+    } catch {
+      set({ following: [] });
+    }
+  },
+
+  fetchUserPosts: async () => {
+    try {
+      const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>('/social/posts/mine');
+      if (response.success && response.data) {
+        set({ userPosts: response.data.posts ?? [], userPostsCursor: response.data.cursor ?? null });
+      } else {
+        set({ userPosts: [], userPostsCursor: null });
+      }
+    } catch {
+      set({ userPosts: [], userPostsCursor: null });
+    }
+  },
+
+  fetchMoreUserPosts: async () => {
+    const { userPostsCursor } = get();
+    if (!userPostsCursor) return;
+    try {
+      const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>(`/social/posts/mine?cursor=${encodeURIComponent(userPostsCursor)}`);
+      if (response.success && response.data) {
+        set((state) => ({
+          userPosts: [...state.userPosts, ...(response.data?.posts ?? [])],
+          userPostsCursor: response.data?.cursor ?? null,
+        }));
+      }
+    } catch {
+      // silent
     }
   },
 }));

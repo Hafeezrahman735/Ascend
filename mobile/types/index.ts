@@ -180,4 +180,111 @@ export interface FriendProfile {
   recentFeedEvents: FeedEvent[];
 }
 
+export type PostType = 'session_recap' | 'achievement_unlock' | 'streak_milestone' | 'accountability' | 'free_post';
+export type GroupColor = 'purple' | 'teal' | 'amber' | 'rose';
+export type FreePostTag = 'study_tip' | 'question' | 'motivation' | 'celebration' | 'resource' | 'general';
+
+export interface AttachedStat {
+  label: string;
+  value: string;
+}
+
+export interface SocialPost {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorEmoji: string;
+  authorRank: string;
+  type: PostType;
+  caption: string | null;
+  createdAt: string;
+  visibility: 'public' | 'group';
+  groupId: string | null;
+  groupName?: string;
+  sessionCount: number | null;
+  focusMinutes: number | null;
+  streakAtPost: number | null;
+  totalSessionsAtPost: number | null;
+  totalFocusHoursAtPost: number | null;
+  achievementId: string | null;
+  achievementIcon?: string;
+  achievementName?: string;
+  achievementDescription?: string;
+  achievementXpReward?: number;
+  achievementRank?: string;
+  challengeId: string | null;
+  challenge?: GroupChallenge;
+  photoUrl: string | null;
+  contentTag: FreePostTag | null;
+  attachedStats: AttachedStat[] | null;
+  reactions: Record<string, string[]>;
+}
+
+export interface StudyGroup {
+  id: string;
+  name: string;
+  emoji: string;
+  color: GroupColor;
+  memberIds: string[];
+  createdBy: string;
+  createdAt: string;
+  isPrivate: boolean;
+  hasRecentActivity?: boolean;
+}
+
+export interface GroupChallenge {
+  id: string;
+  groupId: string;
+  createdBy: string;
+  title: string;
+  metric: 'sessions' | 'focus_hours';
+  targetValue: number;
+  deadline: string;
+  memberProgress: Record<string, number>;
+  memberEmojis?: string[];
+  createdAt: string;
+}
+
+export interface FocusLeaderboardEntry {
+  userId: string;
+  displayName: string;
+  avatarEmoji: string;
+  rank: string;
+  currentStreak: number;
+  focusMinutes: number;
+  position: number;
+  positionDelta: number | null;
+  isMe?: boolean;
+}
+
+export interface InAppNotification {
+  id: string;
+  text: string;
+  link?: string;
+  createdAt: string;
+  isRead: boolean;
+}
+
+export interface FriendPreview {
+  userId: string;
+  displayName: string;
+  avatarEmoji: string;
+  avatarColor: GroupColor;
+}
+
+export interface UserSocialStats {
+  userId: string;
+  followerCount: number;
+  followingCount: number;
+  friendCount: number;
+  friendPreviews: FriendPreview[];
+}
+
+export interface UserListItem {
+  userId: string;
+  displayName: string;
+  handle: string;
+  avatarEmoji: string;
+  rank: string;
+}
 

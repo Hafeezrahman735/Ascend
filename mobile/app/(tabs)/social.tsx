@@ -1,622 +1,1282 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, FlatList, TextInput,
-  ActivityIndicator, Modal, ScrollView, RefreshControl,
+  View, Text, Pressable, FlatList, ScrollView,
+  TextInput, ActivityIndicator, Modal, RefreshControl,
+  KeyboardAvoidingView, Platform, Share, Image, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSocialStore } from '../../stores/socialStore';
-import { connectEventDispatcher, disconnectEventDispatcher } from '../../services/EventDispatcher';
+import { useAuthStore } from '../../stores/authStore';
+import { useGamification } from '../../store/hooks';
+import { getSessionHistory } from '../../store/sync';
 import { Colors } from '../../constants/Colors';
-import { Friend, UserSearchResult, FriendProfile } from '../../types';
-import TabBar from '../../components/TabBar';
-import FeedCard from '../../components/FeedCard';
-import UserRow from '../../components/UserRow';
-import LeaderboardRow from '../../components/LeaderboardRow';
-import LevelBadge from '../../components/LevelBadge';
-import { api } from '../../services/api';
+import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
 
-const INTERNAL_TABS = [
-  { key: 'feed', label: 'Feed' },
-  { key: 'friends', label: 'Friends' },
-  { key: 'requests', label: 'Requests', badge: 0 },
-  { key: 'rankings', label: 'Rankings' },
-];
+// ─── Local design tokens ─────────────────────────────────────────────────────
 
-function SkeletonCard() {
+const BORDER_SOFT = '#1C1C48';
+const AMBER       = '#FFB347';
+const AMBER_DIM   = '#3A2800';
+const ROSE        = '#F06292';
+const ROSE_DIM    = '#3A0F20';
+const GOLD        = '#FFD700';
+const GOLD_DIM    = '#3A3000';
+const SURFACE     = Colors.surface;
+const RAISED      = Colors.raised;
+
+const FREE_POST_TAG_META: Record<FreePostTag, { emoji: string; label: string }> = {
+  study_tip:   { emoji: '💡', label: 'Study Tip' },
+  question:    { emoji: '❓', label: 'Question' },
+  motivation:  { emoji: '🙌', label: 'Motivation' },
+  celebration: { emoji: '🎉', label: 'Celebration' },
+  resource:    { emoji: '📖', label: 'Resource' },
+  general:     { emoji: '💬', label: 'General' },
+};
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const AVATAR_EMOJIS = ['🦊','🐸','🦁','🐳','🦉','🐰','🦋','🐙','🦚','🐻','🦝','🐵'];
+const REACTIONS = ['🔥','🫡','❤️','💪'] as const;
+
+const GROUP_BG: Record<string, string> = {
+  purple: Colors.primaryDim,
+  teal: Colors.tealDim,
+  amber: AMBER_DIM,
+  rose: '#3A0F20',
+};
+const GROUP_BORDER_COLOR: Record<string, string> = {
+  purple: Colors.primary,
+  teal: Colors.accent,
+  amber: AMBER,
+  rose: ROSE,
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getAvatarEmoji(seed: string): string {
+  let h = 0;
+  for (const c of seed) h = ((h * 31) + c.charCodeAt(0)) & 0x7fffffff;
+  return AVATAR_EMOJIS[h % AVATAR_EMOJIS.length];
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? 'Yesterday' : `${d}d ago`;
+}
+
+function formatFocusMinutes(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function isGoldRank(rank: string): boolean {
+  return rank === 'Champion' || rank === 'Legend';
+}
+
+// ─── Study Group chips ───────────────────────────────────────────────────────
+
+function GroupChip({ group, selected, onPress }: {
+  group: StudyGroup; selected: boolean; onPress: () => void;
+}) {
+  const border = selected ? Colors.primary : (GROUP_BORDER_COLOR[group.color] ?? Colors.border);
+  const bg = GROUP_BG[group.color] ?? SURFACE;
   return (
-    <View className="mx-4 mb-3 bg-dark-card rounded-2xl p-4">
-      <View className="flex-row items-center">
-        <View className="w-10 h-10 rounded-full bg-gray-700 mr-3" />
-        <View className="flex-1">
-          <View className="h-3 bg-gray-700 rounded w-32 mb-2" />
-          <View className="h-2.5 bg-gray-700 rounded w-48" />
-        </View>
+    <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
+      <View style={{
+        width: 44, height: 44, borderRadius: 14, backgroundColor: bg,
+        borderWidth: selected ? 2 : 1, borderColor: border,
+        alignItems: 'center', justifyContent: 'center',
+        ...(selected ? { shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 8, elevation: 4 } : {}),
+      }}>
+        <Text style={{ fontSize: 22 }}>{group.emoji}</Text>
+        {group.hasRecentActivity && (
+          <View style={{
+            position: 'absolute', bottom: -2, right: -2,
+            width: 10, height: 10, borderRadius: 5,
+            backgroundColor: Colors.accent, borderWidth: 1.5, borderColor: Colors.bg,
+          }} />
+        )}
+      </View>
+      <Text numberOfLines={1} style={{ color: Colors.subtext, fontSize: 10, marginTop: 4, textAlign: 'center', width: 60 }}>
+        {group.name}
+      </Text>
+    </Pressable>
+  );
+}
+
+function JoinChip({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
+      <View style={{
+        width: 44, height: 44, borderRadius: 14,
+        borderWidth: 1.5, borderColor: Colors.border,
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Ionicons name="add" size={20} color={Colors.subtext} />
+      </View>
+      <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 4 }}>Join</Text>
+    </Pressable>
+  );
+}
+
+// ─── Post type tag ───────────────────────────────────────────────────────────
+
+const POST_TYPE_META: Record<PostType, { label: string; bg: string; color: string }> = {
+  session_recap:      { label: '⚡ Session Recap',        bg: Colors.primaryDim, color: Colors.primarySoft },
+  achievement_unlock: { label: '🏅 Achievement Unlocked', bg: GOLD_DIM,          color: GOLD },
+  accountability:     { label: '🤝 Accountability',        bg: Colors.tealDim,    color: Colors.accent },
+  streak_milestone:   { label: '🔥 Streak Milestone',      bg: AMBER_DIM,         color: AMBER },
+  free_post:          { label: '✏️ Free Post',             bg: ROSE_DIM,          color: ROSE },
+};
+
+function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePostTag | null }) {
+  const base = POST_TYPE_META[type];
+  const label = type === 'free_post' && contentTag
+    ? `${FREE_POST_TAG_META[contentTag].emoji} ${FREE_POST_TAG_META[contentTag].label}`
+    : base.label;
+  return (
+    <View style={{
+      alignSelf: 'flex-start', backgroundColor: base.bg, borderRadius: 8,
+      paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8,
+    }}>
+      <Text style={{ color: base.color, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Stat pill ───────────────────────────────────────────────────────────────
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{
+      backgroundColor: RAISED, borderRadius: 10,
+      paddingHorizontal: 12, paddingVertical: 6, marginRight: 8, alignItems: 'center',
+    }}>
+      <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>{value}</Text>
+      <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 1 }}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Type-specific content blocks ────────────────────────────────────────────
+
+function SessionRecapBlock({ post }: { post: SocialPost }) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+      <StatPill label="Sessions" value={String(post.sessionCount ?? 0)} />
+      <StatPill label="Focus" value={formatFocusMinutes(post.focusMinutes ?? 0)} />
+      <StatPill label="Streak" value={`${post.streakAtPost ?? 0}d`} />
+    </View>
+  );
+}
+
+function AchievementUnlockBlock({ post }: { post: SocialPost }) {
+  return (
+    <View style={{
+      backgroundColor: GOLD_DIM, borderRadius: 12, borderWidth: 1,
+      borderColor: GOLD + '40', padding: 12, marginBottom: 10,
+      flexDirection: 'row', alignItems: 'center',
+    }}>
+      <Text style={{ fontSize: 32, marginRight: 12 }}>{post.achievementIcon ?? '🏅'}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: GOLD, fontWeight: '700', fontSize: 14 }}>{post.achievementName ?? 'Achievement'}</Text>
+        {post.achievementDescription ? (
+          <Text style={{ color: Colors.text, fontSize: 12, marginTop: 2 }}>{post.achievementDescription}</Text>
+        ) : null}
+        {post.achievementXpReward != null && (
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 3 }}>
+            +{post.achievementXpReward} XP{post.achievementRank ? ` · ${post.achievementRank} rank` : ''}
+          </Text>
+        )}
       </View>
     </View>
   );
 }
 
-export default function SocialScreen() {
-  const social = useSocialStore();
-  const [activeTab, setActiveTab] = useState<'feed' | 'friends' | 'requests' | 'rankings'>('feed');
-  const [isLoadingFeed, setIsLoadingFeed] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<UserSearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
-  const [friendProfile, setFriendProfile] = useState<FriendProfile | null>(null);
-  const [showFriendProfile, setShowFriendProfile] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [leaderboardType, setLeaderboardType] = useState<'weekly_xp' | 'longest_streak'>('weekly_xp');
-  const [leaderboardScope, setLeaderboardScope] = useState<'global' | 'friends'>('global');
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const tabsWithBadges = INTERNAL_TABS.map((t) => ({
-    ...t,
-    badge: t.key === 'requests' ? social.incomingRequests.length : undefined,
-  }));
-
-  useEffect(() => {
-    connectEventDispatcher();
-    social.loadFriends();
-    social.fetchFeed();
-    social.fetchRequests();
-    social.fetchLeaderboard('weekly_xp', 'global');
-
-    return () => disconnectEventDispatcher();
-  }, []);
-
-  useEffect(() => {
-    if (searchQuery.length >= 2) {
-      setIsSearching(true);
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-      searchTimer.current = setTimeout(async () => {
-        const results = await social.searchUsers(searchQuery);
-        setSearchResults(results);
-        setIsSearching(false);
-      }, 400);
-    } else {
-      setSearchResults([]);
-      setIsSearching(false);
-    }
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [searchQuery]);
-
-  useEffect(() => {
-    if (activeTab === 'rankings') {
-      social.fetchLeaderboard(leaderboardType, leaderboardScope);
-    }
-    if (activeTab === 'requests') {
-      social.fetchRequests();
-    }
-  }, [activeTab, leaderboardType, leaderboardScope]);
-
-  const handleSendRequest = async (targetUserId: string) => {
-    const success = await social.sendFriendRequest(targetUserId);
-    if (success) {
-      setSearchResults((prev) =>
-        prev.map((r) =>
-          r.id === targetUserId ? { ...r, relationshipStatus: 'pending_sent' as const } : r,
-        ),
-      );
-      showToast('Friend request sent!');
-    }
-  };
-
-  const handleAcceptRequest = async (requestId: string) => {
-    const req = social.incomingRequests.find((r) => r.id === requestId);
-    const success = await social.acceptRequest(requestId);
-    if (success && req) {
-      showToast(`You and ${req.requester.username} are now friends!`);
-    }
-  };
-
-  const handleDeclineRequest = async (requestId: string) => {
-    await social.declineRequest(requestId);
-  };
-
-  const handleCancelRequest = async (requestId: string) => {
-    await social.cancelRequest(requestId);
-  };
-
-  const handleAcceptSearchRequest = async (userId: string) => {
-    await social.sendFriendRequest(userId);
-    setSearchResults((prev) =>
-      prev.map((r) =>
-        r.id === userId ? { ...r, relationshipStatus: 'pending_sent' as const } : r,
-      ),
-    );
-  };
-
-  const showToast = (message: string) => {
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(null), 2500);
-  };
-
-  const openFriendProfile = async (friend: Friend) => {
-    setSelectedFriend(friend);
-    setShowFriendProfile(true);
-    try {
-      const response = await api.get<FriendProfile>(`/social/friends/${friend.id}/profile`);
-      if (response.success && response.data) {
-        setFriendProfile(response.data);
-      }
-    } catch {
-      // fallback — just show basic info
-    }
-  };
-
-  const handleRefreshFeed = useCallback(async () => {
-    setIsLoadingFeed(true);
-    await social.fetchFeed();
-    setIsLoadingFeed(false);
-  }, []);
-
-  const handleEndReached = useCallback(async () => {
-    if (social.feedCursor) {
-      await social.fetchMoreFeed();
-    }
-  }, [social.feedCursor]);
-
-  const handleLeaderboardToggle = () => {
-    setLeaderboardType((prev) => (prev === 'weekly_xp' ? 'longest_streak' : 'weekly_xp'));
-  };
-
-  const handleScopeToggle = () => {
-    setLeaderboardScope((prev) => (prev === 'global' ? 'friends' : 'global'));
-  };
-
-  const leaderboardEntries = leaderboardType === 'weekly_xp'
-    ? social.weeklyXPLeaderboard
-    : social.streakLeaderboardFull;
-
-  const renderFeedTab = () => (
-    <FlatList
-      data={social.feedEvents}
-      keyExtractor={(item) => item.id}
-      refreshControl={
-        <RefreshControl refreshing={isLoadingFeed} onRefresh={handleRefreshFeed} tintColor={Colors.primary} />
-      }
-      onEndReached={handleEndReached}
-      onEndReachedThreshold={0.5}
-      ListHeaderComponent={<View className="h-2" />}
-      ListFooterComponent={social.feedCursor ? <ActivityIndicator color={Colors.primary} className="py-4" /> : <View className="h-4" />}
-      ListEmptyComponent={
-        isLoadingFeed ? (
-          <View className="pt-4">
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </View>
-        ) : (
-          <View className="items-center py-16">
-            <Ionicons name="newspaper-outline" size={48} color={Colors.darkSubtext} />
-            <Text className="text-gray-400 mt-4 font-medium">Nothing yet</Text>
-            <Text className="text-gray-500 text-sm mt-1">Add friends to see their progress here</Text>
-          </View>
-        )
-      }
-      renderItem={({ item }) => <FeedCard event={item} />}
-    />
-  );
-
-  const renderFriendsTab = () => (
-    <View className="flex-1">
-      <View className="px-4 py-3">
-        <View className="flex-row items-center bg-dark-card rounded-2xl px-4 py-2.5">
-          <Ionicons name="search" size={18} color="gray" />
-          <TextInput
-            className="flex-1 text-white ml-2 text-sm"
-            placeholder="Search by username..."
-            placeholderTextColor="#666"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="gray" />
-            </TouchableOpacity>
-          )}
-        </View>
+function AccountabilityBlock({ post }: { post: SocialPost }) {
+  const ch = post.challenge;
+  if (!ch) return null;
+  const completed = Object.values(ch.memberProgress).reduce((a, b) => a + b, 0);
+  const pct = Math.min(100, Math.round((completed / ch.targetValue) * 100));
+  const dl = Math.ceil((new Date(ch.deadline).getTime() - Date.now()) / 86400000);
+  return (
+    <View style={{
+      backgroundColor: Colors.tealDim, borderRadius: 12, borderWidth: 1,
+      borderColor: Colors.accent + '40', padding: 12, marginBottom: 10,
+    }}>
+      <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13, marginBottom: 6 }}>
+        🎯 Group Challenge
+      </Text>
+      <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 8 }}>{ch.title}</Text>
+      <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 6 }}>
+        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.accent }} />
       </View>
-
-      {searchQuery.length >= 2 ? (
-        <FlatList
-          data={searchResults}
-          keyExtractor={(item) => item.id}
-          ListEmptyComponent={
-            <View className="items-center py-10">
-              {isSearching ? (
-                <ActivityIndicator color={Colors.primary} />
-              ) : (
-                <>
-                  <Ionicons name="search-outline" size={40} color={Colors.darkSubtext} />
-                  <Text className="text-gray-400 mt-3">No users found for '{searchQuery}'</Text>
-                </>
-              )}
+      <Text style={{ color: Colors.subtext, fontSize: 11 }}>
+        {completed} / {ch.targetValue} {ch.metric === 'sessions' ? 'sessions' : 'focus hours'} · {pct}% · {dl > 0 ? `${dl} days left` : 'Deadline passed'}
+      </Text>
+      {(ch.memberEmojis ?? []).length > 0 && (
+        <View style={{ flexDirection: 'row', marginTop: 8 }}>
+          {(ch.memberEmojis ?? []).slice(0, 5).map((e, i) => (
+            <View key={i} style={{
+              width: 24, height: 24, borderRadius: 7, backgroundColor: SURFACE,
+              alignItems: 'center', justifyContent: 'center', marginRight: 4,
+            }}>
+              <Text style={{ fontSize: 14 }}>{e}</Text>
             </View>
-          }
-          renderItem={({ item }) => {
-            let actionLabel = 'Add';
-            let actionDisabled = false;
-            let accentColor: string | undefined;
-
-            if (item.relationshipStatus === 'friends') {
-              actionLabel = 'Friends';
-              actionDisabled = true;
-            } else if (item.relationshipStatus === 'pending_sent') {
-              actionLabel = 'Pending';
-              actionDisabled = true;
-            } else if (item.relationshipStatus === 'pending_received') {
-              actionLabel = 'Accept';
-              accentColor = Colors.success;
-            }
-
-            return (
-              <UserRow
-                username={item.username}
-                avatarUrl={item.avatarUrl}
-                level={item.level}
-                actionLabel={actionLabel}
-                actionDisabled={actionDisabled}
-                accentColor={accentColor}
-                onAction={() => {
-                  if (item.relationshipStatus === 'pending_received') {
-                    handleAcceptSearchRequest(item.id);
-                  } else if (item.relationshipStatus === 'none') {
-                    handleSendRequest(item.id);
-                  }
-                }}
-              />
-            );
-          }}
-        />
-      ) : (
-        <FlatList
-          data={social.friends}
-          keyExtractor={(item) => item.id}
-          ListHeaderComponent={<View className="h-2" />}
-          ListEmptyComponent={
-            <View className="items-center py-16">
-              <Ionicons name="people-outline" size={48} color={Colors.darkSubtext} />
-              <Text className="text-gray-400 mt-4 font-medium">No friends yet</Text>
-              <Text className="text-gray-500 text-sm mt-1">Search for someone to add</Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <UserRow
-              username={item.username}
-              avatarUrl={item.avatarUrl}
-              subtitle={undefined}
-              activeToday={(item as Friend & { activeToday?: boolean }).activeToday}
-              lastActive={(item as Friend & { lastActive?: string }).lastActive}
-              onPress={() => openFriendProfile(item)}
-            />
-          )}
-        />
+          ))}
+        </View>
       )}
     </View>
   );
+}
 
-  const renderRequestsTab = () => {
-    const { incomingRequests, outgoingRequests } = social;
+function StreakMilestoneBlock({ post }: { post: SocialPost }) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+      <StatPill label="Day Streak" value={`${post.streakAtPost ?? 0}d`} />
+      <StatPill label="Total Sessions" value={String(post.totalSessionsAtPost ?? 0)} />
+      <StatPill label="All-time Focus" value={`${post.totalFocusHoursAtPost ?? 0}h`} />
+    </View>
+  );
+}
 
-    return (
-      <FlatList
-        data={[]}
-        keyExtractor={() => 'empty'}
-        renderItem={() => null}
-        ListHeaderComponent={
-          <View>
-            {incomingRequests.length > 0 && (
-              <View className="mb-4">
-                <Text className="text-gray-400 text-sm font-semibold px-6 mb-2">
-                  Incoming ({incomingRequests.length})
-                </Text>
-                {incomingRequests.map((req) => (
-                  <View
-                    key={req.id}
-                    className="mx-4 mb-2 bg-dark-card rounded-2xl p-4 flex-row items-center"
-                  >
-                    <View className="w-11 h-11 rounded-full bg-primary/20 items-center justify-center">
-                      <Text className="text-primary font-bold text-base">
-                        {req.requester.username[0]?.toUpperCase() || '?'}
-                      </Text>
-                    </View>
-                    <View className="ml-3 flex-1">
-                      <Text className="text-white font-bold text-sm">{req.requester.username}</Text>
-                      <Text className="text-gray-400 text-xs">
-                        Sent {new Date(req.createdAt || Date.now()).toLocaleDateString()}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      className="bg-green-500 px-4 py-2 rounded-full mr-2"
-                      onPress={() => handleAcceptRequest(req.id)}
-                    >
-                      <Text className="text-white text-xs font-bold">Accept</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      className="border border-red-500 px-4 py-2 rounded-full"
-                      onPress={() => handleDeclineRequest(req.id)}
-                    >
-                      <Text className="text-red-500 text-xs font-bold">Decline</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
-            {incomingRequests.length === 0 && (
-              <View className="items-center py-8">
-                <Text className="text-gray-500 text-sm">No pending requests</Text>
-              </View>
-            )}
+// ─── Reaction row ────────────────────────────────────────────────────────────
 
-            {outgoingRequests.length > 0 && (
-              <View>
-                <Text className="text-gray-400 text-sm font-semibold px-6 mb-2 mt-4">
-                  Sent ({outgoingRequests.length})
-                </Text>
-                {outgoingRequests.map((req) => (
-                  <View
-                    key={req.id}
-                    className="mx-4 mb-2 bg-dark-card rounded-2xl p-4 flex-row items-center"
-                  >
-                    <View className="w-11 h-11 rounded-full bg-primary/20 items-center justify-center">
-                      <Text className="text-primary font-bold text-base">
-                        {req.addressee?.username?.[0]?.toUpperCase() || '?'}
-                      </Text>
-                    </View>
-                    <View className="ml-3 flex-1">
-                      <Text className="text-white font-bold text-sm">
-                        {req.addressee?.username || 'Unknown'}
-                      </Text>
-                      <Text className="text-gray-400 text-xs">
-                        Pending · {new Date(req.createdAt || Date.now()).toLocaleDateString()}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      className="border border-gray-500 px-4 py-2 rounded-full"
-                      onPress={() => handleCancelRequest(req.id)}
-                    >
-                      <Text className="text-gray-400 text-xs font-bold">Cancel</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
+function ReactionRow({ post, currentUserId, onToggle }: {
+  post: SocialPost; currentUserId: string; onToggle: (emoji: string) => void;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {REACTIONS.map((emoji) => {
+        const count = (post.reactions[emoji] ?? []).length;
+        const reacted = (post.reactions[emoji] ?? []).includes(currentUserId);
+        return (
+          <Pressable
+            key={emoji}
+            onPress={() => onToggle(emoji)}
+            style={{
+              flexDirection: 'row', alignItems: 'center',
+              backgroundColor: reacted ? Colors.primaryDim : SURFACE,
+              borderWidth: 1, borderColor: reacted ? Colors.primary : BORDER_SOFT,
+              borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 6,
+            }}
+          >
+            <Text style={{ fontSize: 13 }}>{emoji}</Text>
+            {count > 0 && (
+              <Text style={{ color: reacted ? Colors.primarySoft : Colors.subtext, fontSize: 11, marginLeft: 4, fontWeight: '600' }}>
+                {count}
+              </Text>
             )}
-            {outgoingRequests.length === 0 && (
-              <View className="items-center py-8">
-                <Text className="text-gray-500 text-sm">You haven't sent any requests</Text>
-              </View>
-            )}
+          </Pressable>
+        );
+      })}
+      <Pressable
+        onPress={() => Share.share({ message: 'Check out this study post!' })}
+        style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center' }}
+      >
+        <Ionicons name="share-outline" size={14} color={Colors.subtext} />
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginLeft: 4 }}>Share</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// ─── Free Post block ─────────────────────────────────────────────────────────
+
+function FreePostBlock({ post }: { post: SocialPost }) {
+  const [photoFullscreen, setPhotoFullscreen] = useState(false);
+  const hasPhoto  = !!post.photoUrl;
+  const hasStats  = (post.attachedStats ?? []).length > 0;
+  const hasAnything = hasPhoto || hasStats;
+
+  if (!hasAnything) return null;
+
+  return (
+    <View style={{ marginBottom: 10 }}>
+      {hasPhoto && (
+        <>
+          <Pressable onPress={() => setPhotoFullscreen(true)}>
+            <Image
+              source={{ uri: post.photoUrl! }}
+              style={{ width: '100%', height: 220, borderRadius: 12, marginBottom: hasStats ? 10 : 0 }}
+              resizeMode="cover"
+            />
+          </Pressable>
+          <Modal visible={photoFullscreen} transparent animationType="fade" onRequestClose={() => setPhotoFullscreen(false)}>
+            <Pressable style={{ flex: 1, backgroundColor: '#000000EE', justifyContent: 'center' }} onPress={() => setPhotoFullscreen(false)}>
+              <Image source={{ uri: post.photoUrl! }} style={{ width: '100%', height: '70%' }} resizeMode="contain" />
+            </Pressable>
+          </Modal>
+        </>
+      )}
+      {hasStats && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {(post.attachedStats ?? []).map((s, i) => (
+            <StatPill key={i} label={s.label} value={s.value} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Post card ───────────────────────────────────────────────────────────────
+
+function PostCard({ post, currentUserId, onToggleReaction }: {
+  post: SocialPost; currentUserId: string; onToggleReaction: (postId: string, emoji: string) => void;
+}) {
+  const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
+  return (
+    <View style={{
+      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
+      marginHorizontal: 16, marginBottom: 12, padding: 14,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+        <View style={{
+          width: 36, height: 36, borderRadius: 11, backgroundColor: RAISED,
+          alignItems: 'center', justifyContent: 'center', marginRight: 10,
+        }}>
+          <Text style={{ fontSize: 20 }}>{post.authorEmoji || getAvatarEmoji(post.authorId)}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 14 }}>{post.authorName}</Text>
+            <View style={{
+              marginLeft: 6, backgroundColor: rankColor + '22', borderRadius: 6,
+              paddingHorizontal: 6, paddingVertical: 2,
+            }}>
+              <Text style={{ color: rankColor, fontSize: 10, fontWeight: '600' }}>{post.authorRank}</Text>
+            </View>
           </View>
-        }
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>
+            {post.groupName ? `${post.groupName} · ` : ''}{timeAgo(post.createdAt)}
+          </Text>
+        </View>
+      </View>
+
+      <PostTypeTag type={post.type} contentTag={post.contentTag} />
+
+      {post.caption ? (
+        <Text style={{ color: Colors.text, fontSize: 13, marginBottom: 10, lineHeight: 19 }}>
+          {post.caption}
+        </Text>
+      ) : null}
+
+      {post.type === 'session_recap'      && <SessionRecapBlock post={post} />}
+      {post.type === 'achievement_unlock' && <AchievementUnlockBlock post={post} />}
+      {post.type === 'accountability'     && <AccountabilityBlock post={post} />}
+      {post.type === 'streak_milestone'   && <StreakMilestoneBlock post={post} />}
+      {post.type === 'free_post'          && <FreePostBlock post={post} />}
+
+      <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 10 }} />
+
+      <ReactionRow
+        post={post}
+        currentUserId={currentUserId}
+        onToggle={(emoji) => onToggleReaction(post.id, emoji)}
       />
+    </View>
+  );
+}
+
+// ─── Leaderboard podium ──────────────────────────────────────────────────────
+
+const MEDALS = ['🥇', '🥈', '🥉'];
+const PODIUM_HEIGHTS = [48, 36, 28];
+const PODIUM_ORDER = [1, 0, 2];
+
+function PodiumEntry({ entry, pos }: { entry: FocusLeaderboardEntry; pos: number }) {
+  const isFirst = pos === 0;
+  const borderColor = pos === 0 ? GOLD : pos === 1 ? '#C0C0C080' : '#CD7F3280';
+  return (
+    <View style={{ alignItems: 'center', flex: 1 }}>
+      <Text style={{ fontSize: 12, marginBottom: 4 }}>{MEDALS[pos]}</Text>
+      <View style={{
+        width: 44, height: 44, borderRadius: 13, backgroundColor: RAISED,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: isFirst ? 2 : 1, borderColor,
+        ...(isFirst ? { shadowColor: GOLD, shadowOpacity: 0.5, shadowRadius: 10, elevation: 6 } : {}),
+      }}>
+        <Text style={{ fontSize: 22 }}>{entry.avatarEmoji}</Text>
+      </View>
+      <Text numberOfLines={1} style={{
+        color: Colors.textBright, fontSize: 11, fontWeight: '600',
+        marginTop: 4, width: 64, textAlign: 'center',
+      }}>
+        {entry.displayName}
+      </Text>
+      <Text style={{ color: isFirst ? GOLD : Colors.text, fontSize: 12, fontWeight: '700' }}>
+        {formatFocusMinutes(entry.focusMinutes)}
+      </Text>
+      <View style={{
+        width: '75%', height: PODIUM_HEIGHTS[pos], borderRadius: 6, marginTop: 4,
+        backgroundColor: isFirst ? GOLD + '28' : RAISED,
+        borderWidth: 1, borderColor: isFirst ? GOLD + '50' : BORDER_SOFT,
+      }} />
+    </View>
+  );
+}
+
+function PodiumBlock({ entries }: { entries: FocusLeaderboardEntry[] }) {
+  const top3 = entries.slice(0, 3);
+  const ordered = PODIUM_ORDER.map((i) => top3[i]).filter(Boolean) as FocusLeaderboardEntry[];
+  return (
+    <View style={{
+      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
+      marginHorizontal: 16, marginBottom: 12, padding: 16, paddingTop: 20,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
+        {ordered.map((e, i) => (
+          <PodiumEntry key={e.userId} entry={e} pos={PODIUM_ORDER[i]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── Leaderboard list row ────────────────────────────────────────────────────
+
+function LeaderboardListRow({ entry }: { entry: FocusLeaderboardEntry }) {
+  const posColor = entry.position <= 5 ? Colors.primarySoft : Colors.subtext;
+  const rankColor = isGoldRank(entry.rank) ? GOLD : Colors.primarySoft;
+  const delta = entry.positionDelta;
+  const deltaColor = delta == null ? Colors.subtext : delta > 0 ? Colors.accent : delta < 0 ? ROSE : Colors.subtext;
+  const deltaText = delta == null ? null : delta > 0 ? `↑${delta}` : delta < 0 ? `↓${Math.abs(delta)}` : '–';
+
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center',
+      paddingVertical: 11, paddingHorizontal: 16,
+      backgroundColor: entry.isMe ? RAISED : 'transparent',
+      borderWidth: entry.isMe ? 1 : 0, borderColor: Colors.primary,
+      borderRadius: entry.isMe ? 12 : 0,
+      marginHorizontal: entry.isMe ? 12 : 0,
+      marginVertical: entry.isMe ? 4 : 0,
+    }}>
+      <Text style={{ color: posColor, fontSize: 13, fontWeight: '700', width: 26 }}>
+        #{entry.position}
+      </Text>
+      <View style={{
+        width: 32, height: 32, borderRadius: 9, backgroundColor: SURFACE,
+        alignItems: 'center', justifyContent: 'center', marginRight: 10,
+      }}>
+        <Text style={{ fontSize: 18 }}>{entry.avatarEmoji}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 13 }}>{entry.displayName}</Text>
+          {entry.isMe && (
+            <View style={{ marginLeft: 5, backgroundColor: Colors.primaryDim, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+              <Text style={{ color: Colors.primary, fontSize: 9, fontWeight: '700' }}>YOU</Text>
+            </View>
+          )}
+          <View style={{ marginLeft: 5, backgroundColor: rankColor + '22', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1 }}>
+            <Text style={{ color: rankColor, fontSize: 9, fontWeight: '600' }}>{entry.rank}</Text>
+          </View>
+        </View>
+        <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>{entry.currentStreak}d streak</Text>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '700' }}>
+          {formatFocusMinutes(entry.focusMinutes)}
+        </Text>
+        {deltaText && (
+          <Text style={{ color: deltaColor, fontSize: 11 }}>{deltaText}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ─── Next target card ────────────────────────────────────────────────────────
+
+function NextTargetCard({ me, above }: {
+  me: FocusLeaderboardEntry | null; above: FocusLeaderboardEntry | null;
+}) {
+  if (!me) return null;
+
+  if (me.position === 1) {
+    return (
+      <View style={{
+        marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
+        borderWidth: 1, borderColor: GOLD + '60', backgroundColor: GOLD_DIM,
+      }}>
+        <Text style={{ color: GOLD, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>
+          👑 You're at the top. Keep going.
+        </Text>
+      </View>
     );
+  }
+
+  if (me.focusMinutes === 0) {
+    return (
+      <View style={{
+        marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
+        backgroundColor: SURFACE, borderWidth: 1, borderColor: BORDER_SOFT,
+      }}>
+        <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
+          Start studying to appear on the leaderboard
+        </Text>
+      </View>
+    );
+  }
+
+  if (!above) return null;
+  const gap = Math.max(0, above.focusMinutes - me.focusMinutes);
+  const pct = Math.min(99, Math.round((me.focusMinutes / above.focusMinutes) * 100));
+
+  return (
+    <View style={{
+      marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
+      backgroundColor: SURFACE, borderWidth: 1, borderColor: BORDER_SOFT,
+    }}>
+      <Text style={{ color: Colors.subtext, fontSize: 11, marginBottom: 4 }}>🎯 Next target</Text>
+      <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 10 }}>
+        {'You need '}
+        <Text style={{ color: Colors.primarySoft, fontWeight: '700' }}>{formatFocusMinutes(gap)}</Text>
+        {' more to pass '}
+        <Text style={{ fontWeight: '700' }}>{above.displayName}</Text>
+        {` (#${above.position})`}
+      </Text>
+      <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 8 }}>
+        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.primary }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ color: Colors.subtext, fontSize: 11 }}>You · {formatFocusMinutes(me.focusMinutes)}</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 11 }}>{above.displayName} · {formatFocusMinutes(above.focusMinutes)}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Create post sheet ───────────────────────────────────────────────────────
+
+const POST_TYPE_CARDS: { type: PostType; icon: string; label: string; desc: string }[] = [
+  { type: 'free_post',          icon: '✏️', label: 'Share something',                 desc: 'Write a free post with optional stats or photo' },
+  { type: 'session_recap',      icon: '⚡', label: 'Share a session recap',           desc: 'Show off your recent focus block' },
+  { type: 'achievement_unlock', icon: '🏅', label: 'Share an achievement',            desc: 'Celebrate a milestone you unlocked' },
+  { type: 'streak_milestone',   icon: '🔥', label: 'Share a streak milestone',        desc: 'Brag about your consistency' },
+  { type: 'accountability',     icon: '🤝', label: 'Start an accountability challenge', desc: 'Challenge your study group' },
+];
+
+const FREE_TAGS = Object.entries(FREE_POST_TAG_META) as [FreePostTag, { emoji: string; label: string }][];
+
+function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId, studyGroups }: {
+  visibility: 'public' | 'group';
+  setVisibility: (v: 'public' | 'group') => void;
+  targetGroupId: string | null;
+  setTargetGroupId: (id: string | null) => void;
+  studyGroups: StudyGroup[];
+}) {
+  return (
+    <>
+      <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Share to</Text>
+      <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+        {(['public', 'group'] as const).map((v) => (
+          <Pressable
+            key={v}
+            onPress={() => setVisibility(v)}
+            style={{
+              paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginRight: 8,
+              backgroundColor: visibility === v ? Colors.primary : RAISED,
+              borderWidth: 1, borderColor: visibility === v ? Colors.primary : BORDER_SOFT,
+            }}
+          >
+            <Text style={{ color: visibility === v ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>
+              {v === 'public' ? 'Public' : 'Study Group'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {visibility === 'group' && studyGroups.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          {studyGroups.map((g) => (
+            <Pressable
+              key={g.id}
+              onPress={() => setTargetGroupId(g.id)}
+              style={{
+                flexDirection: 'row', alignItems: 'center', marginRight: 8,
+                backgroundColor: targetGroupId === g.id ? Colors.primaryDim : RAISED,
+                borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+                borderWidth: 1, borderColor: targetGroupId === g.id ? Colors.primary : BORDER_SOFT,
+              }}
+            >
+              <Text style={{ fontSize: 16, marginRight: 6 }}>{g.emoji}</Text>
+              <Text style={{ color: Colors.text, fontSize: 12 }}>{g.name}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+    </>
+  );
+}
+
+function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
+  visible: boolean;
+  onClose: () => void;
+  onPost: (draft: Partial<SocialPost>) => void;
+  studyGroups: StudyGroup[];
+}) {
+  const gamification = useGamification();
+
+  const [step,          setStep]          = useState<1 | 2>(1);
+  const [selectedType,  setSelectedType]  = useState<PostType | null>(null);
+  const [caption,       setCaption]       = useState('');
+  const [visibility,    setVisibility]    = useState<'public' | 'group'>('public');
+  const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
+
+  // Free post state
+  const [freeText,        setFreeText]        = useState('');
+  const [selectedTag,     setSelectedTag]      = useState<FreePostTag | null>(null);
+  const [photoUri,        setPhotoUri]         = useState<string | null>(null);
+  const [showStats,       setShowStats]        = useState(false);
+  const [checkedStats,    setCheckedStats]     = useState<string[]>([]);
+  const [textError,       setTextError]        = useState(false);
+  const [statsError,      setStatsError]       = useState(false);
+  const [todayCount,      setTodayCount]       = useState(0);
+  const [todayMinutes,    setTodayMinutes]     = useState(0);
+  const freeTextRef = useRef<TextInput>(null);
+
+  const hasUnlockedAchievements = gamification.achievements.some((a) => a.isUnlocked);
+
+  const availableStats = [
+    { key: 'sessions_today', label: 'Sessions today',    value: String(todayCount) },
+    { key: 'focus_today',    label: 'Focus time today',  value: formatFocusMinutes(todayMinutes) },
+    { key: 'streak',         label: 'Current streak',    value: `${gamification.currentStreak} days` },
+    { key: 'total_sessions', label: 'Total sessions',    value: String(gamification.totalSessions) },
+    { key: 'total_focus',    label: 'Total focus',       value: `${Math.floor((gamification.totalFocusMinutes ?? 0) / 60)}h` },
+  ];
+
+  useEffect(() => {
+    if (visible && selectedType === 'free_post') {
+      getSessionHistory().then((sessions) => {
+        const today = new Date().toDateString();
+        const ts = sessions.filter((s) => new Date(s.completedAt).toDateString() === today && s.type === 'focus');
+        setTodayCount(ts.length);
+        setTodayMinutes(Math.round(ts.reduce((sum, s) => sum + s.durationSeconds / 60, 0)));
+      }).catch(() => {});
+    }
+  }, [visible, selectedType]);
+
+  const reset = () => {
+    setStep(1); setSelectedType(null); setCaption('');
+    setVisibility('public'); setTargetGroupId(null);
+    setFreeText(''); setSelectedTag(null); setPhotoUri(null);
+    setShowStats(false); setCheckedStats([]);
+    setTextError(false); setStatsError(false);
   };
 
-  const renderRankingsTab = () => (
-    <View className="flex-1">
-      <View className="px-4 py-3 flex-row items-center justify-between">
-        <View className="flex-row space-x-2">
-          <TouchableOpacity
-            className={`px-4 py-2 rounded-full ${
-              leaderboardType === 'weekly_xp' ? 'bg-primary' : 'bg-dark-card'
-            }`}
-            onPress={() => setLeaderboardType('weekly_xp')}
-          >
-            <Text
-              className={`text-xs font-semibold ${
-                leaderboardType === 'weekly_xp' ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              Weekly XP
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleSelectType = (type: PostType) => {
+    setSelectedType(type);
+    setStep(2);
+    if (type === 'free_post') setTimeout(() => freeTextRef.current?.focus(), 300);
+  };
+
+  const toggleStat = (key: string) => {
+    setCheckedStats((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+    setStatsError(false);
+  };
+
+  const handlePickPhoto = () => {
+    Alert.alert('Add Photo', 'Install expo-image-picker to enable photo uploads.', [{ text: 'OK' }]);
+  };
+
+  const handlePost = () => {
+    if (selectedType === 'free_post') {
+      if (!freeText.trim()) { setTextError(true); return; }
+      if (showStats && checkedStats.length === 0) { setStatsError(true); return; }
+      const attachedStats: AttachedStat[] | null = showStats && checkedStats.length > 0
+        ? availableStats.filter((s) => checkedStats.includes(s.key)).map((s) => ({ label: s.label, value: s.value }))
+        : null;
+      onPost({ type: 'free_post', caption: freeText.trim(), contentTag: selectedTag, photoUrl: photoUri, attachedStats, visibility, groupId: visibility === 'group' ? targetGroupId : null, reactions: {} });
+      handleClose();
+    } else {
+      if (!selectedType) return;
+      onPost({ type: selectedType, caption: caption.trim() || null, visibility, groupId: visibility === 'group' ? targetGroupId : null, reactions: {} });
+      handleClose();
+    }
+  };
+
+  const canPost = selectedType === 'free_post'
+    ? freeText.trim().length > 0 && (!showStats || checkedStats.length > 0)
+    : true;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <Pressable style={{ flex: 1, backgroundColor: '#00000088' }} onPress={handleClose} />
+        <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '78%' }}>
+          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
+            {step === 2 && (
+              <Pressable onPress={() => setStep(1)} style={{ marginRight: 10 }}>
+                <Ionicons name="chevron-back" size={22} color={Colors.text} />
+              </Pressable>
+            )}
+            <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', flex: 1 }}>
+              {step === 1 ? 'What do you want to share?' : 'Compose post'}
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className={`px-4 py-2 rounded-full ${
-              leaderboardType === 'longest_streak' ? 'bg-primary' : 'bg-dark-card'
-            }`}
-            onPress={() => setLeaderboardType('longest_streak')}
-          >
-            <Text
-              className={`text-xs font-semibold ${
-                leaderboardType === 'longest_streak' ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              Longest Streak
-            </Text>
-          </TouchableOpacity>
+            <Pressable onPress={handleClose}>
+              <Ionicons name="close" size={22} color={Colors.subtext} />
+            </Pressable>
+          </View>
+
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
+            {/* ── Step 1: type selection ── */}
+            {step === 1 && POST_TYPE_CARDS.map(({ type, icon, label, desc }) => {
+              const isAchievementDisabled = type === 'achievement_unlock' && !hasUnlockedAchievements;
+              return (
+                <Pressable
+                  key={type}
+                  onPress={() => !isAchievementDisabled && handleSelectType(type)}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', backgroundColor: RAISED,
+                    borderRadius: 14, borderWidth: 1, borderColor: BORDER_SOFT,
+                    padding: 14, marginBottom: 10,
+                    opacity: isAchievementDisabled ? 0.45 : 1,
+                  }}
+                >
+                  <Text style={{ fontSize: 28, marginRight: 14 }}>{icon}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 14 }}>{label}</Text>
+                    <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>
+                      {isAchievementDisabled ? 'Complete an achievement to share it' : desc}
+                    </Text>
+                  </View>
+                  {!isAchievementDisabled && <Ionicons name="chevron-forward" size={18} color={Colors.subtext} />}
+                </Pressable>
+              );
+            })}
+
+            {/* ── Step 2: Free Post compose ── */}
+            {step === 2 && selectedType === 'free_post' && (
+              <>
+                <TextInput
+                  ref={freeTextRef}
+                  multiline maxLength={280}
+                  placeholder="What's on your mind?"
+                  placeholderTextColor={Colors.subtext}
+                  value={freeText}
+                  onChangeText={(t) => { setFreeText(t); setTextError(false); }}
+                  style={{
+                    backgroundColor: RAISED, borderRadius: 12,
+                    borderWidth: 1, borderColor: textError ? ROSE : BORDER_SOFT,
+                    padding: 12, color: Colors.textBright, fontSize: 14, minHeight: 100,
+                    textAlignVertical: 'top', marginBottom: 4,
+                  }}
+                />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 }}>
+                  {textError
+                    ? <Text style={{ color: ROSE, fontSize: 11 }}>Write something to post</Text>
+                    : <View />}
+                  <Text style={{ color: Colors.subtext, fontSize: 11 }}>{freeText.length}/280</Text>
+                </View>
+
+                {/* Content tag selector */}
+                <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Add a tag (optional)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+                  {FREE_TAGS.map(([key, meta]) => {
+                    const active = selectedTag === key;
+                    return (
+                      <Pressable
+                        key={key}
+                        onPress={() => setSelectedTag(active ? null : key)}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', marginRight: 8,
+                          backgroundColor: active ? ROSE_DIM : RAISED,
+                          borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+                          borderWidth: 1, borderColor: active ? ROSE : BORDER_SOFT,
+                        }}
+                      >
+                        <Text style={{ fontSize: 14, marginRight: 5 }}>{meta.emoji}</Text>
+                        <Text style={{ color: active ? ROSE : Colors.subtext, fontSize: 12, fontWeight: active ? '600' : '400' }}>
+                          {meta.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Photo picker */}
+                <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Photo (optional)</Text>
+                {photoUri ? (
+                  <View style={{ marginBottom: 14, position: 'relative' }}>
+                    <Image source={{ uri: photoUri }} style={{ width: '100%', height: 160, borderRadius: 12 }} resizeMode="cover" />
+                    <Pressable
+                      onPress={() => setPhotoUri(null)}
+                      style={{
+                        position: 'absolute', top: 8, right: 8,
+                        backgroundColor: '#00000099', borderRadius: 12,
+                        width: 24, height: 24, alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={handlePickPhoto}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
+                      borderColor: BORDER_SOFT, paddingVertical: 14, marginBottom: 14,
+                    }}
+                  >
+                    <Ionicons name="image-outline" size={20} color={Colors.subtext} />
+                    <Text style={{ color: Colors.subtext, fontSize: 13, marginLeft: 8 }}>Add photo</Text>
+                  </Pressable>
+                )}
+
+                {/* Attach stats */}
+                <Pressable
+                  onPress={() => { setShowStats((v) => !v); setCheckedStats([]); setStatsError(false); }}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1, borderColor: BORDER_SOFT,
+                    padding: 12, marginBottom: showStats ? 0 : 14,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="stats-chart-outline" size={18} color={Colors.text} />
+                    <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600', marginLeft: 10 }}>Attach my stats</Text>
+                  </View>
+                  <View style={{
+                    width: 40, height: 22, borderRadius: 11,
+                    backgroundColor: showStats ? Colors.primary : Colors.inactive,
+                    justifyContent: 'center', paddingHorizontal: 2,
+                  }}>
+                    <View style={{
+                      width: 18, height: 18, borderRadius: 9, backgroundColor: '#fff',
+                      alignSelf: showStats ? 'flex-end' : 'flex-start',
+                    }} />
+                  </View>
+                </Pressable>
+
+                {showStats && (
+                  <View style={{
+                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
+                    borderColor: BORDER_SOFT, borderTopWidth: 0,
+                    borderTopLeftRadius: 0, borderTopRightRadius: 0,
+                    padding: 12, marginBottom: 14,
+                  }}>
+                    {availableStats.map((s) => (
+                      <Pressable
+                        key={s.key}
+                        onPress={() => toggleStat(s.key)}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                      >
+                        <View style={{
+                          width: 20, height: 20, borderRadius: 5, borderWidth: 1.5,
+                          borderColor: checkedStats.includes(s.key) ? Colors.primary : Colors.border,
+                          backgroundColor: checkedStats.includes(s.key) ? Colors.primary : 'transparent',
+                          alignItems: 'center', justifyContent: 'center', marginRight: 12,
+                        }}>
+                          {checkedStats.includes(s.key) && <Ionicons name="checkmark" size={12} color="#fff" />}
+                        </View>
+                        <Text style={{ color: Colors.text, fontSize: 13, flex: 1 }}>{s.label}</Text>
+                        <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600' }}>{s.value}</Text>
+                      </Pressable>
+                    ))}
+                    {statsError && (
+                      <Text style={{ color: ROSE, fontSize: 11, marginTop: 4 }}>Select at least one stat to attach</Text>
+                    )}
+                  </View>
+                )}
+
+                <ShareToRow
+                  visibility={visibility} setVisibility={setVisibility}
+                  targetGroupId={targetGroupId} setTargetGroupId={setTargetGroupId}
+                  studyGroups={studyGroups}
+                />
+
+                <Pressable
+                  onPress={handlePost}
+                  disabled={!canPost}
+                  style={{
+                    backgroundColor: canPost ? Colors.primary : Colors.inactive,
+                    borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: canPost ? '#fff' : Colors.subtext, fontWeight: '700', fontSize: 15 }}>Post</Text>
+                </Pressable>
+              </>
+            )}
+
+            {/* ── Step 2: Other post types ── */}
+            {step === 2 && selectedType && selectedType !== 'free_post' && (
+              <>
+                <View style={{
+                  backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
+                  borderColor: BORDER_SOFT, padding: 12, marginBottom: 12,
+                }}>
+                  <PostTypeTag type={selectedType} />
+                  <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+                    {selectedType === 'session_recap'
+                      ? 'Your most recent session stats will be shared automatically.'
+                      : selectedType === 'achievement_unlock'
+                      ? 'Your latest unlocked achievement will be featured.'
+                      : selectedType === 'streak_milestone'
+                      ? 'Your current streak stats will be shared.'
+                      : 'Invite your group to a shared challenge.'}
+                  </Text>
+                </View>
+
+                <TextInput
+                  multiline maxLength={280}
+                  placeholder="Add a caption... (optional)"
+                  placeholderTextColor={Colors.subtext}
+                  value={caption}
+                  onChangeText={setCaption}
+                  style={{
+                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1, borderColor: BORDER_SOFT,
+                    padding: 12, color: Colors.textBright, fontSize: 14, minHeight: 80,
+                    textAlignVertical: 'top', marginBottom: 4,
+                  }}
+                />
+                <Text style={{ color: Colors.subtext, fontSize: 11, textAlign: 'right', marginBottom: 14 }}>
+                  {caption.length}/280
+                </Text>
+
+                <ShareToRow
+                  visibility={visibility} setVisibility={setVisibility}
+                  targetGroupId={targetGroupId} setTargetGroupId={setTargetGroupId}
+                  studyGroups={studyGroups}
+                />
+
+                <Pressable
+                  onPress={handlePost}
+                  style={{ backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Post</Text>
+                </Pressable>
+              </>
+            )}
+          </ScrollView>
         </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
+const SCOPES = [
+  { key: 'friends', label: 'Friends' },
+  { key: 'global',  label: 'Global' },
+  { key: 'group',   label: 'Group' },
+] as const;
+
+const PERIODS = [
+  { key: 'week',     label: 'This week' },
+  { key: 'month',    label: 'This month' },
+  { key: 'all_time', label: 'All time' },
+] as const;
+
+type Scope  = typeof SCOPES[number]['key'];
+type Period = typeof PERIODS[number]['key'];
+
+export default function SocialScreen() {
+  const social      = useSocialStore();
+  const auth        = useAuthStore();
+  const currentUserId   = auth.user?.id ?? '';
+  const currentUserEmoji = getAvatarEmoji(currentUserId);
+
+  const [activeTab,       setActiveTab]       = useState<'feed' | 'leaderboard'>('feed');
+  const [showCreatePost,  setShowCreatePost]   = useState(false);
+  const [refreshing,      setRefreshing]       = useState(false);
+  const [scope,           setScope]            = useState<Scope>('friends');
+  const [period,          setPeriod]           = useState<Period>('week');
+
+  useEffect(() => {
+    social.fetchPosts(social.selectedGroupId ?? undefined);
+    social.fetchStudyGroups();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'leaderboard') social.fetchFocusLeaderboard(scope, period);
+  }, [activeTab, scope, period]);
+
+  const handleRefreshFeed = useCallback(async () => {
+    setRefreshing(true);
+    await social.fetchPosts(social.selectedGroupId ?? undefined);
+    setRefreshing(false);
+  }, [social.selectedGroupId]);
+
+  const handleGroupSelect = (groupId: string | null) => {
+    social.setSelectedGroup(groupId);
+    social.fetchPosts(groupId ?? undefined);
+  };
+
+  const handleToggleReaction = useCallback((postId: string, emoji: string) => {
+    social.toggleReaction(postId, emoji, currentUserId);
+  }, [currentUserId]);
+
+  const handleCreatePost = useCallback(async (draft: Partial<SocialPost>) => {
+    await social.createPost(draft);
+  }, []);
+
+  const { focusLeaderboard, myFocusEntry } = social;
+  const aboveMe = myFocusEntry && myFocusEntry.position > 1
+    ? focusLeaderboard.find((e) => e.position === myFocusEntry.position - 1) ?? null
+    : null;
+  const listEntries = focusLeaderboard.filter((e) => e.position > 3);
+
+  // ── Feed tab ──────────────────────────────────────────────────────────────
+
+  const renderFeed = () => (
+    <View style={{ flex: 1 }}>
+      {/* Study groups strip */}
+      <View style={{ paddingTop: 8, paddingBottom: 4 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
+          <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>Study Groups</Text>
+          <Pressable><Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '600' }}>See all</Text></Pressable>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+          {social.studyGroups.map((g) => (
+            <GroupChip
+              key={g.id} group={g}
+              selected={social.selectedGroupId === g.id}
+              onPress={() => handleGroupSelect(social.selectedGroupId === g.id ? null : g.id)}
+            />
+          ))}
+          <JoinChip onPress={() => {}} />
+        </ScrollView>
       </View>
 
-      <View className="px-4 pb-2">
-        <View className="flex-row bg-dark-card rounded-full p-0.5 self-start">
-          <TouchableOpacity
-            className={`px-4 py-1.5 rounded-full ${
-              leaderboardScope === 'global' ? 'bg-primary' : ''
-            }`}
-            onPress={() => setLeaderboardScope('global')}
+      <FlatList
+        data={social.posts}
+        keyExtractor={(item) => item.id}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefreshFeed} tintColor={Colors.primary} />}
+        onEndReached={() => { if (social.postsCursor) social.fetchMorePosts(); }}
+        onEndReachedThreshold={0.3}
+        ListHeaderComponent={<View style={{ height: 8 }} />}
+        ListFooterComponent={
+          social.postsCursor
+            ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
+            : <View style={{ height: 80 }} />
+        }
+        ListEmptyComponent={
+          social.isLoading ? (
+            <View style={{ paddingTop: 8 }}>
+              {[0, 1, 2].map((i) => (
+                <View key={i} style={{ backgroundColor: SURFACE, borderRadius: 16, marginHorizontal: 16, marginBottom: 12, height: 130 }} />
+              ))}
+            </View>
+          ) : (
+            <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 32 }}>
+              <Ionicons name="newspaper-outline" size={48} color={Colors.subtext} />
+              <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
+                {social.selectedGroupId
+                  ? 'No posts in this group yet — be the first to share'
+                  : 'Follow students or join a group to see posts here'}
+              </Text>
+              {!social.selectedGroupId && (
+                <View style={{ flexDirection: 'row', marginTop: 16 }}>
+                  <Pressable style={{ backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 }}>
+                    <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Find People</Text>
+                  </Pressable>
+                  <Pressable style={{ backgroundColor: Colors.tealDim, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}>
+                    <Text style={{ color: Colors.accent, fontWeight: '600', fontSize: 13 }}>Join a Group</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          )
+        }
+        renderItem={({ item }) => (
+          <PostCard post={item} currentUserId={currentUserId} onToggleReaction={handleToggleReaction} />
+        )}
+      />
+    </View>
+  );
+
+  // ── Leaderboard tab ───────────────────────────────────────────────────────
+
+  const renderLeaderboard = () => (
+    <ScrollView
+      refreshControl={
+        <RefreshControl
+          refreshing={social.isLoading}
+          onRefresh={() => social.fetchFocusLeaderboard(scope, period)}
+          tintColor={Colors.primary}
+        />
+      }
+    >
+      {/* Scope selector */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 8 }}>
+        {SCOPES.map(({ key, label }, i) => (
+          <Pressable
+            key={key}
+            onPress={() => setScope(key)}
+            style={{
+              flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20,
+              backgroundColor: scope === key ? Colors.primary : SURFACE,
+              borderWidth: 1, borderColor: scope === key ? Colors.primary : BORDER_SOFT,
+              marginRight: i < SCOPES.length - 1 ? 8 : 0,
+              ...(scope === key ? { shadowColor: Colors.primary, shadowOpacity: 0.4, shadowRadius: 6, elevation: 3 } : {}),
+            }}
           >
-            <Text
-              className={`text-xs font-semibold ${
-                leaderboardScope === 'global' ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              Global
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className={`px-4 py-1.5 rounded-full ${
-              leaderboardScope === 'friends' ? 'bg-primary' : ''
-            }`}
-            onPress={() => setLeaderboardScope('friends')}
-          >
-            <Text
-              className={`text-xs font-semibold ${
-                leaderboardScope === 'friends' ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              Friends
-            </Text>
-          </TouchableOpacity>
-        </View>
+            <Text style={{ color: scope === key ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+          </Pressable>
+        ))}
       </View>
 
-      {social.myLeaderboardEntry && !social.myLeaderboardEntry.isMe && (
-        <View className="mx-4 mb-3 bg-primary/10 border border-primary/30 rounded-2xl p-3 flex-row items-center">
-          <Ionicons name="ribbon" size={18} color={Colors.primary} />
-          <Text className="text-primary font-bold ml-2">
-            Your Rank: #{social.myLeaderboardEntry.rank}
+      {/* Period selector */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginBottom: 14 }}>
+        {PERIODS.map(({ key, label }, i) => (
+          <Pressable
+            key={key}
+            onPress={() => setPeriod(key)}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+              backgroundColor: period === key ? Colors.primaryDim : SURFACE,
+              borderWidth: 1, borderColor: period === key ? Colors.primary : BORDER_SOFT,
+              marginRight: i < PERIODS.length - 1 ? 6 : 0,
+            }}
+          >
+            <Text style={{ color: period === key ? Colors.primarySoft : Colors.subtext, fontSize: 12, fontWeight: '600' }}>
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* Empty states */}
+      {scope === 'friends' && focusLeaderboard.length === 0 && !social.isLoading && (
+        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
+          <Ionicons name="people-outline" size={48} color={Colors.subtext} />
+          <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
+            Follow other students to see a friends leaderboard
+          </Text>
+          <Pressable style={{ marginTop: 12, backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}>
+            <Text style={{ color: Colors.primary, fontWeight: '600' }}>Find People</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {scope === 'group' && !social.selectedGroupId && (
+        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
+          <Text style={{ color: Colors.subtext, fontSize: 14, textAlign: 'center' }}>
+            Select a study group to see group rankings
           </Text>
         </View>
       )}
 
-      <FlatList
-        data={leaderboardEntries}
-        keyExtractor={(item) => `${item.userId}-${leaderboardType}`}
-        refreshControl={
-          <RefreshControl
-            refreshing={social.isLoading}
-            onRefresh={() => social.fetchLeaderboard(leaderboardType, leaderboardScope)}
-            tintColor={Colors.primary}
-          />
-        }
-        ListHeaderComponent={<View className="h-2" />}
-        ListEmptyComponent={
-          <View className="items-center py-16">
-            <Ionicons name="trophy-outline" size={48} color={Colors.darkSubtext} />
-            <Text className="text-gray-400 mt-4 font-medium">No data yet</Text>
-          </View>
-        }
-        renderItem={({ item, index }) => (
-          <LeaderboardRow
-            entry={item}
-            rank={index + 1}
-            type={leaderboardType}
-            isMe={item.isMe}
-          />
-        )}
-        ListFooterComponent={<View className="h-4" />}
-      />
-    </View>
-  );
+      {social.isLoading && <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 32 }} />}
 
-  return (
-    <SafeAreaView className="flex-1 bg-dark-bg">
-      <View className="px-6 py-4">
-        <Text className="text-2xl font-bold text-white">Social</Text>
-      </View>
+      {/* Podium */}
+      {focusLeaderboard.length >= 3 && !social.isLoading && (
+        <PodiumBlock entries={focusLeaderboard} />
+      )}
 
-      <TabBar
-        tabs={tabsWithBadges}
-        activeTab={activeTab}
-        onTabChange={(key) => setActiveTab(key as typeof activeTab)}
-      />
-
-      <View className="flex-1">
-        {activeTab === 'feed' && renderFeedTab()}
-        {activeTab === 'friends' && renderFriendsTab()}
-        {activeTab === 'requests' && renderRequestsTab()}
-        {activeTab === 'rankings' && renderRankingsTab()}
-      </View>
-
-      <Modal visible={showFriendProfile} transparent animationType="slide">
-        <View className="flex-1 bg-black/60 justify-end">
-          <View className="bg-dark-card rounded-t-3xl min-h-[400px] max-h-[80%]">
-            <View className="flex-row items-center justify-between px-6 pt-6 pb-4">
-              <Text className="text-xl font-bold text-white">Friend Profile</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setShowFriendProfile(false);
-                  setFriendProfile(null);
-                }}
-              >
-                <Ionicons name="close" size={24} color="white" />
-              </TouchableOpacity>
+      {/* Ranked list */}
+      {listEntries.length > 0 && !social.isLoading && (
+        <View style={{
+          backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1,
+          borderColor: BORDER_SOFT, marginHorizontal: 16, marginBottom: 12, overflow: 'hidden',
+        }}>
+          {listEntries.map((entry, idx) => (
+            <View key={entry.userId}>
+              {idx > 0 && <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginHorizontal: 16 }} />}
+              <LeaderboardListRow entry={entry} />
             </View>
-
-            <ScrollView className="px-6">
-              {friendProfile ? (
-                <>
-                  <View className="items-center mb-6">
-                    <View className="w-20 h-20 rounded-full bg-primary/20 items-center justify-center mb-3">
-                      <Text className="text-primary font-bold text-3xl">
-                        {friendProfile.username[0]?.toUpperCase() || '?'}
-                      </Text>
-                    </View>
-                    <Text className="text-white text-xl font-bold">{friendProfile.username}</Text>
-                    <View className="mt-2">
-                      <LevelBadge level={friendProfile.level} size="md" />
-                    </View>
-                  </View>
-
-                  <View className="flex-row justify-around mb-6 bg-dark-bg rounded-2xl p-4">
-                    <View className="items-center">
-                      <Text className="text-white text-lg font-bold">{friendProfile.currentStreak}</Text>
-                      <Text className="text-gray-400 text-xs">Streak</Text>
-                    </View>
-                    <View className="w-px bg-gray-700" />
-                    <View className="items-center">
-                      <Text className="text-white text-lg font-bold">{friendProfile.totalSessions}</Text>
-                      <Text className="text-gray-400 text-xs">Sessions</Text>
-                    </View>
-                    <View className="w-px bg-gray-700" />
-                    <View className="items-center">
-                      <Text className="text-white text-lg font-bold">
-                        {Math.floor(friendProfile.totalFocusTime / 60)}
-                      </Text>
-                      <Text className="text-gray-400 text-xs">Hours</Text>
-                    </View>
-                  </View>
-
-                  {friendProfile.recentAchievements.length > 0 && (
-                    <View className="mb-6">
-                      <Text className="text-gray-400 text-sm font-semibold mb-3">Recent Achievements</Text>
-                      <View className="flex-row flex-wrap">
-                        {friendProfile.recentAchievements.map((ach) => (
-                          <View
-                            key={ach.id}
-                            className="bg-dark-bg rounded-xl p-3 items-center mr-2 mb-2"
-                            style={{ minWidth: 80 }}
-                          >
-                            <Text className="text-2xl mb-1">{ach.icon}</Text>
-                            <Text className="text-white text-xs text-center font-medium">{ach.title}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-
-                  {friendProfile.recentFeedEvents.length > 0 && (
-                    <View className="mb-6">
-                      <Text className="text-gray-400 text-sm font-semibold mb-3">Recent Activity</Text>
-                      {friendProfile.recentFeedEvents.map((evt) => (
-                        <FeedCard key={evt.id} event={evt} />
-                      ))}
-                    </View>
-                  )}
-                </>
-              ) : (
-                <View className="items-center py-16">
-                  <ActivityIndicator color={Colors.primary} />
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {toastMessage && (
-        <View className="absolute bottom-8 left-6 right-6 bg-dark-card rounded-2xl py-3 px-4 shadow-lg border border-gray-700">
-          <Text className="text-white text-center font-medium text-sm">{toastMessage}</Text>
+          ))}
+          {myFocusEntry && myFocusEntry.position > 10 && (
+            <>
+              <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+                <Text style={{ color: Colors.subtext, letterSpacing: 4 }}>· · ·</Text>
+              </View>
+              <LeaderboardListRow entry={{ ...myFocusEntry, isMe: true }} />
+            </>
+          )}
         </View>
       )}
+
+      <NextTargetCard me={myFocusEntry} above={aboveMe} />
+      <View style={{ height: 80 }} />
+    </ScrollView>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
+        <Text style={{ color: Colors.textBright, fontSize: 26, fontWeight: '800', flex: 1 }}>Social</Text>
+        <Pressable style={{ marginRight: 14 }} onPress={() => social.markNotificationsRead()}>
+          <Ionicons name="notifications-outline" size={24} color={Colors.text} />
+          {social.unreadCount > 0 && (
+            <View style={{
+              position: 'absolute', top: -2, right: -2,
+              width: 8, height: 8, borderRadius: 4, backgroundColor: ROSE,
+            }} />
+          )}
+        </Pressable>
+        <Pressable>
+          <Ionicons name="search-outline" size={24} color={Colors.text} />
+        </Pressable>
+      </View>
+
+      {/* Tab switcher */}
+      <View style={{ flexDirection: 'row', marginHorizontal: 16, marginBottom: 4, backgroundColor: SURFACE, borderRadius: 24, padding: 4 }}>
+        {([['feed', '📰 Feed'], ['leaderboard', '🏆 Leaderboard']] as const).map(([tab, label]) => (
+          <Pressable
+            key={tab}
+            onPress={() => setActiveTab(tab)}
+            style={{
+              flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20,
+              backgroundColor: activeTab === tab ? Colors.primary : 'transparent',
+              ...(activeTab === tab ? { shadowColor: Colors.primary, shadowOpacity: 0.5, shadowRadius: 8, elevation: 4 } : {}),
+            }}
+          >
+            <Text style={{ color: activeTab === tab ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '600' }}>
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={{ flex: 1 }}>
+        {activeTab === 'feed'        && renderFeed()}
+        {activeTab === 'leaderboard' && renderLeaderboard()}
+      </View>
+
+      {/* FAB — Feed tab only */}
+      {activeTab === 'feed' && (
+        <Pressable
+          onPress={() => setShowCreatePost(true)}
+          style={{
+            position: 'absolute', bottom: 24, right: 20,
+            width: 52, height: 52, borderRadius: 26,
+            backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+            shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 14, elevation: 8,
+          }}
+        >
+          <Ionicons name="add" size={26} color="#fff" />
+        </Pressable>
+      )}
+
+      <CreatePostSheet
+        visible={showCreatePost}
+        onClose={() => setShowCreatePost(false)}
+        onPost={handleCreatePost}
+        studyGroups={social.studyGroups}
+      />
     </SafeAreaView>
   );
 }

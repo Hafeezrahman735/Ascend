@@ -537,7 +537,8 @@ export default function TimerScreen() {
               marginTop: 4,
               textAlign: 'center',
             }}>
-              Total Focus Time
+              Focus Time Today
+              
             </Text>
           </View>
 

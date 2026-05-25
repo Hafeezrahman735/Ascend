@@ -7,6 +7,11 @@ import {
   ScrollView,
   TouchableOpacity,
   Pressable,
+  Modal,
+  FlatList,
+  Image,
+  TextInput,
+  ActivityIndicator,
   AppState,
   AccessibilityInfo,
 } from 'react-native';
@@ -26,7 +31,9 @@ import Animated, {
 import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
 import { useTaskStore } from '../../stores/taskStore';
+import { useSocialStore } from '../../stores/socialStore';
 import { getSessionHistory } from '../../store/sync';
+import type { SocialPost, UserSocialStats, FreePostTag, UserListItem } from '../../types';
 import { Colors } from '../../constants/Colors';
 import {
   getRank, getXpToNextRank, getXpProgressInRank,
@@ -51,12 +58,38 @@ type MergedAchievement = CatalogEntry & {
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
 
-const GOLD   = '#FFD700';
-const GOLD_DIM = '#3A3000';
-const AMBER  = '#FFB347';
-const AMBER_DIM = '#3A2800';
-const TEAL   = '#00E5C3';
+const GOLD        = '#FFD700';
+const GOLD_DIM    = '#3A3000';
+const AMBER       = '#FFB347';
+const AMBER_DIM   = '#3A2800';
+const TEAL        = '#00E5C3';
+const ROSE        = '#F06292';
+const ROSE_DIM    = '#3A0F20';
 const BORDER_SOFT = '#1C1C48';
+
+const POST_TYPE_COLORS: Record<string, { label: string; bg: string; color: string }> = {
+  session_recap:      { label: '⚡ Session Recap',        bg: Colors.primaryDim, color: Colors.primarySoft },
+  achievement_unlock: { label: '🏅 Achievement Unlocked', bg: GOLD_DIM,          color: GOLD },
+  accountability:     { label: '🤝 Accountability',        bg: Colors.tealDim,    color: TEAL },
+  streak_milestone:   { label: '🔥 Streak Milestone',      bg: AMBER_DIM,         color: AMBER },
+  free_post:          { label: '✏️ Free Post',             bg: ROSE_DIM,          color: ROSE },
+};
+
+const FREE_TAG_META: Record<FreePostTag, { emoji: string; label: string }> = {
+  study_tip:   { emoji: '💡', label: 'Study Tip' },
+  question:    { emoji: '❓', label: 'Question' },
+  motivation:  { emoji: '🙌', label: 'Motivation' },
+  celebration: { emoji: '🎉', label: 'Celebration' },
+  resource:    { emoji: '📖', label: 'Resource' },
+  general:     { emoji: '💬', label: 'General' },
+};
+
+const GROUP_AVATAR_BG: Record<string, string> = {
+  purple: Colors.primaryDim,
+  teal:   Colors.tealDim,
+  amber:  AMBER_DIM,
+  rose:   ROSE_DIM,
+};
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -125,6 +158,290 @@ function fmtDate(iso: string | null): string {
 
 function fmtXP(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function fmtFocusMins(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatPostTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const h12 = d.getHours() % 12 || 12;
+  const mins = d.getMinutes().toString().padStart(2, '0');
+  const ampm = d.getHours() < 12 ? 'am' : 'pm';
+  const timeStr = `${h12}:${mins}${ampm}`;
+  if (d.toDateString() === now.toDateString()) return `Today · ${timeStr}`;
+  const yesterday = new Date(now.getTime() - 86400000);
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday · ${timeStr}`;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getMonth()]} ${d.getDate()} · ${timeStr}`;
+}
+
+// ─── Social stats strip ───────────────────────────────────────────────────────
+
+function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
+  stats: UserSocialStats;
+  onFollowers: () => void;
+  onFollowing: () => void;
+  onFriends: () => void;
+}) {
+  return (
+    <View style={{
+      flexDirection: 'row', marginTop: 14, paddingTop: 12,
+      borderTopWidth: 0.5, borderTopColor: BORDER_SOFT,
+    }}>
+      <Pressable onPress={onFollowers} style={{ flex: 1, alignItems: 'center' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', fontFamily: 'monospace' }}>
+          {stats.followerCount}
+        </Text>
+        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>
+          Followers
+        </Text>
+      </Pressable>
+
+      <View style={{ width: 0.5, backgroundColor: BORDER_SOFT }} />
+
+      <Pressable onPress={onFollowing} style={{ flex: 1, alignItems: 'center' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', fontFamily: 'monospace' }}>
+          {stats.followingCount}
+        </Text>
+        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>
+          Following
+        </Text>
+      </Pressable>
+
+      <View style={{ width: 0.5, backgroundColor: BORDER_SOFT }} />
+
+      <Pressable onPress={onFriends} style={{ flex: 1, alignItems: 'center' }}>
+        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>
+          Friends
+        </Text>
+        {stats.friendCount === 0 ? (
+          <Text style={{ color: Colors.primarySoft, fontSize: 11 }}>Find friends →</Text>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {stats.friendPreviews.slice(0, 4).map((f, i) => (
+              <View key={f.userId} style={{
+                width: 24, height: 24, borderRadius: 8,
+                backgroundColor: GROUP_AVATAR_BG[f.avatarColor] ?? Colors.primaryDim,
+                borderWidth: 2, borderColor: Colors.surface,
+                alignItems: 'center', justifyContent: 'center',
+                marginLeft: i > 0 ? -6 : 0, zIndex: 4 - i,
+              }}>
+                <Text style={{ fontSize: 12 }}>{f.avatarEmoji}</Text>
+              </View>
+            ))}
+            {stats.friendCount > 4 && (
+              <Text style={{ color: Colors.primarySoft, fontSize: 10, marginLeft: 6 }}>
+                +{stats.friendCount - 4}
+              </Text>
+            )}
+          </View>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
+// ─── User list modal (followers / following / friends) ────────────────────────
+
+function UserListModal({ visible, title, items, isLoading, onClose, renderAction }: {
+  visible: boolean;
+  title: string;
+  items: UserListItem[];
+  isLoading: boolean;
+  onClose: () => void;
+  renderAction?: (item: UserListItem) => React.ReactNode;
+}) {
+  const [search, setSearch] = useState('');
+  const filtered = items.filter(
+    (i) => i.displayName.toLowerCase().includes(search.toLowerCase()) ||
+            i.handle.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#00000080', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '82%' }}>
+          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
+            <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>{title}</Text>
+            <Pressable onPress={onClose}>
+              <Ionicons name="close" size={22} color={Colors.subtext} />
+            </Pressable>
+          </View>
+          <View style={{
+            marginHorizontal: 16, marginBottom: 12,
+            backgroundColor: Colors.raised, borderRadius: 12,
+            flexDirection: 'row', alignItems: 'center',
+            paddingHorizontal: 12, paddingVertical: 8,
+          }}>
+            <Ionicons name="search" size={16} color={Colors.subtext} />
+            <TextInput
+              value={search} onChangeText={setSearch}
+              placeholder="Search..." placeholderTextColor={Colors.subtext}
+              style={{ flex: 1, marginLeft: 8, color: Colors.textBright, fontSize: 14 }}
+            />
+          </View>
+          {isLoading ? (
+            <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 32 }} />
+          ) : (
+            <FlatList
+              data={filtered}
+              keyExtractor={(item) => item.userId}
+              ListEmptyComponent={
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <Text style={{ color: Colors.subtext, fontSize: 13 }}>No results</Text>
+                </View>
+              }
+              contentContainerStyle={{ paddingBottom: 32 }}
+              renderItem={({ item }) => (
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
+                  <View style={{
+                    width: 40, height: 40, borderRadius: 12, backgroundColor: Colors.raised,
+                    alignItems: 'center', justifyContent: 'center', marginRight: 12,
+                  }}>
+                    <Text style={{ fontSize: 22 }}>{item.avatarEmoji}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 14 }}>{item.displayName}</Text>
+                    <Text style={{ color: Colors.subtext, fontSize: 12 }}>@{item.handle}</Text>
+                  </View>
+                  {renderAction?.(item)}
+                </View>
+              )}
+            />
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Compact post card ────────────────────────────────────────────────────────
+
+function CompactPostCard({ post, onPress }: { post: SocialPost; onPress: () => void }) {
+  const meta = POST_TYPE_COLORS[post.type] ?? POST_TYPE_COLORS.free_post;
+  const tagLabel = post.type === 'free_post' && post.contentTag
+    ? `${FREE_TAG_META[post.contentTag].emoji} ${FREE_TAG_META[post.contentTag].label}`
+    : meta.label;
+
+  const topReactions = Object.entries(post.reactions ?? {})
+    .map(([emoji, ids]) => ({ emoji, count: ids.length }))
+    .filter((r) => r.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2);
+
+  const hasStats = post.sessionCount != null || post.focusMinutes != null ||
+    post.streakAtPost != null || (post.attachedStats?.length ?? 0) > 0;
+
+  return (
+    <Pressable onPress={onPress} style={{
+      backgroundColor: Colors.surface, borderRadius: 14, borderWidth: 1, borderColor: Colors.border,
+      marginHorizontal: 16, marginBottom: 10, padding: 12,
+    }}>
+      <View style={{ alignSelf: 'flex-start', backgroundColor: meta.bg, borderRadius: 7, paddingHorizontal: 7, paddingVertical: 2, marginBottom: 6 }}>
+        <Text style={{ color: meta.color, fontSize: 10, fontWeight: '600' }}>{tagLabel}</Text>
+      </View>
+
+      {post.caption ? (
+        <Text style={{ color: Colors.text, fontSize: 12, lineHeight: 17, marginBottom: 6 }} numberOfLines={2}>
+          {post.caption}
+        </Text>
+      ) : null}
+
+      {post.photoUrl ? (
+        <Image source={{ uri: post.photoUrl }} style={{ width: '100%', height: 80, borderRadius: 10, marginBottom: 6 }} resizeMode="cover" />
+      ) : null}
+
+      {hasStats && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+          {post.sessionCount != null && (
+            <View style={{ backgroundColor: Colors.raised, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 4 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 12, fontWeight: '700' }}>{post.sessionCount}</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 9 }}>Sessions</Text>
+            </View>
+          )}
+          {post.focusMinutes != null && (
+            <View style={{ backgroundColor: Colors.raised, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 4 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 12, fontWeight: '700' }}>{fmtFocusMins(post.focusMinutes)}</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 9 }}>Focus</Text>
+            </View>
+          )}
+          {post.streakAtPost != null && (
+            <View style={{ backgroundColor: Colors.raised, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 4 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 12, fontWeight: '700' }}>{post.streakAtPost}d</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 9 }}>Streak</Text>
+            </View>
+          )}
+          {(post.attachedStats ?? []).map((s, i) => (
+            <View key={i} style={{ backgroundColor: Colors.raised, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 4 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 12, fontWeight: '700' }}>{s.value}</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 9 }}>{s.label}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+        <Text style={{ color: Colors.subtext, fontSize: 11 }}>{formatPostTime(post.createdAt)}</Text>
+        {topReactions.length > 0 && (
+          <Text style={{ color: Colors.subtext, fontSize: 11 }}>
+            {topReactions.map((r) => `${r.emoji} ${r.count}`).join('  ')}
+          </Text>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
+// ─── Posts pane ───────────────────────────────────────────────────────────────
+
+function PostsPane({ posts, isLoading, hasMore, onLoadMore, onPostPress, isOwnProfile }: {
+  posts: SocialPost[];
+  isLoading: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  onPostPress: (post: SocialPost) => void;
+  isOwnProfile: boolean;
+}) {
+  if (posts.length === 0 && !isLoading) {
+    return (
+      <View style={{ padding: 32, alignItems: 'center' }}>
+        <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
+          {isOwnProfile
+            ? "You haven't posted anything yet. Share your progress from the Social tab."
+            : 'No public posts yet.'}
+        </Text>
+        {isOwnProfile && (
+          <Pressable style={{ marginTop: 14, backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 }}>
+            <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Go to Social</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ paddingTop: 12 }}>
+      {posts.map((post) => (
+        <CompactPostCard key={post.id} post={post} onPress={() => onPostPress(post)} />
+      ))}
+      {isLoading && <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />}
+      {hasMore && !isLoading && (
+        <Pressable onPress={onLoadMore} style={{ alignItems: 'center', paddingVertical: 14 }}>
+          <Text style={{ color: Colors.primary, fontSize: 13, fontWeight: '600' }}>Load more</Text>
+        </Pressable>
+      )}
+      <View style={{ height: 20 }} />
+    </View>
+  );
 }
 
 // ─── XP bar fill ─────────────────────────────────────────────────────────────
@@ -267,6 +584,10 @@ interface HeroCardProps {
   nextRank: RankTier | null;
   reduceMotion: boolean;
   onSettings: () => void;
+  socialStats?: UserSocialStats | null;
+  onFollowersPress?: () => void;
+  onFollowingPress?: () => void;
+  onFriendsPress?: () => void;
 }
 
 function HeroCard({
@@ -274,6 +595,7 @@ function HeroCard({
   totalSessions, totalFocusMinutes, longestStreak,
   xpProgress, xpToNextRank, nextRank,
   reduceMotion, onSettings,
+  socialStats, onFollowersPress, onFollowingPress, onFriendsPress,
 }: HeroCardProps) {
   const avatarEmoji = getAvatarEmoji(username);
   const isNewUser = xp === 0;
@@ -372,6 +694,16 @@ function HeroCard({
           </Text>
         )}
       </View>
+
+      {/* Social stats strip */}
+      {socialStats != null && onFollowersPress && onFollowingPress && onFriendsPress && (
+        <SocialStatsStrip
+          stats={socialStats}
+          onFollowers={onFollowersPress}
+          onFollowing={onFollowingPress}
+          onFriends={onFriendsPress}
+        />
+      )}
 
       {/* Bottom stat row */}
       <View style={{
@@ -928,6 +1260,7 @@ export default function ProfileScreen() {
   const auth = useAuthStore();
   const gamification = useGamification();
   const tasks = useTaskStore(s => s.tasks);
+  const social = useSocialStore();
 
   const xp = gamification.xp;
   const currentRank = getRank(xp);
@@ -947,6 +1280,11 @@ export default function ProfileScreen() {
   });
   const [rankUpTier, setRankUpTier] = useState<RankTier | null>(null);
   const [toast, setToast] = useState<{ icon: string; name: string; xpReward: number } | null>(null);
+  const [activeProfileTab, setActiveProfileTab] = useState<'awards' | 'posts'>('awards');
+  const [showFollowers, setShowFollowers] = useState(false);
+  const [showFollowing, setShowFollowing] = useState(false);
+  const [showFriends, setShowFriends] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<SocialPost | null>(null);
 
   const prevRankRef = useRef<RankTier>(currentRank);
   const prevRewardLenRef = useRef(gamification.pendingRewards.length);
@@ -987,6 +1325,8 @@ export default function ProfileScreen() {
   useEffect(() => {
     gamification.fetchProfile();
     gamification.fetchAchievements();
+    social.fetchUserSocialStats();
+    social.fetchUserPosts();
   }, []);
 
   // Reduced motion
@@ -1054,6 +1394,10 @@ export default function ProfileScreen() {
         nextRank={nextRank}
         reduceMotion={reduceMotion}
         onSettings={() => router.push('/settings')}
+        socialStats={social.userSocialStats}
+        onFollowersPress={() => { setShowFollowers(true); social.fetchFollowers(); }}
+        onFollowingPress={() => { setShowFollowing(true); social.fetchFollowing(); }}
+        onFriendsPress={() => { setShowFriends(true); social.loadFriends(); }}
       />
 
       {/* Scrollable sections */}
@@ -1064,9 +1408,82 @@ export default function ProfileScreen() {
       >
         <StreakSection streakState={streakState} reduceMotion={reduceMotion} />
         <RankSection xp={xp} level={gamification.level} currentRank={currentRank} />
-        <AchievementsSection achievements={mergedAchievements} allUnlocked={allUnlocked} />
-        <SubjectBadgesSection badges={subjectBadges} />
+
+        {/* Awards | Posts tab switcher */}
+        <View style={{ marginTop: 24, paddingHorizontal: 16 }}>
+          <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: BORDER_SOFT }}>
+            {(['awards', 'posts'] as const).map((tab) => (
+              <Pressable
+                key={tab}
+                onPress={() => setActiveProfileTab(tab)}
+                style={{ flex: 1, alignItems: 'center', paddingTop: 4, paddingBottom: 10 }}
+              >
+                <Text style={{
+                  color: activeProfileTab === tab ? Colors.textBright : Colors.subtext,
+                  fontSize: 13, fontWeight: '600',
+                }}>
+                  {tab === 'awards' ? 'Awards' : 'Posts'}
+                </Text>
+                {activeProfileTab === tab && (
+                  <View style={{
+                    position: 'absolute', bottom: 0, left: '15%', right: '15%',
+                    height: 2, backgroundColor: Colors.primary, borderRadius: 1,
+                  }} />
+                )}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {activeProfileTab === 'awards' ? (
+          <>
+            <AchievementsSection achievements={mergedAchievements} allUnlocked={allUnlocked} />
+            <SubjectBadgesSection badges={subjectBadges} />
+          </>
+        ) : (
+          <PostsPane
+            posts={social.userPosts}
+            isLoading={social.isLoading}
+            hasMore={social.userPostsCursor !== null}
+            onLoadMore={social.fetchMoreUserPosts}
+            onPostPress={(post) => setSelectedPost(post)}
+            isOwnProfile={true}
+          />
+        )}
       </ScrollView>
+
+      {/* Followers modal */}
+      <UserListModal
+        visible={showFollowers}
+        title="Followers"
+        items={social.followers}
+        isLoading={social.isLoading}
+        onClose={() => setShowFollowers(false)}
+      />
+
+      {/* Following modal */}
+      <UserListModal
+        visible={showFollowing}
+        title="Following"
+        items={social.following}
+        isLoading={social.isLoading}
+        onClose={() => setShowFollowing(false)}
+      />
+
+      {/* Friends modal */}
+      <UserListModal
+        visible={showFriends}
+        title="Friends"
+        items={social.friends.map(f => ({
+          userId: f.id,
+          displayName: f.username,
+          handle: f.username.toLowerCase().replace(/\s/g, ''),
+          avatarEmoji: getAvatarEmoji(f.username),
+          rank: '',
+        }))}
+        isLoading={social.isLoading}
+        onClose={() => setShowFriends(false)}
+      />
 
       {/* Rank-up overlay */}
       {rankUpTier && (
