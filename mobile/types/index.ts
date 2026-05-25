@@ -41,6 +41,7 @@ export interface Friend {
   id: string;
   username: string;
   avatarUrl: string | null;
+  avatarEmoji: string;
   privacySetting?: string;
   friendshipId?: string;
   createdAt?: string;

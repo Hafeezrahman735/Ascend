@@ -2,7 +2,9 @@ import { create } from 'zustand';
 import { api } from '../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTaskStore } from './taskStore';
+import { useGamificationStore } from './gamificationStore';
 import { recordCompletedSession, generateSessionId } from '../store/sync';
+import type { SessionReward } from '../types';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
 type TimerPhase = 'focus' | 'shortBreak' | 'longBreak';
@@ -23,6 +25,7 @@ interface TimerState {
   globalSessions: number;
   globalTotalTime: number;
   lastSessionDate: string | null;
+  lastCompletedSessionId: string | null;
 
   start: () => void;
   pause: () => void;
@@ -63,6 +66,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   globalSessions: 0,
   globalTotalTime: 0,
   lastSessionDate: null,
+  lastCompletedSessionId: null,
 
   start: () => {
     const { status, currentPhase, settings } = get();
@@ -149,6 +153,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
           ? useTaskStore.getState().tasks.find((t) => t.id === selectedTaskId)?.title ?? null
           : null;
         const sessionId = generateSessionId();
+        set({ lastCompletedSessionId: sessionId });
 
         if (selectedTaskId) {
           useTaskStore.getState().incrementTaskSession(selectedTaskId, sessionDuration);
@@ -163,14 +168,20 @@ export const useTimerStore = create<TimerState>((set, get) => ({
           type: 'focus',
         });
 
-        api.post('/timer/complete', {
+        api.post<SessionReward>('/timer/complete', {
           completedAt: Date.now(),
           actualElapsedSeconds: sessionDuration,
           taskId: selectedTaskId ?? null,
           taskLabel,
           clientSessionId: sessionId,
           plannedDurationSeconds: settings.workDuration,
-        }).catch((err) => console.warn('[timer] complete sync failed:', err));
+        })
+        .then((res) => {
+          if (res.success && res.data) {
+            useGamificationStore.getState().applySessionReward(res.data);
+          }
+        })
+        .catch((err) => console.warn('[timer] complete sync failed:', err));
       }
     } else {
       // Break completed — return to focus idle, no stats update

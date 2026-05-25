@@ -1,7 +1,26 @@
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
 import { Task } from '../types';
 import { getAllTaskStatsFromHistory } from '../store/sync';
+import { useAuthStore } from './authStore';
+
+const taskCacheKey = (userId: string) => `tasks:cache:${userId}`;
+
+async function writeCachedTasks(userId: string, tasks: Task[]) {
+  try {
+    await AsyncStorage.setItem(taskCacheKey(userId), JSON.stringify(tasks));
+  } catch {}
+}
+
+async function readCachedTasks(userId: string): Promise<Task[] | null> {
+  try {
+    const raw = await AsyncStorage.getItem(taskCacheKey(userId));
+    return raw ? (JSON.parse(raw) as Task[]) : null;
+  } catch {
+    return null;
+  }
+}
 
 interface TaskStoreState {
   tasks: Task[];
@@ -9,7 +28,8 @@ interface TaskStoreState {
   isLoading: boolean;
   error: string | null;
 
-  fetchTasks: () => Promise<void>;
+  hydrateTasks: (userId: string) => Promise<void>;
+  fetchTasks: (silent?: boolean) => Promise<void>;
   createTask: (data: {
     title: string;
     description?: string;
@@ -36,8 +56,15 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  fetchTasks: async () => {
-    set({ isLoading: true, error: null });
+  hydrateTasks: async (userId: string) => {
+    const cached = await readCachedTasks(userId);
+    if (cached && cached.length > 0) {
+      set({ tasks: cached });
+    }
+  },
+
+  fetchTasks: async (silent = false) => {
+    if (!silent) set({ isLoading: true, error: null });
     try {
       const res = await api.get<Task[]>('/tasks');
       if (res.success && res.data) {
@@ -49,6 +76,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
           return stats ? { ...t, ...stats } : t;
         });
         set({ tasks, isLoading: false });
+        const userId = useAuthStore.getState().user?.id;
+        if (userId) writeCachedTasks(userId, tasks);
       } else {
         set({ error: res.error || 'Failed to fetch tasks', isLoading: false });
       }
@@ -58,6 +87,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   },
 
   createTask: async (data) => {
+    const userId = useAuthStore.getState().user?.id;
     const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const tempTask: Task = {
       id: tempId,
@@ -74,12 +104,25 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       totalTimeOnTask: 0,
       sessionDates: [],
     };
-    const tasks = get().tasks;
-    set({ tasks: [tempTask, ...tasks] });
+    const withTemp = [tempTask, ...get().tasks];
+    set({ tasks: withTemp });
+    // Fix 3: persist optimistic state immediately so a kill-during-POST survives restart
+    if (userId) writeCachedTasks(userId, withTemp);
     try {
       const res = await api.post<Task>('/tasks', data);
       if (res.success && res.data) {
-        set({ tasks: get().tasks.map((t) => (t.id === tempId ? res.data! : t)) });
+        // Fix 2: handle race where background fetchTasks already evicted the temp entry
+        const current = get().tasks;
+        const hasTemp = current.some((t) => t.id === tempId);
+        const hasReal = current.some((t) => t.id === res.data!.id);
+        const confirmed = hasTemp
+          ? current.map((t) => (t.id === tempId ? res.data! : t))
+          : hasReal
+          ? current
+          : [res.data!, ...current];
+        set({ tasks: confirmed });
+        // Fix 1: keep cache in sync after confirmed creation
+        if (userId) writeCachedTasks(userId, confirmed);
         return res.data;
       }
       return tempTask;
@@ -94,6 +137,9 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       if (res.success && res.data) {
         const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...res.data } : t));
         set({ tasks });
+        // Fix 1: write cache after confirmed update
+        const userId = useAuthStore.getState().user?.id;
+        if (userId) writeCachedTasks(userId, tasks);
       }
     } catch (err) {
       console.warn('[tasks] updateTask failed:', err);
@@ -107,6 +153,9 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         const tasks = get().tasks.filter((t) => t.id !== id);
         const selectedTaskId = get().selectedTaskId === id ? null : get().selectedTaskId;
         set({ tasks, selectedTaskId });
+        // Fix 1: write cache after confirmed deletion
+        const userId = useAuthStore.getState().user?.id;
+        if (userId) writeCachedTasks(userId, tasks);
       }
     } catch (err) {
       console.warn('[tasks] deleteTask failed:', err);
@@ -120,24 +169,27 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   toggleComplete: async (id) => {
     const task = get().tasks.find((t) => t.id === id);
     if (!task) return;
+    const userId = useAuthStore.getState().user?.id;
     const nowCompleted = !task.isCompleted;
     const completedAt = nowCompleted ? new Date().toISOString() : null;
-    set({
-      tasks: get().tasks.map((t) =>
-        t.id === id ? { ...t, isCompleted: nowCompleted, completedAt: completedAt ?? undefined } : t
-      ),
-    });
+    const optimistic = get().tasks.map((t) =>
+      t.id === id ? { ...t, isCompleted: nowCompleted, completedAt: completedAt ?? undefined } : t
+    );
+    set({ tasks: optimistic });
+    // Fix 1: persist optimistic toggle — server confirmation rarely fails
+    if (userId) writeCachedTasks(userId, optimistic);
     try {
       await api.patch(`/tasks/${id}`, {
         isCompleted: nowCompleted,
         completedAt: completedAt,
       });
     } catch {
-      set({
-        tasks: get().tasks.map((t) =>
-          t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t
-        ),
-      });
+      const reverted = get().tasks.map((t) =>
+        t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t
+      );
+      set({ tasks: reverted });
+      // Fix 1: revert cache on failure
+      if (userId) writeCachedTasks(userId, reverted);
     }
   },
 

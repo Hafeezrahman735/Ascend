@@ -17,7 +17,7 @@ const { width } = Dimensions.get('window');
 
 const STROKE_WIDTH = 8;
 const DOT_RADIUS = 5;
-const RADIUS = Math.min(width * 0.22, 105);
+const RADIUS = Math.min(width * 0.46, 140);
 const SVG_PADDING = 12;
 const SIZE = (RADIUS + STROKE_WIDTH / 2 + DOT_RADIUS) * 2 + SVG_PADDING * 2;
 const CX = SIZE / 2;
@@ -305,7 +305,7 @@ export default function TimerScreen() {
 
             <View style={{ position: 'absolute', alignItems: 'center' }}>
               <Text style={{
-                fontSize: 48,
+                fontSize: 56,
                 fontWeight: '700',
                 color: Colors.textBright,
                 fontVariant: ['tabular-nums'],
@@ -338,11 +338,11 @@ export default function TimerScreen() {
             <View
               key={i}
               style={{
-                width: i < completedDots ? 10 : 8,
-                height: i < completedDots ? 10 : 8,
-                borderRadius: 5,
+                width: i < completedDots ? 28 : 20,
+                height: 6,
+                borderRadius: 3,
                 backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
-                marginHorizontal: 5,
+                marginHorizontal: 3,
                 shadowColor: i < completedDots ? Colors.accent : 'transparent',
                 shadowOffset: { width: 0, height: 0 },
                 shadowOpacity: i < completedDots ? 0.6 : 0,
@@ -538,7 +538,7 @@ export default function TimerScreen() {
               textAlign: 'center',
             }}>
               Focus Time Today
-              
+
             </Text>
           </View>
 

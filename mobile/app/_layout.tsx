@@ -10,6 +10,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useGamificationStore } from '../stores/gamificationStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useTimerStore } from '../stores/timerStore';
+import { useSocialStore } from '../stores/socialStore';
 import { Colors } from '../constants/Colors';
 
 export default function RootLayout() {
@@ -27,10 +28,17 @@ export default function RootLayout() {
         return;
       }
 
-      await Promise.allSettled([
-        useAuthStore.getState().loadUser(),
+      await useAuthStore.getState().loadUser();
+      const userId = useAuthStore.getState().user?.id;
+
+      if (userId) {
+        await useTaskStore.getState().hydrateTasks(userId);
+      }
+
+      Promise.allSettled([
         useGamificationStore.getState().fetchProfile(),
-        useTaskStore.getState().fetchTasks(),
+        useTaskStore.getState().fetchTasks(true),
+        useSocialStore.getState().fetchNotifications(),
       ]);
 
       useTimerStore.getState().hydrate();

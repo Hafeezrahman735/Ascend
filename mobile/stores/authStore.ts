@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types';
 import { setTokens, clearTokens, api } from '../services/api';
 import { reconnectTimerSocket } from '../services/socket';
@@ -78,12 +79,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
+    const userId = get().user?.id;
     try {
       await api.post('/auth/logout', {});
     } catch {
     } finally {
       clearTokens();
       await clearSessionHistory();
+      if (userId) {
+        AsyncStorage.removeItem(`tasks:cache:${userId}`).catch(() => {});
+      }
       set({ user: null, isAuthenticated: false, isLoading: false, error: null });
     }
   },

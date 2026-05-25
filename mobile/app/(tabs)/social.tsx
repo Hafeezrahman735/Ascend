@@ -9,30 +9,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSocialStore } from '../../stores/socialStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
+import { useTimerStore } from '../../stores/timerStore';
 import { getSessionHistory } from '../../store/sync';
 import { Colors } from '../../constants/Colors';
+import {
+  BORDER_SOFT, AMBER, AMBER_DIM, ROSE, ROSE_DIM, GOLD, GOLD_DIM,
+  POST_TYPE_META, FREE_TAG_META,
+} from '../../constants/socialTheme';
 import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
 
-// ─── Local design tokens ─────────────────────────────────────────────────────
+// ─── Local aliases ────────────────────────────────────────────────────────────
 
-const BORDER_SOFT = '#1C1C48';
-const AMBER       = '#FFB347';
-const AMBER_DIM   = '#3A2800';
-const ROSE        = '#F06292';
-const ROSE_DIM    = '#3A0F20';
-const GOLD        = '#FFD700';
-const GOLD_DIM    = '#3A3000';
-const SURFACE     = Colors.surface;
-const RAISED      = Colors.raised;
-
-const FREE_POST_TAG_META: Record<FreePostTag, { emoji: string; label: string }> = {
-  study_tip:   { emoji: '💡', label: 'Study Tip' },
-  question:    { emoji: '❓', label: 'Question' },
-  motivation:  { emoji: '🙌', label: 'Motivation' },
-  celebration: { emoji: '🎉', label: 'Celebration' },
-  resource:    { emoji: '📖', label: 'Resource' },
-  general:     { emoji: '💬', label: 'General' },
-};
+const SURFACE = Colors.surface;
+const RAISED  = Colors.raised;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -130,18 +119,11 @@ function JoinChip({ onPress }: { onPress: () => void }) {
 
 // ─── Post type tag ───────────────────────────────────────────────────────────
 
-const POST_TYPE_META: Record<PostType, { label: string; bg: string; color: string }> = {
-  session_recap:      { label: '⚡ Session Recap',        bg: Colors.primaryDim, color: Colors.primarySoft },
-  achievement_unlock: { label: '🏅 Achievement Unlocked', bg: GOLD_DIM,          color: GOLD },
-  accountability:     { label: '🤝 Accountability',        bg: Colors.tealDim,    color: Colors.accent },
-  streak_milestone:   { label: '🔥 Streak Milestone',      bg: AMBER_DIM,         color: AMBER },
-  free_post:          { label: '✏️ Free Post',             bg: ROSE_DIM,          color: ROSE },
-};
 
 function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePostTag | null }) {
   const base = POST_TYPE_META[type];
   const label = type === 'free_post' && contentTag
-    ? `${FREE_POST_TAG_META[contentTag].emoji} ${FREE_POST_TAG_META[contentTag].label}`
+    ? `${FREE_TAG_META[contentTag].emoji} ${FREE_TAG_META[contentTag].label}`
     : base.label;
   return (
     <View style={{
@@ -206,7 +188,7 @@ function AccountabilityBlock({ post }: { post: SocialPost }) {
   const ch = post.challenge;
   if (!ch) return null;
   const completed = Object.values(ch.memberProgress).reduce((a, b) => a + b, 0);
-  const pct = Math.min(100, Math.round((completed / ch.targetValue) * 100));
+  const pct = ch.targetValue > 0 ? Math.min(100, Math.round((completed / ch.targetValue) * 100)) : 0;
   const dl = Math.ceil((new Date(ch.deadline).getTime() - Date.now()) / 86400000);
   return (
     <View style={{
@@ -221,7 +203,10 @@ function AccountabilityBlock({ post }: { post: SocialPost }) {
         <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.accent }} />
       </View>
       <Text style={{ color: Colors.subtext, fontSize: 11 }}>
-        {completed} / {ch.targetValue} {ch.metric === 'sessions' ? 'sessions' : 'focus hours'} · {pct}% · {dl > 0 ? `${dl} days left` : 'Deadline passed'}
+        {ch.metric === 'focus_hours'
+          ? `${completed.toFixed(1)} / ${Number(ch.targetValue).toFixed(1)} focus hours`
+          : `${completed} / ${ch.targetValue} sessions`}
+        {` · ${pct}% · `}{dl > 0 ? `${dl} days left` : 'Deadline passed'}
       </Text>
       {(ch.memberEmojis ?? []).length > 0 && (
         <View style={{ flexDirection: 'row', marginTop: 8 }}>
@@ -530,7 +515,7 @@ function NextTargetCard({ me, above }: {
     );
   }
 
-  if (!above) return null;
+  if (!above || above.focusMinutes === 0) return null;
   const gap = Math.max(0, above.focusMinutes - me.focusMinutes);
   const pct = Math.min(99, Math.round((me.focusMinutes / above.focusMinutes) * 100));
 
@@ -560,15 +545,15 @@ function NextTargetCard({ me, above }: {
 
 // ─── Create post sheet ───────────────────────────────────────────────────────
 
-const POST_TYPE_CARDS: { type: PostType; icon: string; label: string; desc: string }[] = [
+const POST_TYPE_CARDS: { type: PostType; icon: string; label: string; desc: string; comingSoon?: boolean }[] = [
   { type: 'free_post',          icon: '✏️', label: 'Share something',                 desc: 'Write a free post with optional stats or photo' },
   { type: 'session_recap',      icon: '⚡', label: 'Share a session recap',           desc: 'Show off your recent focus block' },
   { type: 'achievement_unlock', icon: '🏅', label: 'Share an achievement',            desc: 'Celebrate a milestone you unlocked' },
   { type: 'streak_milestone',   icon: '🔥', label: 'Share a streak milestone',        desc: 'Brag about your consistency' },
-  { type: 'accountability',     icon: '🤝', label: 'Start an accountability challenge', desc: 'Challenge your study group' },
+  { type: 'accountability',     icon: '🤝', label: 'Start an accountability challenge', desc: 'Challenge your study group', comingSoon: true },
 ];
 
-const FREE_TAGS = Object.entries(FREE_POST_TAG_META) as [FreePostTag, { emoji: string; label: string }][];
+const FREE_TAGS = Object.entries(FREE_TAG_META) as [FreePostTag, { emoji: string; label: string }][];
 
 function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId, studyGroups }: {
   visibility: 'public' | 'group';
@@ -627,6 +612,7 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
   studyGroups: StudyGroup[];
 }) {
   const gamification = useGamification();
+  const timer = useTimerStore();
 
   const [step,          setStep]          = useState<1 | 2>(1);
   const [selectedType,  setSelectedType]  = useState<PostType | null>(null);
@@ -635,18 +621,20 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
   const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
 
   // Free post state
-  const [freeText,        setFreeText]        = useState('');
-  const [selectedTag,     setSelectedTag]      = useState<FreePostTag | null>(null);
-  const [photoUri,        setPhotoUri]         = useState<string | null>(null);
-  const [showStats,       setShowStats]        = useState(false);
-  const [checkedStats,    setCheckedStats]     = useState<string[]>([]);
-  const [textError,       setTextError]        = useState(false);
-  const [statsError,      setStatsError]       = useState(false);
-  const [todayCount,      setTodayCount]       = useState(0);
-  const [todayMinutes,    setTodayMinutes]     = useState(0);
+  const [freeText,             setFreeText]             = useState('');
+  const [selectedTag,          setSelectedTag]          = useState<FreePostTag | null>(null);
+  const [photoUri,             setPhotoUri]             = useState<string | null>(null);
+  const [showStats,            setShowStats]            = useState(false);
+  const [checkedStats,         setCheckedStats]         = useState<string[]>([]);
+  const [textError,            setTextError]            = useState(false);
+  const [statsError,           setStatsError]           = useState(false);
+  const [todayCount,           setTodayCount]           = useState(0);
+  const [todayMinutes,         setTodayMinutes]         = useState(0);
+  const [selectedAchievementId, setSelectedAchievementId] = useState<string | null>(null);
   const freeTextRef = useRef<TextInput>(null);
 
-  const hasUnlockedAchievements = gamification.achievements.some((a) => a.isUnlocked);
+  const unlockedAchievements = gamification.achievements.filter((a) => a.isUnlocked);
+  const hasUnlockedAchievements = unlockedAchievements.length > 0;
 
   const availableStats = [
     { key: 'sessions_today', label: 'Sessions today',    value: String(todayCount) },
@@ -673,6 +661,7 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
     setFreeText(''); setSelectedTag(null); setPhotoUri(null);
     setShowStats(false); setCheckedStats([]);
     setTextError(false); setStatsError(false);
+    setSelectedAchievementId(null);
   };
 
   const handleClose = () => { reset(); onClose(); };
@@ -703,13 +692,26 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
       handleClose();
     } else {
       if (!selectedType) return;
-      onPost({ type: selectedType, caption: caption.trim() || null, visibility, groupId: visibility === 'group' ? targetGroupId : null, reactions: {} });
+      if (selectedType === 'achievement_unlock' && !selectedAchievementId) return;
+      const draft: Record<string, unknown> = {
+        type: selectedType,
+        caption: caption.trim() || null,
+        visibility,
+        groupId: visibility === 'group' ? targetGroupId : null,
+        reactions: {},
+      };
+      if (selectedType === 'session_recap') draft.sessionId = timer.lastCompletedSessionId;
+      if (selectedType === 'achievement_unlock') draft.achievementId = selectedAchievementId;
+      if (selectedType === 'streak_milestone') draft.streakAtPost = gamification.currentStreak;
+      onPost(draft as Partial<SocialPost>);
       handleClose();
     }
   };
 
   const canPost = selectedType === 'free_post'
     ? freeText.trim().length > 0 && (!showStats || checkedStats.length > 0)
+    : selectedType === 'achievement_unlock'
+    ? !!selectedAchievementId
     : true;
 
   return (
@@ -737,27 +739,28 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
 
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
             {/* ── Step 1: type selection ── */}
-            {step === 1 && POST_TYPE_CARDS.map(({ type, icon, label, desc }) => {
+            {step === 1 && POST_TYPE_CARDS.map(({ type, icon, label, desc, comingSoon }) => {
               const isAchievementDisabled = type === 'achievement_unlock' && !hasUnlockedAchievements;
+              const isDisabled = isAchievementDisabled || !!comingSoon;
               return (
                 <Pressable
                   key={type}
-                  onPress={() => !isAchievementDisabled && handleSelectType(type)}
+                  onPress={() => !isDisabled && handleSelectType(type)}
                   style={{
                     flexDirection: 'row', alignItems: 'center', backgroundColor: RAISED,
                     borderRadius: 14, borderWidth: 1, borderColor: BORDER_SOFT,
                     padding: 14, marginBottom: 10,
-                    opacity: isAchievementDisabled ? 0.45 : 1,
+                    opacity: isDisabled ? 0.45 : 1,
                   }}
                 >
                   <Text style={{ fontSize: 28, marginRight: 14 }}>{icon}</Text>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 14 }}>{label}</Text>
                     <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>
-                      {isAchievementDisabled ? 'Complete an achievement to share it' : desc}
+                      {isAchievementDisabled ? 'Complete an achievement to share it' : comingSoon ? 'Coming soon' : desc}
                     </Text>
                   </View>
-                  {!isAchievementDisabled && <Ionicons name="chevron-forward" size={18} color={Colors.subtext} />}
+                  {!isDisabled && <Ionicons name="chevron-forward" size={18} color={Colors.subtext} />}
                 </Pressable>
               );
             })}
@@ -928,12 +931,39 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
                     {selectedType === 'session_recap'
                       ? 'Your most recent session stats will be shared automatically.'
                       : selectedType === 'achievement_unlock'
-                      ? 'Your latest unlocked achievement will be featured.'
+                      ? 'Select an achievement to feature below.'
                       : selectedType === 'streak_milestone'
                       ? 'Your current streak stats will be shared.'
                       : 'Invite your group to a shared challenge.'}
                   </Text>
                 </View>
+
+                {selectedType === 'achievement_unlock' && (
+                  <View style={{ marginBottom: 12 }}>
+                    {unlockedAchievements.map((a) => (
+                      <Pressable
+                        key={a.id}
+                        onPress={() => setSelectedAchievementId(a.id)}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center',
+                          backgroundColor: selectedAchievementId === a.id ? GOLD_DIM : RAISED,
+                          borderRadius: 12, borderWidth: 1,
+                          borderColor: selectedAchievementId === a.id ? GOLD : BORDER_SOFT,
+                          padding: 12, marginBottom: 8,
+                        }}
+                      >
+                        <Text style={{ fontSize: 26, marginRight: 12 }}>{a.icon}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 13 }}>{a.title}</Text>
+                          <Text style={{ color: Colors.subtext, fontSize: 11 }} numberOfLines={1}>{a.description}</Text>
+                        </View>
+                        {selectedAchievementId === a.id && (
+                          <Ionicons name="checkmark-circle" size={20} color={GOLD} />
+                        )}
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
 
                 <TextInput
                   multiline maxLength={280}
@@ -992,23 +1022,24 @@ type Period = typeof PERIODS[number]['key'];
 export default function SocialScreen() {
   const social      = useSocialStore();
   const auth        = useAuthStore();
-  const currentUserId   = auth.user?.id ?? '';
-  const currentUserEmoji = getAvatarEmoji(currentUserId);
+  const currentUserId = auth.user?.id ?? '';
 
-  const [activeTab,       setActiveTab]       = useState<'feed' | 'leaderboard'>('feed');
-  const [showCreatePost,  setShowCreatePost]   = useState(false);
-  const [refreshing,      setRefreshing]       = useState(false);
-  const [scope,           setScope]            = useState<Scope>('friends');
-  const [period,          setPeriod]           = useState<Period>('week');
+  const [activeTab,          setActiveTab]          = useState<'feed' | 'leaderboard'>('feed');
+  const [showCreatePost,     setShowCreatePost]     = useState(false);
+  const [showNotifications,  setShowNotifications]  = useState(false);
+  const [refreshing,         setRefreshing]         = useState(false);
+  const [scope,              setScope]              = useState<Scope>('friends');
+  const [period,             setPeriod]             = useState<Period>('week');
 
   useEffect(() => {
     social.fetchPosts(social.selectedGroupId ?? undefined);
     social.fetchStudyGroups();
+    social.fetchFocusLeaderboard(scope, period);
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'leaderboard') social.fetchFocusLeaderboard(scope, period);
-  }, [activeTab, scope, period]);
+    social.fetchFocusLeaderboard(scope, period);
+  }, [scope, period]);
 
   const handleRefreshFeed = useCallback(async () => {
     setRefreshing(true);
@@ -1041,9 +1072,8 @@ export default function SocialScreen() {
     <View style={{ flex: 1 }}>
       {/* Study groups strip */}
       <View style={{ paddingTop: 8, paddingBottom: 4 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
+        <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
           <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>Study Groups</Text>
-          <Pressable><Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '600' }}>See all</Text></Pressable>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
           {social.studyGroups.map((g) => (
@@ -1053,7 +1083,6 @@ export default function SocialScreen() {
               onPress={() => handleGroupSelect(social.selectedGroupId === g.id ? null : g.id)}
             />
           ))}
-          <JoinChip onPress={() => {}} />
         </ScrollView>
       </View>
 
@@ -1084,16 +1113,6 @@ export default function SocialScreen() {
                   ? 'No posts in this group yet — be the first to share'
                   : 'Follow students or join a group to see posts here'}
               </Text>
-              {!social.selectedGroupId && (
-                <View style={{ flexDirection: 'row', marginTop: 16 }}>
-                  <Pressable style={{ backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 }}>
-                    <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Find People</Text>
-                  </Pressable>
-                  <Pressable style={{ backgroundColor: Colors.tealDim, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}>
-                    <Text style={{ color: Colors.accent, fontWeight: '600', fontSize: 13 }}>Join a Group</Text>
-                  </Pressable>
-                </View>
-              )}
             </View>
           )
         }
@@ -1162,9 +1181,6 @@ export default function SocialScreen() {
           <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
             Follow other students to see a friends leaderboard
           </Text>
-          <Pressable style={{ marginTop: 12, backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}>
-            <Text style={{ color: Colors.primary, fontWeight: '600' }}>Find People</Text>
-          </Pressable>
         </View>
       )}
 
@@ -1218,7 +1234,10 @@ export default function SocialScreen() {
       {/* Header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
         <Text style={{ color: Colors.textBright, fontSize: 26, fontWeight: '800', flex: 1 }}>Social</Text>
-        <Pressable style={{ marginRight: 14 }} onPress={() => social.markNotificationsRead()}>
+        <Pressable style={{ marginRight: 14 }} onPress={() => {
+          social.markNotificationsRead();
+          setShowNotifications(true);
+        }}>
           <Ionicons name="notifications-outline" size={24} color={Colors.text} />
           {social.unreadCount > 0 && (
             <View style={{
@@ -1226,9 +1245,6 @@ export default function SocialScreen() {
               width: 8, height: 8, borderRadius: 4, backgroundColor: ROSE,
             }} />
           )}
-        </Pressable>
-        <Pressable>
-          <Ionicons name="search-outline" size={24} color={Colors.text} />
         </Pressable>
       </View>
 
@@ -1252,8 +1268,12 @@ export default function SocialScreen() {
       </View>
 
       <View style={{ flex: 1 }}>
-        {activeTab === 'feed'        && renderFeed()}
-        {activeTab === 'leaderboard' && renderLeaderboard()}
+        <View style={{ flex: 1, display: activeTab === 'feed' ? 'flex' : 'none' }}>
+          {renderFeed()}
+        </View>
+        <View style={{ flex: 1, display: activeTab === 'leaderboard' ? 'flex' : 'none' }}>
+          {renderLeaderboard()}
+        </View>
       </View>
 
       {/* FAB — Feed tab only */}
@@ -1270,6 +1290,42 @@ export default function SocialScreen() {
           <Ionicons name="add" size={26} color="#fff" />
         </Pressable>
       )}
+
+      {/* Notifications modal */}
+      <Modal visible={showNotifications} transparent animationType="slide" onRequestClose={() => setShowNotifications(false)}>
+        <View style={{ flex: 1, backgroundColor: '#00000080', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%' }}>
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
+              <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>Notifications</Text>
+              <Pressable onPress={() => setShowNotifications(false)}>
+                <Ionicons name="close" size={22} color={Colors.subtext} />
+              </Pressable>
+            </View>
+            {social.notifications.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <Text style={{ color: Colors.subtext, fontSize: 13 }}>No notifications yet</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={social.notifications}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: 32 }}
+                renderItem={({ item }) => (
+                  <View style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: BORDER_SOFT }}>
+                    <Text style={{ color: item.isRead ? Colors.subtext : Colors.textBright, fontSize: 14 }}>
+                      {item.text}
+                    </Text>
+                    <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 4 }}>{timeAgo(item.createdAt)}</Text>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <CreatePostSheet
         visible={showCreatePost}

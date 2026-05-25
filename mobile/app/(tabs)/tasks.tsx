@@ -11,6 +11,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { Task } from '../../types';
 import { Colors } from '../../constants/Colors';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
+import { useFocusEffect } from 'expo-router';
 import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
 import { api } from '../../services/api';
 import { tagColor } from '../../utils/tag';
@@ -1031,9 +1032,9 @@ export default function TasksScreen() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     loadData();
-  }, []);
+  }, []));
 
   const loadData = async () => {
     try {

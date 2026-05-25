@@ -27,6 +27,9 @@ interface SocialState {
   streakLeaderboardFull: LeaderboardEntry[];
   myLeaderboardEntry: LeaderboardEntry | null;
   isLoading: boolean;
+  isLoadingFollowers: boolean;
+  isLoadingFollowing: boolean;
+  isLoadingFriends: boolean;
   error: string | null;
 
   // Social feed v2
@@ -62,6 +65,7 @@ interface SocialState {
   setSelectedGroup: (groupId: string | null) => void;
   fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
   markNotificationsRead: () => void;
+  fetchNotifications: () => Promise<void>;
 
   // Profile social stats
   userSocialStats: UserSocialStats | null;
@@ -76,6 +80,8 @@ interface SocialState {
   fetchMoreUserPosts: () => Promise<void>;
 }
 
+let leaderboardFetchId = 0;
+
 export const useSocialStore = create<SocialState>((set, get) => ({
   friends: [],
   feed: [],
@@ -88,6 +94,9 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   streakLeaderboardFull: [],
   myLeaderboardEntry: null,
   isLoading: false,
+  isLoadingFollowers: false,
+  isLoadingFollowing: false,
+  isLoadingFriends: false,
   error: null,
 
   posts: [],
@@ -110,14 +119,16 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   loadFriends: async () => {
-    set({ isLoading: true });
+    set({ isLoadingFriends: true });
     try {
       const response = await api.get<Friend[]>('/social/friends');
       if (response.success && response.data) {
-        set({ friends: response.data, isLoading: false });
+        set({ friends: response.data });
       }
     } catch {
-      set({ isLoading: false, error: 'Failed to load friends' });
+      set({ error: 'Failed to load friends' });
+    } finally {
+      set({ isLoadingFriends: false });
     }
   },
 
@@ -315,30 +326,25 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   toggleReaction: async (postId: string, emoji: string, currentUserId: string) => {
-    const { posts } = get();
-    const postIdx = posts.findIndex((p) => p.id === postId);
-    if (postIdx === -1) return;
+    const { posts, userPosts } = get();
 
-    const post = posts[postIdx];
-    const existing = post.reactions[emoji] ?? [];
-    const hasReacted = existing.includes(currentUserId);
-    const updated = hasReacted
-      ? existing.filter((id) => id !== currentUserId)
-      : [...existing, currentUserId];
+    const applyToggle = (list: SocialPost[]) =>
+      list.map((p) => {
+        if (p.id !== postId) return p;
+        const existing = p.reactions[emoji] ?? [];
+        const hasReacted = existing.includes(currentUserId);
+        const newIds = hasReacted
+          ? existing.filter((id) => id !== currentUserId)
+          : [...existing, currentUserId];
+        return { ...p, reactions: { ...p.reactions, [emoji]: newIds } };
+      });
 
-    const updatedPost = {
-      ...post,
-      reactions: { ...post.reactions, [emoji]: updated },
-    };
-    const updatedPosts = [...posts];
-    updatedPosts[postIdx] = updatedPost;
-    set({ posts: updatedPosts });
+    set({ posts: applyToggle(posts), userPosts: applyToggle(userPosts) });
 
     try {
       await api.post(`/social/posts/${postId}/react`, { emoji });
     } catch {
-      // revert
-      set({ posts });
+      set({ posts, userPosts });
     }
   },
 
@@ -346,7 +352,10 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     try {
       const response = await api.post<SocialPost>('/social/posts', draft);
       if (response.success && response.data) {
-        set((state) => ({ posts: [response.data!, ...state.posts] }));
+        set((state) => ({
+          posts: [response.data!, ...state.posts],
+          userPosts: [response.data!, ...state.userPosts],
+        }));
         return true;
       }
       return false;
@@ -373,12 +382,14 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   fetchFocusLeaderboard: async (scope: string, period: string) => {
+    const id = ++leaderboardFetchId;
     set({ isLoading: true });
     try {
       const response = await api.get<{
         entries: FocusLeaderboardEntry[];
         myEntry: FocusLeaderboardEntry | null;
       }>(`/social/focus-leaderboard?scope=${encodeURIComponent(scope)}&period=${encodeURIComponent(period)}`);
+      if (id !== leaderboardFetchId) return;
       if (response.success && response.data) {
         set({
           focusLeaderboard: response.data.entries ?? [],
@@ -389,7 +400,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
         set({ focusLeaderboard: [], myFocusEntry: null, isLoading: false });
       }
     } catch {
-      set({ focusLeaderboard: [], myFocusEntry: null, isLoading: false });
+      if (id === leaderboardFetchId) set({ focusLeaderboard: [], myFocusEntry: null, isLoading: false });
     }
   },
 
@@ -398,6 +409,17 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       notifications: state.notifications.map((n) => ({ ...n, isRead: true })),
       unreadCount: 0,
     }));
+  },
+
+  fetchNotifications: async () => {
+    try {
+      const response = await api.get<{ notifications: InAppNotification[]; unreadCount: number }>('/notifications');
+      if (response.success && response.data) {
+        set({ notifications: response.data.notifications, unreadCount: response.data.unreadCount });
+      }
+    } catch {
+      // silent
+    }
   },
 
   fetchUserSocialStats: async () => {
@@ -414,6 +436,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   fetchFollowers: async () => {
+    set({ isLoadingFollowers: true });
     try {
       const response = await api.get<UserListItem[]>('/social/followers');
       if (response.success && response.data) {
@@ -423,10 +446,13 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       }
     } catch {
       set({ followers: [] });
+    } finally {
+      set({ isLoadingFollowers: false });
     }
   },
 
   fetchFollowing: async () => {
+    set({ isLoadingFollowing: true });
     try {
       const response = await api.get<UserListItem[]>('/social/following');
       if (response.success && response.data) {
@@ -436,6 +462,8 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       }
     } catch {
       set({ following: [] });
+    } finally {
+      set({ isLoadingFollowing: false });
     }
   },
 
