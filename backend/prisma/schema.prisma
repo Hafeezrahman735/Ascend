@@ -88,7 +88,7 @@ model Session {
   durationSeconds       Int      @map("duration_seconds")
   plannedDurationSeconds Int?    @map("planned_duration_seconds")
   taskLabel             String?  @map("task_label") @db.VarChar(200)
-  taskId                String?  @map("task_id") @db.Uuid
+  taskId                String?  @map("task_id")
   completedAt           DateTime @map("completed_at")
   createdAt             DateTime @default(now()) @map("created_at")
   clientSessionId       String?  @unique @map("client_session_id") @db.VarChar(36)
@@ -208,6 +208,9 @@ model Task {
   isArchived        Boolean   @default(false) @map("is_archived")
   isCompleted       Boolean   @default(false) @map("is_completed")
   completedAt       DateTime? @map("completed_at")
+  sessionsOnTask    Int       @default(0) @map("sessions_on_task")
+  totalTimeOnTask   Int       @default(0) @map("total_time_on_task")
+  sessionDates      String[]  @default([]) @map("session_dates")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 

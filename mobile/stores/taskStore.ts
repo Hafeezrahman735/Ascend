@@ -5,21 +5,47 @@ import { Task } from '../types';
 import { getAllTaskStatsFromHistory } from '../store/sync';
 import { useAuthStore } from './authStore';
 
-const taskCacheKey = (userId: string) => `tasks:cache:${userId}`;
+const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
 
-async function writeCachedTasks(userId: string, tasks: Task[]) {
+// userId is passed explicitly so failures are visible (console.warn) rather than silent.
+async function persistTasks(tasks: Task[], userId: string | null | undefined): Promise<void> {
+  if (!userId) {
+    console.warn('[taskStore] persistTasks: no userId — cache write skipped');
+    return;
+  }
   try {
-    await AsyncStorage.setItem(taskCacheKey(userId), JSON.stringify(tasks));
-  } catch {}
+    await AsyncStorage.setItem(TASKS_CACHE_KEY(userId), JSON.stringify(tasks));
+  } catch (err) {
+    console.warn('[taskStore] persistTasks failed:', err);
+  }
 }
 
 async function readCachedTasks(userId: string): Promise<Task[] | null> {
   try {
-    const raw = await AsyncStorage.getItem(taskCacheKey(userId));
+    const raw = await AsyncStorage.getItem(TASKS_CACHE_KEY(userId));
     return raw ? (JSON.parse(raw) as Task[]) : null;
   } catch {
+    await AsyncStorage.removeItem(TASKS_CACHE_KEY(userId)).catch(() => {});
     return null;
   }
+}
+
+function normalizeTask(t: Task): Task {
+  return {
+    ...t,
+    priority: t.priority ?? 'medium',
+    sessionsOnTask: t.sessionsOnTask ?? 0,
+    totalTimeOnTask: t.totalTimeOnTask ?? 0,
+    sessionDates: t.sessionDates ?? [],
+  };
+}
+
+function normalizeTasks(raw: Task[]): Task[] {
+  return raw.map(normalizeTask);
+}
+
+function isTempId(id: string): boolean {
+  return id.startsWith('temp-');
 }
 
 interface TaskStoreState {
@@ -48,6 +74,7 @@ interface TaskStoreState {
   selectTask: (id: string | null) => void;
   incrementTaskSession: (id: string, duration: number) => void;
   toggleComplete: (id: string) => Promise<void>;
+  clearTasks: (userId?: string) => Promise<void>;
 }
 
 export const useTaskStore = create<TaskStoreState>((set, get) => ({
@@ -58,26 +85,48 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
 
   hydrateTasks: async (userId: string) => {
     const cached = await readCachedTasks(userId);
-    if (cached && cached.length > 0) {
-      set({ tasks: cached });
+    if (!cached || cached.length === 0) return;
+    // Strip any temp-ID tasks left from a previous session that was killed mid-POST.
+    // They are unconfirmed and will never be synced — load only server-confirmed tasks.
+    const confirmed = normalizeTasks(cached.filter((t) => !isTempId(t.id)));
+    if (confirmed.length > 0) {
+      set({ tasks: confirmed });
+    } else {
+      // Only stale temp tasks in cache — clean the file so we don't loop.
+      await AsyncStorage.removeItem(TASKS_CACHE_KEY(userId)).catch(() => {});
     }
   },
 
   fetchTasks: async (silent = false) => {
+    const userId = useAuthStore.getState().user?.id;
     if (!silent) set({ isLoading: true, error: null });
     try {
       const res = await api.get<Task[]>('/tasks');
       if (res.success && res.data) {
-        const rawTasks = res.data.map((t) => ({ ...t, priority: t.priority ?? 'medium' }));
+        // Guard: never overwrite a populated store with an empty server response.
+        if (!res.data.length && get().tasks.length > 0) {
+          if (!silent) set({ isLoading: false });
+          return;
+        }
+        const rawTasks = normalizeTasks(res.data);
         const taskIds = rawTasks.map((t) => t.id);
         const statsMap = await getAllTaskStatsFromHistory(taskIds);
-        const tasks = rawTasks.map((t) => {
+        const serverTasks = rawTasks.map((t) => {
           const stats = statsMap.get(t.id);
           return stats ? { ...t, ...stats } : t;
         });
+
+        // Preserve locally-created temp tasks whose POST is still in flight.
+        const serverIds = new Set(serverTasks.map((t) => t.id));
+        const orphanedTemps = get().tasks.filter(
+          (t) => isTempId(t.id) && !serverIds.has(t.id),
+        );
+        const tasks = orphanedTemps.length > 0
+          ? [...orphanedTemps, ...serverTasks]
+          : serverTasks;
+
         set({ tasks, isLoading: false });
-        const userId = useAuthStore.getState().user?.id;
-        if (userId) writeCachedTasks(userId, tasks);
+        persistTasks(tasks, userId);
       } else {
         set({ error: res.error || 'Failed to fetch tasks', isLoading: false });
       }
@@ -88,7 +137,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
 
   createTask: async (data) => {
     const userId = useAuthStore.getState().user?.id;
-    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Show the task instantly. The temp ID is swapped for the server ID once the POST resolves.
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const tempTask: Task = {
       id: tempId,
       title: data.title,
@@ -106,59 +156,73 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     };
     const withTemp = [tempTask, ...get().tasks];
     set({ tasks: withTemp });
-    // Fix 3: persist optimistic state immediately so a kill-during-POST survives restart
-    if (userId) writeCachedTasks(userId, withTemp);
+    persistTasks(withTemp, userId); // Survive an app kill during the POST
+
     try {
       const res = await api.post<Task>('/tasks', data);
       if (res.success && res.data) {
-        // Fix 2: handle race where background fetchTasks already evicted the temp entry
+        const confirmed = normalizeTask(res.data);
+        // fetchTasks may have run while the POST was in flight, evicting the temp task.
         const current = get().tasks;
         const hasTemp = current.some((t) => t.id === tempId);
-        const hasReal = current.some((t) => t.id === res.data!.id);
-        const confirmed = hasTemp
-          ? current.map((t) => (t.id === tempId ? res.data! : t))
+        const hasReal = current.some((t) => t.id === confirmed.id);
+        const next = hasTemp
+          ? current.map((t) => (t.id === tempId ? confirmed : t))
           : hasReal
           ? current
-          : [res.data!, ...current];
-        set({ tasks: confirmed });
-        // Fix 1: keep cache in sync after confirmed creation
-        if (userId) writeCachedTasks(userId, confirmed);
-        return res.data;
+          : [confirmed, ...current];
+        set({ tasks: next });
+        persistTasks(next, userId);
+        return confirmed;
       }
+      // Server rejected — temp task stays visible; next fetchTasks will reconcile.
       return tempTask;
     } catch {
+      // Network failure — temp task stays in store and cache for the next session.
       return tempTask;
     }
   },
 
   updateTask: async (id, data) => {
+    const userId = useAuthStore.getState().user?.id;
+    const previous = get().tasks;
+    const optimistic = previous.map((t) => (t.id === id ? { ...t, ...data } : t));
+    set({ tasks: optimistic });
+    persistTasks(optimistic, userId);
     try {
       const res = await api.patch<Task>(`/tasks/${id}`, data);
       if (res.success && res.data) {
         const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...res.data } : t));
         set({ tasks });
-        // Fix 1: write cache after confirmed update
-        const userId = useAuthStore.getState().user?.id;
-        if (userId) writeCachedTasks(userId, tasks);
+        persistTasks(tasks, userId);
+      } else {
+        set({ tasks: previous });
+        persistTasks(previous, userId);
       }
     } catch (err) {
       console.warn('[tasks] updateTask failed:', err);
+      set({ tasks: previous });
+      persistTasks(previous, userId);
     }
   },
 
   deleteTask: async (id) => {
+    const userId = useAuthStore.getState().user?.id;
+    const previous = get().tasks;
+    const previousSelectedId = get().selectedTaskId;
+    const tasks = previous.filter((t) => t.id !== id);
+    set({ tasks, selectedTaskId: previousSelectedId === id ? null : previousSelectedId });
+    persistTasks(tasks, userId);
     try {
       const res = await api.delete(`/tasks/${id}`);
-      if (res.success) {
-        const tasks = get().tasks.filter((t) => t.id !== id);
-        const selectedTaskId = get().selectedTaskId === id ? null : get().selectedTaskId;
-        set({ tasks, selectedTaskId });
-        // Fix 1: write cache after confirmed deletion
-        const userId = useAuthStore.getState().user?.id;
-        if (userId) writeCachedTasks(userId, tasks);
+      if (!res.success) {
+        set({ tasks: previous, selectedTaskId: previousSelectedId });
+        persistTasks(previous, userId);
       }
     } catch (err) {
       console.warn('[tasks] deleteTask failed:', err);
+      set({ tasks: previous, selectedTaskId: previousSelectedId });
+      persistTasks(previous, userId);
     }
   },
 
@@ -167,43 +231,56 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   },
 
   toggleComplete: async (id) => {
+    const userId = useAuthStore.getState().user?.id;
     const task = get().tasks.find((t) => t.id === id);
     if (!task) return;
-    const userId = useAuthStore.getState().user?.id;
     const nowCompleted = !task.isCompleted;
     const completedAt = nowCompleted ? new Date().toISOString() : null;
     const optimistic = get().tasks.map((t) =>
-      t.id === id ? { ...t, isCompleted: nowCompleted, completedAt: completedAt ?? undefined } : t
+      t.id === id ? { ...t, isCompleted: nowCompleted, completedAt: completedAt ?? undefined } : t,
     );
     set({ tasks: optimistic });
-    // Fix 1: persist optimistic toggle — server confirmation rarely fails
-    if (userId) writeCachedTasks(userId, optimistic);
+    persistTasks(optimistic, userId);
     try {
-      await api.patch(`/tasks/${id}`, {
-        isCompleted: nowCompleted,
-        completedAt: completedAt,
-      });
+      await api.patch(`/tasks/${id}`, { isCompleted: nowCompleted, completedAt });
     } catch {
       const reverted = get().tasks.map((t) =>
-        t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t
+        t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t,
       );
       set({ tasks: reverted });
-      // Fix 1: revert cache on failure
-      if (userId) writeCachedTasks(userId, reverted);
+      persistTasks(reverted, userId);
     }
   },
 
   incrementTaskSession: (id: string, duration: number) => {
+    const userId = useAuthStore.getState().user?.id;
     const today = new Date().toISOString().split('T')[0];
-    set((state) => ({
-      tasks: state.tasks.map((task) =>
-        task.id !== id ? task : {
-          ...task,
-          sessionsOnTask: task.sessionsOnTask + 1,
-          totalTimeOnTask: task.totalTimeOnTask + duration,
-          sessionDates: [...new Set([...task.sessionDates, today])],
-        }
-      ),
-    }));
+    const updated = get().tasks.map((task) =>
+      task.id !== id ? task : {
+        ...task,
+        sessionsOnTask: task.sessionsOnTask + 1,
+        totalTimeOnTask: task.totalTimeOnTask + duration,
+        sessionDates: [...new Set([...task.sessionDates, today])],
+      },
+    );
+    set({ tasks: updated });
+    persistTasks(updated, userId);
+  },
+
+  clearTasks: async (userId?: string) => {
+    const resolvedUserId = userId ?? useAuthStore.getState().user?.id;
+    set({ tasks: [], selectedTaskId: null, isLoading: false, error: null });
+    if (resolvedUserId) {
+      AsyncStorage.removeItem(TASKS_CACHE_KEY(resolvedUserId)).catch(() => {});
+    }
   },
 }));
+
+// Subscribe to auth state changes so the task store cleans itself up on logout.
+// This avoids a circular import (authStore importing taskStore).
+useAuthStore.subscribe((state, prevState) => {
+  if (prevState.user && !state.user) {
+    const userId = prevState.user.id; // Captured from previous state before it was cleared
+    useTaskStore.getState().clearTasks(userId);
+  }
+});

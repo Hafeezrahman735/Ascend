@@ -77,6 +77,14 @@ export function connectSocialSocket(): Socket {
   return socialSocket;
 }
 
+export function disconnectTimerSocket(): void {
+  if (timerSocket) {
+    timerSocket.removeAllListeners();
+    timerSocket.disconnect();
+    timerSocket = null;
+  }
+}
+
 export function disconnectSocialSocket(): void {
   if (socialSocket) {
     socialSocket.disconnect();

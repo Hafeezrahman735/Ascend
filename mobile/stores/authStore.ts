@@ -1,21 +1,23 @@
 import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types';
 import { setTokens, clearTokens, api } from '../services/api';
-import { reconnectTimerSocket } from '../services/socket';
+import { reconnectTimerSocket, disconnectTimerSocket, disconnectSocialSocket } from '../services/socket';
 import { clearSessionHistory } from '../store/sync';
+import { useGamificationStore } from './gamificationStore';
 
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  isNewUser: boolean;
 
   login: (email: string, password: string) => Promise<boolean>;
   register: (email: string, username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
   clearError: () => void;
+  setIsNewUser: (value: boolean) => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -23,6 +25,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: false,
   error: null,
+  isNewUser: false,
 
   login: async (email: string, password: string) => {
     set({ isLoading: true, error: null });
@@ -40,6 +43,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           user: response.data.user,
           isAuthenticated: true,
           isLoading: false,
+          isNewUser: false,
         });
         return true;
       }
@@ -67,6 +71,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           user: response.data.user,
           isAuthenticated: true,
           isLoading: false,
+          isNewUser: true,
         });
         return true;
       }
@@ -79,17 +84,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
-    const userId = get().user?.id;
+    set({ isLoading: true });
     try {
       await api.post('/auth/logout', {});
     } catch {
     } finally {
+      disconnectTimerSocket();
+      disconnectSocialSocket();
       clearTokens();
       await clearSessionHistory();
-      if (userId) {
-        AsyncStorage.removeItem(`tasks:cache:${userId}`).catch(() => {});
-      }
-      set({ user: null, isAuthenticated: false, isLoading: false, error: null });
+      useGamificationStore.getState().reset();
+      // Task store self-cleans via its useAuthStore.subscribe in taskStore.ts.
+      // Setting user: null here triggers that subscription synchronously.
+      // Navigation is handled by the auth guard in _layout.tsx.
+      set({ user: null, isAuthenticated: false, isLoading: false, error: null, isNewUser: false });
     }
   },
 
@@ -105,4 +113,5 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+  setIsNewUser: (value: boolean) => set({ isNewUser: value }),
 }));

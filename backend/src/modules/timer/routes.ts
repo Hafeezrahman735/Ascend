@@ -151,6 +151,18 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       const userId = authenticate(req);
       const { completedAt, actualElapsedSeconds, taskLabel, taskId, plannedDurationSeconds, clientSessionId } = completeSchema.parse(req.body);
 
+      // Idempotency check — reject duplicate submissions before touching the DB
+      if (clientSessionId) {
+        const existing = await prisma.session.findUnique({
+          where: { clientSessionId },
+        });
+        if (existing) {
+          console.log(`[timer] Duplicate clientSessionId ${clientSessionId} — skipping`);
+          res.json({ success: true, data: { sessionId: existing.id, alreadyProcessed: true, newlyUnlocked: [] } });
+          return;
+        }
+      }
+
       const session = await prisma.session.create({
         data: {
           userId,
@@ -165,6 +177,31 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       });
 
       console.log(`[timer] Session saved: user=${userId} duration=${actualElapsedSeconds}s id=${session.id}`);
+
+      // Update task session counters if a task was linked
+      if (taskId) {
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          const task = await prisma.task.findUnique({
+            where: { id: taskId },
+            select: { sessionDates: true },
+          });
+          if (task) {
+            const updatedDates = Array.from(new Set([...task.sessionDates, today]));
+            await prisma.task.update({
+              where: { id: taskId },
+              data: {
+                sessionsOnTask: { increment: 1 },
+                totalTimeOnTask: { increment: actualElapsedSeconds },
+                sessionDates: updatedDates,
+              },
+            });
+          }
+        } catch (taskErr) {
+          // Non-fatal — session is already saved; log and continue
+          console.warn(`[timer] Task counter update failed for taskId=${taskId}:`, taskErr);
+        }
+      }
 
       const gamification = await runGamification(userId, actualElapsedSeconds, new Date(completedAt));
 

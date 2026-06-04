@@ -1,89 +1,237 @@
 import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import {
+  View, Text, TextInput, TouchableOpacity,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Pressable, ScrollView,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../stores/authStore';
+import { useTaskStore } from '../../stores/taskStore';
+import { Colors } from '../../constants/Colors';
 
-export default function LoginScreen() {
-  const router = useRouter();
-  const { login, isLoading, error, clearError } = useAuthStore();
+type Mode = 'login' | 'register';
+
+export default function AuthScreen() {
+  const [mode, setMode] = useState<Mode>('login');
+  const { login, register, isLoading, error, clearError } = useAuthStore();
+
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const handleLogin = async () => {
-    if (!email || !password) return;
-    const success = await login(email, password);
-    if (success) {
-      router.replace('/(tabs)');
+  function switchMode(m: Mode) {
+    setMode(m);
+    setLocalError(null);
+    clearError();
+  }
+
+  async function handleSubmit() {
+    setLocalError(null);
+    if (mode === 'login') {
+      if (!email || !password) {
+        setLocalError('All fields are required');
+        return;
+      }
+      const success = await login(email, password);
+      if (success) {
+        useTaskStore.getState().fetchTasks(true);
+      }
+    } else {
+      if (!email || !username || !password) {
+        setLocalError('All fields are required');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setLocalError('Passwords do not match');
+        return;
+      }
+      if (password.length < 8) {
+        setLocalError('Password must be at least 8 characters');
+        return;
+      }
+      const success = await register(email, username, password);
+      if (success) {
+        useTaskStore.getState().fetchTasks(true);
+      }
     }
-  };
+  }
+
+  const displayError = localError || error;
 
   return (
     <KeyboardAvoidingView
-      className="flex-1 bg-dark-bg dark:bg-dark-bg bg-light-bg"
+      style={{ flex: 1, backgroundColor: Colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View className="flex-1 justify-center px-8">
-        <Text className="text-4xl font-bold text-center mb-2 text-primary">Pomodoro</Text>
-        <Text className="text-lg text-center mb-10 text-dark-subtext dark:text-dark-subtext text-light-subtext">
-          Focus. Track. Achieve.
-        </Text>
-
-        {error && (
-          <View className="bg-red-900/20 border border-red-500 rounded-2xl px-4 py-3 mb-4">
-            <Text className="text-red-500 text-sm">{error}</Text>
-          </View>
-        )}
-
-        <View className="space-y-4">
-          <View>
-            <Text className="text-sm font-medium mb-1 text-dark-text dark:text-dark-text text-light-text">Email</Text>
-            <TextInput
-              className="bg-dark-card dark:bg-dark-card bg-light-card rounded-2xl px-4 py-3 text-dark-text dark:text-dark-text text-light-text"
-              placeholder="your@email.com"
-              placeholderTextColor="#666"
-              value={email}
-              onChangeText={(t) => { setEmail(t); clearError(); }}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              autoComplete="email"
-            />
-          </View>
-
-          <View>
-            <Text className="text-sm font-medium mb-1 text-dark-text dark:text-dark-text text-light-text">Password</Text>
-            <TextInput
-              className="bg-dark-card dark:bg-dark-card bg-light-card rounded-2xl px-4 py-3 text-dark-text dark:text-dark-text text-light-text"
-              placeholder="Your password"
-              placeholderTextColor="#666"
-              value={password}
-              onChangeText={(t) => { setPassword(t); clearError(); }}
-              secureTextEntry
-              autoComplete="password"
-            />
-          </View>
-
-          <TouchableOpacity
-            className="bg-primary rounded-2xl py-4 items-center mt-4"
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text className="text-white font-bold text-lg">Log In</Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            className="items-center mt-4"
-            onPress={() => router.push('/(auth)/register')}
-          >
-            <Text className="text-accent text-sm">
-              Don't have an account? Sign up
+      <SafeAreaView style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 40 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Logo */}
+          <View style={{ alignItems: 'center', marginBottom: 40 }}>
+            <Text style={{ fontSize: 56, marginBottom: 10 }}>🧠</Text>
+            <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', letterSpacing: 0.5 }}>
+              Pomodoro
             </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            <Text style={{ color: Colors.subtext, fontSize: 14, marginTop: 6 }}>
+              Focus. Track. Achieve.
+            </Text>
+          </View>
+
+          {/* Toggle pill */}
+          <View style={{
+            flexDirection: 'row', backgroundColor: Colors.surface,
+            borderRadius: 14, padding: 4, marginBottom: 28,
+            borderWidth: 1, borderColor: Colors.border,
+          }}>
+            {(['login', 'register'] as Mode[]).map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => switchMode(m)}
+                style={{
+                  flex: 1, paddingVertical: 10, borderRadius: 10,
+                  alignItems: 'center',
+                  backgroundColor: mode === m ? Colors.primary : 'transparent',
+                }}
+              >
+                <Text style={{
+                  color: mode === m ? '#fff' : Colors.subtext,
+                  fontWeight: '600', fontSize: 14,
+                }}>
+                  {m === 'login' ? 'Log in' : 'Sign up'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Error */}
+          {displayError ? (
+            <View style={{
+              backgroundColor: '#7f1d1d20', borderWidth: 1, borderColor: '#ef4444',
+              borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16,
+            }}>
+              <Text style={{ color: '#ef4444', fontSize: 13 }}>{displayError}</Text>
+            </View>
+          ) : null}
+
+          {/* Fields */}
+          <View style={{ gap: 14 }}>
+            {mode === 'register' && (
+              <View>
+                <Text style={{
+                  color: Colors.subtext, fontSize: 12, fontWeight: '600',
+                  letterSpacing: 0.5, marginBottom: 7,
+                }}>
+                  USERNAME
+                </Text>
+                <TextInput
+                  style={{
+                    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+                    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
+                    color: Colors.textBright, fontSize: 15,
+                  }}
+                  placeholder="Choose a username"
+                  placeholderTextColor={Colors.subtext}
+                  value={username}
+                  onChangeText={(t) => { setUsername(t); clearError(); setLocalError(null); }}
+                  autoCapitalize="none"
+                  autoComplete="username"
+                />
+              </View>
+            )}
+
+            <View>
+              <Text style={{
+                color: Colors.subtext, fontSize: 12, fontWeight: '600',
+                letterSpacing: 0.5, marginBottom: 7,
+              }}>
+                EMAIL
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+                  borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
+                  color: Colors.textBright, fontSize: 15,
+                }}
+                placeholder="your@email.com"
+                placeholderTextColor={Colors.subtext}
+                value={email}
+                onChangeText={(t) => { setEmail(t); clearError(); setLocalError(null); }}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoComplete="email"
+              />
+            </View>
+
+            <View>
+              <Text style={{
+                color: Colors.subtext, fontSize: 12, fontWeight: '600',
+                letterSpacing: 0.5, marginBottom: 7,
+              }}>
+                PASSWORD
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+                  borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
+                  color: Colors.textBright, fontSize: 15,
+                }}
+                placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'}
+                placeholderTextColor={Colors.subtext}
+                value={password}
+                onChangeText={(t) => { setPassword(t); clearError(); setLocalError(null); }}
+                secureTextEntry
+                autoComplete={mode === 'register' ? 'new-password' : 'password'}
+              />
+            </View>
+
+            {mode === 'register' && (
+              <View>
+                <Text style={{
+                  color: Colors.subtext, fontSize: 12, fontWeight: '600',
+                  letterSpacing: 0.5, marginBottom: 7,
+                }}>
+                  CONFIRM PASSWORD
+                </Text>
+                <TextInput
+                  style={{
+                    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+                    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
+                    color: Colors.textBright, fontSize: 15,
+                  }}
+                  placeholder="Confirm your password"
+                  placeholderTextColor={Colors.subtext}
+                  value={confirmPassword}
+                  onChangeText={(t) => { setConfirmPassword(t); clearError(); setLocalError(null); }}
+                  secureTextEntry
+                  autoComplete="new-password"
+                />
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: Colors.primary, borderRadius: 14,
+                paddingVertical: 15, alignItems: 'center', marginTop: 6,
+                opacity: isLoading ? 0.7 : 1,
+              }}
+              onPress={handleSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                  {mode === 'login' ? 'Log In' : 'Create Account'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     </KeyboardAvoidingView>
   );
 }

@@ -9,7 +9,7 @@
 
 import { Platform } from 'react-native';
 
-const DEV_API_URL = 'http://192.168.1.100:3001';
+const DEV_API_URL = 'http://192.168.4.28:3001';
 const DEV_WS_URL = 'http://192.168.1.100:3001';
 const DEV_SOCIAL_WS_URL = 'http://192.168.1.100:3001';
 

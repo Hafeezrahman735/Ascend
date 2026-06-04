@@ -686,3 +686,86 @@ socialRouter.get('/social/friend/:userId/sessions', async (req: Request, res: Re
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+socialRouter.get('/social/stats/me', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+
+    const friendCount = await prisma.friendship.count({
+      where: {
+        OR: [
+          { requesterId: userId, status: 'accepted' },
+          { addresseeId: userId, status: 'accepted' },
+        ],
+      },
+    });
+
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        OR: [
+          { requesterId: userId, status: 'accepted' },
+          { addresseeId: userId, status: 'accepted' },
+        ],
+      },
+      include: {
+        requester: { select: { id: true, username: true, avatarUrl: true } },
+        addressee: { select: { id: true, username: true, avatarUrl: true } },
+      },
+      take: 5,
+    });
+
+    const friendPreviews = friendships.map((f) => {
+      const friend = f.requesterId === userId ? f.addressee : f.requester;
+      return {
+        userId: friend.id,
+        displayName: friend.username,
+        avatarEmoji: '🎯',
+        avatarColor: 'blue',
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        userId,
+        friendCount,
+        followerCount: 0,
+        followingCount: 0,
+        friendPreviews,
+      },
+    });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('[social/stats/me] error:', error);
+    res.json({
+      success: true,
+      data: { userId: '', friendCount: 0, followerCount: 0, followingCount: 0, friendPreviews: [] },
+    });
+  }
+});
+
+socialRouter.get('/social/posts/mine', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+
+    const events = await prisma.feedEvent.findMany({
+      where: { userId, eventType: 'session_completed' },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    const posts = events.map((e) => ({
+      id: e.id,
+      userId: e.userId,
+      eventType: e.eventType,
+      payload: e.payload,
+      createdAt: e.createdAt.toISOString(),
+    }));
+
+    res.json({ success: true, data: posts });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('[social/posts/mine] error:', error);
+    res.json({ success: true, data: [] });
+  }
+});

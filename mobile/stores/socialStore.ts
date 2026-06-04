@@ -413,9 +413,10 @@ export const useSocialStore = create<SocialState>((set, get) => ({
 
   fetchNotifications: async () => {
     try {
-      const response = await api.get<{ notifications: InAppNotification[]; unreadCount: number }>('/notifications');
+      const response = await api.get<InAppNotification[]>('/notifications');
       if (response.success && response.data) {
-        set({ notifications: response.data.notifications, unreadCount: response.data.unreadCount });
+        const list = Array.isArray(response.data) ? response.data : [];
+        set({ notifications: list, unreadCount: list.filter((n) => !n.isRead).length });
       }
     } catch {
       // silent

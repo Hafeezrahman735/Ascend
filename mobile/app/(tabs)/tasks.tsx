@@ -12,6 +12,8 @@ import { Task } from '../../types';
 import { Colors } from '../../constants/Colors';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect } from 'expo-router';
+import { useTaskStore } from '../../stores/taskStore';
+import { useAuthStore } from '../../stores/authStore';
 import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
 import { api } from '../../services/api';
 import { tagColor } from '../../utils/tag';
@@ -100,6 +102,7 @@ function BottomSheet({
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
+  
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -1031,6 +1034,16 @@ export default function TasksScreen() {
   const [formTask, setFormTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const userId = useAuthStore.getState().user?.id;
+    if (!userId) return;
+    if (useTaskStore.getState().tasks.length === 0) {
+      useTaskStore.getState().hydrateTasks(userId).then(() => {
+        useTaskStore.getState().fetchTasks(true);
+      });
+    }
+  }, []);
 
   useFocusEffect(useCallback(() => {
     loadData();
