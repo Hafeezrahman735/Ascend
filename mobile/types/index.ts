@@ -164,8 +164,10 @@ export interface UserSearchResult {
   id: string;
   username: string;
   avatarUrl: string | null;
+  avatarEmoji: string;
   level: number;
-  relationshipStatus: 'none' | 'pending_sent' | 'pending_received' | 'friends';
+  relationshipStatus?: 'none' | 'pending_sent' | 'pending_received' | 'friends';
+  isFollowing?: boolean;
 }
 
 export interface FriendProfile {
@@ -227,9 +229,11 @@ export interface StudyGroup {
   emoji: string;
   color: GroupColor;
   memberIds: string[];
+  memberCount: number;
   createdBy: string;
   createdAt: string;
   isPrivate: boolean;
+  isMember?: boolean;
   hasRecentActivity?: boolean;
 }
 
@@ -264,6 +268,24 @@ export interface InAppNotification {
   link?: string;
   createdAt: string;
   isRead: boolean;
+}
+
+export interface PublicUserProfile {
+  id: string;
+  username: string;
+  avatarUrl: string | null;
+  avatarEmoji: string;
+  level: number;
+  rank: string;
+  currentStreak: number;
+  longestStreak: number;
+  totalSessions: number;
+  totalFocusTime: number;
+  followerCount: number;
+  followingCount: number;
+  isFollowing: boolean;
+  isMe: boolean;
+  recentAchievements: Achievement[];
 }
 
 export interface FriendPreview {

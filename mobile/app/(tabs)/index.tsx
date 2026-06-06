@@ -11,6 +11,8 @@ import Svg, { Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
 import { useTaskStore } from '../../stores/taskStore';
+import { useAuthStore } from '../../stores/authStore';
+import { useAppForeground } from '../../hooks/useAppState';
 import { Colors } from '../../constants/Colors';
 
 const { width } = Dimensions.get('window');
@@ -99,7 +101,6 @@ export default function TimerScreen() {
   const resume = useTimerStore((s) => s.resume);
   const skip = useTimerStore((s) => s.skip);
   const tick = useTimerStore((s) => s.tick);
-  const hydrate = useTimerStore((s) => s.hydrate);
   const setWorkDuration = useTimerStore((s) => s.setWorkDuration);
   const setShortBreakDuration = useTimerStore((s) => s.setShortBreakDuration);
   const setLongBreakDuration = useTimerStore((s) => s.setLongBreakDuration);
@@ -114,11 +115,24 @@ export default function TimerScreen() {
   useEffect(() => { tickRef.current = tick; }, [tick]);
 
   useEffect(() => {
-    hydrate();
+    const userId = useAuthStore.getState().user?.id ?? '';
+    useTimerStore.getState().hydrate(userId);
   }, []);
+
+  useAppForeground(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const lastDate = useTimerStore.getState().lastSessionDate;
+    if (lastDate && lastDate !== today) {
+      const userId = useAuthStore.getState().user?.id;
+      if (userId) useTimerStore.getState().hydrate(userId);
+    }
+  });
 
   useEffect(() => {
     if (status === 'running') {
+      // Clear any existing interval before starting a new one — prevents stacking
+      // if this effect fires more than once while status is already 'running'.
+      if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(() => {
         tickRef.current();
       }, 1000);

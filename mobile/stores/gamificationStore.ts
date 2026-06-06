@@ -15,7 +15,7 @@ interface GamificationStoreState {
 
   fetchProfile: () => Promise<void>;
   fetchAchievements: () => Promise<void>;
-  applySessionReward: (reward: SessionReward) => void;
+  applySessionReward: (reward: SessionReward, durationSeconds?: number) => void;
   clearPendingRewards: () => void;
   reset: () => void;
 }
@@ -58,7 +58,7 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
     }
   },
 
-  applySessionReward: (reward: SessionReward) => {
+  applySessionReward: (reward: SessionReward, durationSeconds = 0) => {
     const state = get();
     set({
       xp: reward.totalXP,
@@ -66,6 +66,7 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
       currentStreak: reward.newStreak,
       longestStreak: reward.longestStreak,
       totalSessions: state.totalSessions + 1,
+      totalFocusMinutes: state.totalFocusMinutes + Math.floor(durationSeconds / 60),
       pendingRewards: [...state.pendingRewards, reward],
     });
 

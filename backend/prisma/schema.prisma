@@ -32,19 +32,23 @@ model User {
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
 
-  refreshTokens   RefreshToken[]
-  sessions        Session[]
-  streaks         Streak[]
-  goals           Goal[]
-  goalProgress    GoalProgress[]
-  timerState      TimerState?
-  friendshipsReq  Friendship[]   @relation("Requester")
-  friendshipsAddr Friendship[]   @relation("Addressee")
-  tasks           Task[]
-  userAchievs     UserAchievement[]
-  notifications   Notification[]
-  feedEvents      FeedEvent[]
-
+  refreshTokens    RefreshToken[]
+  sessions         Session[]
+  streaks          Streak[]
+  goals            Goal[]
+  goalProgress     GoalProgress[]
+  timerState       TimerState?
+  friendshipsReq   Friendship[]      @relation("Requester")
+  friendshipsAddr  Friendship[]      @relation("Addressee")
+  tasks            Task[]
+  userAchievs      UserAchievement[]
+  notifications    Notification[]
+  feedEvents       FeedEvent[]
+  followers        Follow[]          @relation("UserFollowing")
+  following        Follow[]          @relation("UserFollower")
+  createdGroups    StudyGroup[]      @relation("GroupCreator")
+  groupMemberships StudyGroupMember[]
+  socialPosts      SocialPost[]      @relation("PostAuthor")
 
   @@map("users")
 }
@@ -205,6 +209,7 @@ model Task {
   dueDate           DateTime? @map("due_date")
   tags              String[]  @default([])
   estimatedMinutes  Int?      @map("estimated_minutes")
+  priority          String    @default("medium") @db.VarChar(10)
   isArchived        Boolean   @default(false) @map("is_archived")
   isCompleted       Boolean   @default(false) @map("is_completed")
   completedAt       DateTime? @map("completed_at")
@@ -247,4 +252,68 @@ model Notification {
 
   @@index([userId, isRead])
   @@map("notifications")
+}
+
+model Follow {
+  id          String   @id @default(uuid()) @db.Uuid
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower  User @relation("UserFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("follows")
+}
+
+model StudyGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(100)
+  emoji     String   @db.VarChar(10)
+  color     String   @default("purple") @db.VarChar(20)
+  isPrivate Boolean  @default(false) @map("is_private")
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  creator User               @relation("GroupCreator", fields: [createdBy], references: [id])
+  members StudyGroupMember[]
+
+  @@index([createdBy])
+  @@map("study_groups")
+}
+
+model StudyGroupMember {
+  id       String   @id @default(uuid()) @db.Uuid
+  groupId  String   @map("group_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  group StudyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("study_group_members")
+}
+
+model SocialPost {
+  id         String   @id @default(uuid()) @db.Uuid
+  authorId   String   @map("author_id") @db.Uuid
+  type       String   @db.VarChar(30)
+  caption    String?  @db.Text
+  visibility String   @default("public") @db.VarChar(20)
+  groupId    String?  @map("group_id") @db.Uuid
+  payload    Json     @default("{}")
+  reactions  Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  author User @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId, createdAt])
+  @@index([groupId, createdAt])
+  @@index([createdAt])
+  @@map("social_posts")
 }

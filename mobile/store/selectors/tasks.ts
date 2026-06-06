@@ -16,7 +16,9 @@ export function calcDaysWorked(task: Task): number {
 
 export function calcDaysUntilDue(task: Task): number | null {
   if (!task.dueDate) return null;
-  const due = new Date(task.dueDate).getTime();
+  // Normalize both "YYYY-MM-DD" (local form) and full ISO strings from the backend
+  const dateOnly = task.dueDate.substring(0, 10);
+  const due = new Date(dateOnly + 'T00:00:00').getTime();
   const now = new Date().setHours(0, 0, 0, 0);
   return Math.ceil((due - now) / 86_400_000);
 }

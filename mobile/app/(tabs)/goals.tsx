@@ -31,8 +31,8 @@ import Animated, {
 import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
 import { useTaskStore } from '../../stores/taskStore';
+import { useTimerStore } from '../../stores/timerStore';
 import { useSocialStore } from '../../stores/socialStore';
-import { getSessionHistory } from '../../store/sync';
 import type { SocialPost, UserSocialStats, UserListItem } from '../../types';
 import { Colors } from '../../constants/Colors';
 import {
@@ -94,37 +94,15 @@ async function buildStreakState(
   currentStreak: number,
   longestStreak: number,
 ): Promise<StreakState> {
-  try {
-    const sessions = await getSessionHistory();
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    const weekStart = getMonday(now);
-
-    const studiedToday = sessions.some(s => {
-      if (s.type !== 'focus') return false;
-      return new Date(s.completedAt).toISOString().split('T')[0] === todayStr;
-    });
-
-    const thisWeekDays = Array<boolean>(7).fill(false);
-    for (const s of sessions) {
-      if (s.type !== 'focus') continue;
-      const diff = Math.floor(
-        (new Date(s.completedAt).getTime() - weekStart.getTime()) / 86_400_000,
-      );
-      if (diff >= 0 && diff < 7) thisWeekDays[diff] = true;
-    }
-
-    const streakAtRisk = !studiedToday && now.getHours() >= 18 && currentStreak > 0;
-    return { currentStreak, longestStreak, studiedToday, thisWeekDays, streakAtRisk };
-  } catch {
-    return {
-      currentStreak,
-      longestStreak,
-      studiedToday: false,
-      thisWeekDays: Array(7).fill(false),
-      streakAtRisk: false,
-    };
-  }
+  // thisWeekDays and studiedToday are now derived from server data in the component.
+  // This function only provides the streak numbers and streakAtRisk placeholder.
+  return {
+    currentStreak,
+    longestStreak,
+    studiedToday: false,
+    thisWeekDays: Array(7).fill(false),
+    streakAtRisk: false,
+  };
 }
 
 function fmtDate(iso: string | null): string {
@@ -227,13 +205,14 @@ function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
 
 // ─── User list modal (followers / following / friends) ────────────────────────
 
-function UserListModal({ visible, title, items, isLoading, onClose, renderAction }: {
+function UserListModal({ visible, title, items, isLoading, onClose, renderAction, onItemPress }: {
   visible: boolean;
   title: string;
   items: UserListItem[];
   isLoading: boolean;
   onClose: () => void;
   renderAction?: (item: UserListItem) => React.ReactNode;
+  onItemPress?: (item: UserListItem) => void;
 }) {
   const [search, setSearch] = useState('');
   const filtered = items.filter(
@@ -280,7 +259,10 @@ function UserListModal({ visible, title, items, isLoading, onClose, renderAction
               }
               contentContainerStyle={{ paddingBottom: 32 }}
               renderItem={({ item }) => (
-                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
+                <Pressable
+                  onPress={() => onItemPress?.(item)}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}
+                >
                   <View style={{
                     width: 40, height: 40, borderRadius: 12, backgroundColor: Colors.raised,
                     alignItems: 'center', justifyContent: 'center', marginRight: 12,
@@ -292,7 +274,7 @@ function UserListModal({ visible, title, items, isLoading, onClose, renderAction
                     <Text style={{ color: Colors.subtext, fontSize: 12 }}>@{item.handle}</Text>
                   </View>
                   {renderAction?.(item)}
-                </View>
+                </Pressable>
               )}
             />
           )}
@@ -1239,6 +1221,8 @@ export default function ProfileScreen() {
   const tasks = useTaskStore(s => s.tasks);
   const social = useSocialStore();
 
+  const weekActiveDates = useTimerStore(s => s.weekActiveDates);
+
   const xp = gamification.xp;
   const currentRank = getRank(xp);
   const xpProgress = getXpProgressInRank(xp);
@@ -1266,6 +1250,22 @@ export default function ProfileScreen() {
   const prevRewardLenRef = useRef(gamification.pendingRewards.length);
 
   const subjectBadges = useMemo(() => computeSubjectBadges(tasks), [tasks]);
+
+  // Compute week dots and studiedToday from server-fetched activeDates
+  const serverDerivedStreak = useMemo(() => {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const weekStart = getMonday(today);
+    const thisWeekDays = Array<boolean>(7).fill(false);
+    for (const dateStr of weekActiveDates) {
+      const date = new Date(dateStr + 'T00:00:00');
+      const diff = Math.floor((date.getTime() - weekStart.getTime()) / 86_400_000);
+      if (diff >= 0 && diff < 7) thisWeekDays[diff] = true;
+    }
+    const studiedToday = weekActiveDates.includes(todayStr);
+    const streakAtRisk = !studiedToday && today.getHours() >= 18 && gamification.currentStreak > 0;
+    return { thisWeekDays, studiedToday, streakAtRisk };
+  }, [weekActiveDates, gamification.currentStreak]);
 
   const progressStats = useMemo(() => ({
     currentStreak: gamification.currentStreak,
@@ -1304,6 +1304,7 @@ export default function ProfileScreen() {
     social.fetchUserSocialStats();
     social.fetchUserPosts();
     social.loadFriends();
+    useTimerStore.getState().fetchWeekSessions();
   }, []);
 
   // Reduced motion
@@ -1383,7 +1384,7 @@ export default function ProfileScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
-        <StreakSection streakState={streakState} reduceMotion={reduceMotion} />
+        <StreakSection streakState={{ ...streakState, ...serverDerivedStreak }} reduceMotion={reduceMotion} />
         <RankSection xp={xp} level={gamification.level} currentRank={currentRank} />
 
         {/* Awards | Posts tab switcher */}
@@ -1435,6 +1436,7 @@ export default function ProfileScreen() {
         items={social.followers}
         isLoading={social.isLoadingFollowers}
         onClose={() => setShowFollowers(false)}
+        onItemPress={(item) => { setShowFollowers(false); router.push(`/user/${item.userId}` as never); }}
       />
 
       {/* Following modal */}
@@ -1444,6 +1446,7 @@ export default function ProfileScreen() {
         items={social.following}
         isLoading={social.isLoadingFollowing}
         onClose={() => setShowFollowing(false)}
+        onItemPress={(item) => { setShowFollowing(false); router.push(`/user/${item.userId}` as never); }}
       />
 
       {/* Friends modal */}
@@ -1459,6 +1462,7 @@ export default function ProfileScreen() {
         }))}
         isLoading={social.isLoadingFriends}
         onClose={() => setShowFriends(false)}
+        onItemPress={(item) => { setShowFriends(false); router.push(`/user/${item.userId}` as never); }}
       />
 
       {/* Rank-up overlay */}

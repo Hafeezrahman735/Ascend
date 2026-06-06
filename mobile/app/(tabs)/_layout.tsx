@@ -60,20 +60,15 @@ export default function TabLayout() {
       <Tabs.Screen
         name="goals"
         options={{
-          title: 'Goals',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'flag' : 'flag-outline'} size={22} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="account"
-        options={{
           title: 'Profile',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color} />
           ),
         }}
+      />
+      <Tabs.Screen
+        name="account"
+        options={{ href: null }}
       />
     </Tabs>
   );

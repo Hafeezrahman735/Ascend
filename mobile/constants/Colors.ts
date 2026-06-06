@@ -22,7 +22,7 @@ export const Colors = {
   darkSubtext: '#6B6899',
   lightSubtext: '#6B6899',
   success: '#00E5C3',
-  warning: '#7B6EF6',
-  error: '#7B6EF6',
+  warning: '#F59E0B',
+  error: '#EF4444',
   activeGreen: '#00E5C3',
 };

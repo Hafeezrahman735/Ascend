@@ -73,7 +73,8 @@ function getDueChip(task: Task): { label: string; bg: string; fg: string } | nul
   if (task.isCompleted) return { label: '✓ Done', bg: Colors.tealDim, fg: Colors.accent };
   const daysLeft = calcDaysUntilDue(task);
   if (daysLeft === null) return null;
-  const dayName = new Date(task.dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+  const dueDateOnly = task.dueDate.substring(0, 10);
+  const dayName = new Date(dueDateOnly + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
   if (daysLeft < 0) return { label: '⚠ Overdue', bg: ROSE_DIM, fg: ROSE };
   if (daysLeft <= 3) return { label: `⚠ ${dayName}`, bg: ROSE_DIM, fg: ROSE };
   return { label: `Due ${dayName}`, bg: Colors.inactive, fg: Colors.subtext };
@@ -938,7 +939,11 @@ function WeeklyCard({ value, label, delta, deltaLabel }: {
   );
 }
 
-function DaysWorkedGrid({ sessionsByDate }: { sessionsByDate: Map<string, number> }) {
+function DaysWorkedGrid({ sessionsByDate, tasks, onDayPress }: {
+  sessionsByDate: Map<string, number>;
+  tasks: Task[];
+  onDayPress: (dateStr: string) => void;
+}) {
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth();
@@ -947,6 +952,11 @@ function DaysWorkedGrid({ sessionsByDate }: { sessionsByDate: Map<string, number
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDayOfWeek = new Date(year, month, 1).getDay();
   const padding = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1;
+
+  const dueDates = useMemo(
+    () => new Set(tasks.filter((t) => !t.isArchived && t.dueDate).map((t) => t.dueDate!.substring(0, 10))),
+    [tasks],
+  );
 
   let daysWithSessions = 0;
   let daysElapsed = 0;
@@ -992,30 +1002,158 @@ function DaysWorkedGrid({ sessionsByDate }: { sessionsByDate: Map<string, number
             const isFuture = cell.dateStr > todayStr;
             const hasSession = !isFuture && count > 0;
             const isHeavy = hasSession && count >= 8;
+            const hasDue = dueDates.has(cell.dateStr);
             const bg = hasSession ? Colors.primary : Colors.inactive;
             const opacity = isToday ? 1 : isFuture ? 0.15 : hasSession ? (isHeavy ? 1 : 0.7) : 0.25;
             return (
-              <View key={ci} style={{
-                width: CELL_SIZE, height: CELL_SIZE, borderRadius: 6,
-                backgroundColor: isToday ? 'transparent' : bg,
-                opacity,
-                borderWidth: isToday ? 2 : 0,
-                borderColor: isToday ? Colors.primary : 'transparent',
-                alignItems: 'center', justifyContent: 'center',
-                shadowColor: isHeavy ? Colors.primary : 'transparent',
-                shadowOpacity: isHeavy ? 0.55 : 0,
-                shadowRadius: isHeavy ? 5 : 0,
-                elevation: isHeavy ? 5 : 0,
-              }}>
-                {isToday && (
-                  <Text style={{ fontSize: 8, fontWeight: '700', color: Colors.primary }}>{cell.day}</Text>
+              <TouchableOpacity
+                key={ci}
+                onPress={() => onDayPress(cell.dateStr!)}
+                activeOpacity={0.6}
+                style={{
+                  width: CELL_SIZE, height: CELL_SIZE, borderRadius: 6,
+                  backgroundColor: isToday ? 'transparent' : bg,
+                  opacity,
+                  borderWidth: isToday ? 2 : 0,
+                  borderColor: isToday ? Colors.primary : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                  shadowColor: isHeavy ? Colors.primary : 'transparent',
+                  shadowOpacity: isHeavy ? 0.55 : 0,
+                  shadowRadius: isHeavy ? 5 : 0,
+                  elevation: isHeavy ? 5 : 0,
+                }}
+              >
+                <Text style={{
+                  fontSize: 7, fontWeight: '700',
+                  color: isToday ? Colors.primary : hasSession ? 'rgba(255,255,255,0.7)' : Colors.subtext,
+                }}>
+                  {cell.day}
+                </Text>
+                {hasDue && (
+                  <View style={{
+                    width: 3, height: 3, borderRadius: 2,
+                    backgroundColor: isToday ? Colors.primary : ROSE,
+                    marginTop: 1,
+                  }} />
                 )}
-              </View>
+              </TouchableOpacity>
             );
           })}
         </View>
       ))}
     </View>
+  );
+}
+
+// ─── DayDetailSheet ───────────────────────────────────────────────────
+
+function DayDetailSheet({
+  dateStr, tasks, onClose,
+}: {
+  dateStr: string | null;
+  tasks: Task[];
+  onClose: () => void;
+}) {
+  if (!dateStr) return null;
+
+  const label = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+
+  const completed = tasks.filter((t) => t.completedAt && t.completedAt.substring(0, 10) === dateStr);
+  const due = tasks.filter((t) => !t.isCompleted && t.dueDate && t.dueDate.substring(0, 10) === dateStr);
+  const workedOn = tasks.filter((t) => Array.isArray(t.sessionDates) && t.sessionDates.includes(dateStr));
+
+  return (
+    <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.55}>
+      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{label}</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={22} color={Colors.subtext} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={{ height: 0.5, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
+
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {completed.length === 0 && due.length === 0 && workedOn.length === 0 && (
+          <Text style={{ color: Colors.subtext, textAlign: 'center', paddingVertical: 28, fontSize: 14 }}>
+            No activity on this day
+          </Text>
+        )}
+
+        {completed.length > 0 && (
+          <View style={{ marginBottom: 20 }}>
+            <Text style={{ color: Colors.accent, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>
+              COMPLETED
+            </Text>
+            {completed.map((t) => (
+              <View key={t.id} style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: Colors.border,
+              }}>
+                <Ionicons name="checkmark-circle" size={16} color={Colors.accent} style={{ marginRight: 10 }} />
+                <Text style={{ color: Colors.textBright, fontSize: 14, flex: 1 }} numberOfLines={1}>
+                  {t.title}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {due.length > 0 && (
+          <View style={{ marginBottom: workedOn.length > 0 ? 20 : 0 }}>
+            <Text style={{ color: ROSE, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>
+              DUE
+            </Text>
+            {due.map((t) => (
+              <View key={t.id} style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: Colors.border,
+              }}>
+                <Ionicons name="calendar-outline" size={16} color={ROSE} style={{ marginRight: 10 }} />
+                <Text style={{ color: Colors.textBright, fontSize: 14, flex: 1 }} numberOfLines={1}>
+                  {t.title}
+                </Text>
+                <View style={{
+                  paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
+                  backgroundColor: priorityColor(t.priority ?? 'medium') + '25',
+                }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: priorityColor(t.priority ?? 'medium') }}>
+                    {priorityLabel(t.priority ?? 'medium')}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {workedOn.length > 0 && (
+          <View>
+            <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>
+              WORKED ON
+            </Text>
+            {workedOn.map((t) => (
+              <View key={t.id} style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: Colors.border,
+              }}>
+                <Ionicons name="time-outline" size={16} color={Colors.primary} style={{ marginRight: 10 }} />
+                <Text style={{ color: Colors.textBright, fontSize: 14, flex: 1 }} numberOfLines={1}>
+                  {t.title}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+    </BottomSheet>
   );
 }
 
@@ -1032,6 +1170,7 @@ export default function TasksScreen() {
   const [statsTask, setStatsTask] = useState<Task | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
   const [formTask, setFormTask] = useState<Task | null>(null);
+  const [calDay, setCalDay] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1378,7 +1517,11 @@ export default function TasksScreen() {
         </View>
 
         {/* Days Worked Grid */}
-        <DaysWorkedGrid sessionsByDate={monthSessionsByDate} />
+        <DaysWorkedGrid
+          sessionsByDate={monthSessionsByDate}
+          tasks={nonArchived}
+          onDayPress={setCalDay}
+        />
 
       </ScrollView>
 
@@ -1407,6 +1550,13 @@ export default function TasksScreen() {
 
       {/* Toast */}
       <Toast message={toast} />
+
+      {/* Day detail sheet */}
+      <DayDetailSheet
+        dateStr={calDay}
+        tasks={nonArchived}
+        onClose={() => setCalDay(null)}
+      />
 
     </SafeAreaView>
   );

@@ -374,4 +374,39 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       res.status(500).json({ success: false, error: 'Internal server error' });
     }
   });
+
+  router.get('/timer/sessions/week', async (req: Request, res: Response) => {
+    try {
+      const userId = authenticate(req);
+
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      sevenDaysAgo.setHours(0, 0, 0, 0);
+
+      const sessions = await prisma.session.findMany({
+        where: {
+          userId,
+          type: 'focus',
+          completedAt: { gte: sevenDaysAgo },
+        },
+        select: {
+          completedAt: true,
+          durationSeconds: true,
+        },
+        orderBy: { completedAt: 'desc' },
+      });
+
+      const activeDates = Array.from(
+        new Set(
+          sessions.map(s => new Date(s.completedAt).toISOString().split('T')[0])
+        )
+      );
+
+      res.json({ success: true, data: { sessions, activeDates } });
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      console.error('[timer/sessions/week] error:', err);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  });
 }

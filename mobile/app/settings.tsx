@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/Colors';
 import { useAuthStore } from '../stores/authStore';
+import { api } from '../services/api';
 import { useGamificationStore } from '../stores/gamificationStore';
 import { useUserProfileStore } from '../stores/userProfileStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -122,12 +123,15 @@ export default function SettingsScreen() {
     );
   }
 
-  function handleDeleteAccount() {
+  async function handleDeleteAccount() {
     if (deleteText !== 'DELETE') return;
     setShowDeleteConfirm(false);
-    Alert.alert('Account Deleted', 'Your account has been permanently deleted.', [
-      { text: 'OK', onPress: () => logout() },
-    ]);
+    try {
+      await api.delete('/auth/account');
+    } catch {
+      // proceed to logout even if the request fails
+    }
+    logout();
   }
 
   async function saveDisplayName() {

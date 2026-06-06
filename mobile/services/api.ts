@@ -93,7 +93,11 @@ export async function apiRequest<T>(
     }
   }
 
-  return response.json();
+  try {
+    return await response.json();
+  } catch {
+    return { success: false, error: 'Server returned an invalid response' };
+  }
 }
 
 export const api = {

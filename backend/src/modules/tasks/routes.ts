@@ -4,12 +4,15 @@ import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 
+const PRIORITY_VALUES = ['low', 'medium', 'high', 'urgent'] as const;
+
 const createTaskSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   tags: z.array(z.string().max(30)).max(10).optional().default([]),
   estimatedMinutes: z.number().int().min(1).optional().nullable(),
+  priority: z.enum(PRIORITY_VALUES).optional().default('medium'),
 });
 
 const updateTaskSchema = z.object({
@@ -18,6 +21,7 @@ const updateTaskSchema = z.object({
   dueDate: z.string().optional().nullable(),
   tags: z.array(z.string().max(30)).max(10).optional(),
   estimatedMinutes: z.number().int().min(1).optional().nullable(),
+  priority: z.enum(PRIORITY_VALUES).optional(),
   isCompleted: z.boolean().optional(),
   completedAt: z.string().optional().nullable(),
 });
@@ -37,6 +41,7 @@ export function setupTaskRoutes(router: Router): void {
           dueDate: data.dueDate ? new Date(data.dueDate) : null,
           tags: data.tags,
           estimatedMinutes: data.estimatedMinutes || null,
+          priority: data.priority,
         },
       });
 
@@ -211,6 +216,7 @@ export function setupTaskRoutes(router: Router): void {
       if (data.dueDate !== undefined) updateData.dueDate = data.dueDate ? new Date(data.dueDate) : null;
       if (data.tags !== undefined) updateData.tags = data.tags;
       if (data.estimatedMinutes !== undefined) updateData.estimatedMinutes = data.estimatedMinutes;
+      if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.isCompleted !== undefined) updateData.isCompleted = data.isCompleted;
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
 

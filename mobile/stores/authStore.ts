@@ -4,6 +4,7 @@ import { setTokens, clearTokens, api } from '../services/api';
 import { reconnectTimerSocket, disconnectTimerSocket, disconnectSocialSocket } from '../services/socket';
 import { clearSessionHistory } from '../store/sync';
 import { useGamificationStore } from './gamificationStore';
+import { useTimerStore } from './timerStore';
 
 interface AuthState {
   user: User | null;
@@ -45,6 +46,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isLoading: false,
           isNewUser: false,
         });
+        // Hydrate timer stats for the newly logged-in user.
+        // Their keys will be empty on a new device or after logout — that is correct.
+        await useTimerStore.getState().hydrate(response.data.user.id);
         return true;
       }
       set({ error: response.error || 'Login failed', isLoading: false });
@@ -73,6 +77,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isLoading: false,
           isNewUser: true,
         });
+        // New account — user-scoped keys don't exist yet, hydrate correctly reads zeros.
+        await useTimerStore.getState().hydrate(response.data.user.id);
         return true;
       }
       set({ error: response.error || 'Registration failed', isLoading: false });
@@ -84,6 +90,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
+    // Read userId before clearing — clearUserData needs it, and user is nulled below.
+    const userId = get().user?.id;
     set({ isLoading: true });
     try {
       await api.post('/auth/logout', {});
@@ -93,6 +101,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       disconnectSocialSocket();
       clearTokens();
       await clearSessionHistory();
+      if (userId) {
+        await useTimerStore.getState().clearUserData(userId);
+      }
       useGamificationStore.getState().reset();
       // Task store self-cleans via its useAuthStore.subscribe in taskStore.ts.
       // Setting user: null here triggers that subscription synchronously.

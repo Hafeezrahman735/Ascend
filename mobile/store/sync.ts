@@ -12,12 +12,6 @@ export interface SessionRecord {
   type: 'focus' | 'break';
 }
 
-export interface TaskStats {
-  sessionsOnTask: number;
-  totalTimeOnTask: number;
-  sessionDates: string[];
-}
-
 interface DailyAggregate {
   date: string;
   totalSessions: number;
@@ -93,30 +87,6 @@ export async function getDailyAggregate(date?: string): Promise<DailyAggregate |
   } catch {
     return null;
   }
-}
-
-export async function getAllTaskStatsFromHistory(taskIds: string[]): Promise<Map<string, TaskStats>> {
-  const result = new Map<string, TaskStats>();
-  if (taskIds.length === 0) return result;
-
-  try {
-    const history = await getSessionHistory();
-    const idSet = new Set(taskIds);
-
-    for (const record of history) {
-      if (!record.taskId || !idSet.has(record.taskId) || record.type !== 'focus') continue;
-      const existing = result.get(record.taskId) ?? { sessionsOnTask: 0, totalTimeOnTask: 0, sessionDates: [] };
-      const date = new Date(record.completedAt).toISOString().split('T')[0];
-      existing.sessionsOnTask += 1;
-      existing.totalTimeOnTask += record.durationSeconds;
-      if (!existing.sessionDates.includes(date)) existing.sessionDates.push(date);
-      result.set(record.taskId, existing);
-    }
-  } catch (err) {
-    console.warn('[sync] getAllTaskStatsFromHistory failed:', err);
-  }
-
-  return result;
 }
 
 export async function mergeWithServerSessions(

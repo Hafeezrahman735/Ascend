@@ -12,6 +12,7 @@ import {
   InAppNotification,
   UserSocialStats,
   UserListItem,
+  PublicUserProfile,
 } from '../types';
 import { api } from '../services/api';
 
@@ -62,10 +63,27 @@ interface SocialState {
   toggleReaction: (postId: string, emoji: string, currentUserId: string) => Promise<void>;
   createPost: (draft: Partial<SocialPost>) => Promise<boolean>;
   fetchStudyGroups: () => Promise<void>;
+  fetchAllGroups: () => Promise<StudyGroup[]>;
+  joinGroup: (groupId: string) => Promise<boolean>;
+  leaveGroup: (groupId: string) => Promise<boolean>;
+  createGroup: (data: { name: string; emoji: string; color: string; isPrivate: boolean }) => Promise<StudyGroup | null>;
   setSelectedGroup: (groupId: string | null) => void;
   fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
-  markNotificationsRead: () => void;
+  markNotificationsRead: () => Promise<void>;
   fetchNotifications: () => Promise<void>;
+
+  // Search & follow
+  searchResults: UserSearchResult[];
+  searchQuery: string;
+  isSearching: boolean;
+  searchUsersV2: (query: string) => Promise<void>;
+  clearSearch: () => void;
+  followUser: (userId: string) => Promise<boolean>;
+  unfollowUser: (userId: string) => Promise<boolean>;
+
+  // Public profile
+  viewedProfile: PublicUserProfile | null;
+  fetchUserProfile: (userId: string) => Promise<PublicUserProfile | null>;
 
   // Profile social stats
   userSocialStats: UserSocialStats | null;
@@ -107,6 +125,11 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   myFocusEntry: null,
   notifications: [],
   unreadCount: 0,
+
+  searchResults: [],
+  searchQuery: '',
+  isSearching: false,
+  viewedProfile: null,
 
   userSocialStats: null,
   followers: [],
@@ -214,8 +237,8 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       const response = await api.get<{ incoming: FriendRequest[]; outgoing: FriendRequest[] }>('/social/friend-requests');
       if (response.success && response.data) {
         set({
-          incomingRequests: response.data.incoming,
-          outgoingRequests: response.data.outgoing,
+          incomingRequests: response.data.incoming ?? [],
+          outgoingRequests: response.data.outgoing ?? [],
         });
       }
     } catch {
@@ -351,11 +374,15 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   createPost: async (draft: Partial<SocialPost>) => {
     try {
       const response = await api.post<SocialPost>('/social/posts', draft);
-      if (response.success && response.data) {
-        set((state) => ({
-          posts: [response.data!, ...state.posts],
-          userPosts: [response.data!, ...state.userPosts],
-        }));
+      if (response.success) {
+        if (response.data) {
+          set((state) => ({
+            posts: [response.data!, ...state.posts],
+            userPosts: [response.data!, ...state.userPosts],
+          }));
+        } else {
+          await get().fetchPosts(get().selectedGroupId ?? undefined);
+        }
         return true;
       }
       return false;
@@ -377,8 +404,124 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }
   },
 
+  fetchAllGroups: async () => {
+    try {
+      const response = await api.get<StudyGroup[]>('/social/groups/all');
+      if (response.success && response.data) return response.data;
+    } catch {}
+    return [];
+  },
+
+  joinGroup: async (groupId: string) => {
+    try {
+      const response = await api.post(`/social/groups/${groupId}/join`, {});
+      if (response.success) {
+        await get().fetchStudyGroups();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+
+  leaveGroup: async (groupId: string) => {
+    try {
+      const response = await api.post(`/social/groups/${groupId}/leave`, {});
+      if (response.success) {
+        set((state) => ({ studyGroups: state.studyGroups.filter((g) => g.id !== groupId) }));
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+
+  createGroup: async (data) => {
+    try {
+      const response = await api.post<StudyGroup>('/social/groups', data);
+      if (response.success && response.data) {
+        set((state) => ({ studyGroups: [response.data!, ...state.studyGroups] }));
+        return response.data;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
   setSelectedGroup: (groupId: string | null) => {
     set({ selectedGroupId: groupId });
+  },
+
+  searchUsersV2: async (query: string) => {
+    set({ searchQuery: query, isSearching: true });
+    if (!query || query.length < 2) {
+      set({ searchResults: [], isSearching: false });
+      return;
+    }
+    try {
+      const response = await api.get<UserSearchResult[]>(`/social/search?q=${encodeURIComponent(query)}`);
+      if (response.success && response.data) {
+        set({ searchResults: response.data, isSearching: false });
+      } else {
+        set({ searchResults: [], isSearching: false });
+      }
+    } catch {
+      set({ searchResults: [], isSearching: false });
+    }
+  },
+
+  clearSearch: () => {
+    set({ searchResults: [], searchQuery: '', isSearching: false });
+  },
+
+  followUser: async (userId: string) => {
+    try {
+      const response = await api.post(`/social/follow/${userId}`, {});
+      if (response.success) {
+        set((state) => ({
+          searchResults: state.searchResults.map((u) =>
+            u.id === userId ? { ...u, isFollowing: true } : u
+          ),
+        }));
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+
+  unfollowUser: async (userId: string) => {
+    try {
+      const response = await api.delete(`/social/follow/${userId}`);
+      if (response.success) {
+        set((state) => ({
+          searchResults: state.searchResults.map((u) =>
+            u.id === userId ? { ...u, isFollowing: false } : u
+          ),
+        }));
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+
+  fetchUserProfile: async (userId: string) => {
+    try {
+      const response = await api.get<PublicUserProfile>(`/social/users/${userId}`);
+      if (response.success && response.data) {
+        set({ viewedProfile: response.data });
+        return response.data;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   },
 
   fetchFocusLeaderboard: async (scope: string, period: string) => {
@@ -404,19 +547,30 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }
   },
 
-  markNotificationsRead: () => {
+  markNotificationsRead: async () => {
     set((state) => ({
       notifications: state.notifications.map((n) => ({ ...n, isRead: true })),
       unreadCount: 0,
     }));
+    try {
+      await api.post('/notifications/read-all', {});
+    } catch {
+      // silent — optimistic update already applied
+    }
   },
 
   fetchNotifications: async () => {
     try {
-      const response = await api.get<InAppNotification[]>('/notifications');
+      const response = await api.get<Array<{ id: string; type: string; title: string; body: string; isRead: boolean; createdAt: string }>>('/notifications');
       if (response.success && response.data) {
         const list = Array.isArray(response.data) ? response.data : [];
-        set({ notifications: list, unreadCount: list.filter((n) => !n.isRead).length });
+        const mapped: InAppNotification[] = list.map((n) => ({
+          id: n.id,
+          text: n.title + (n.body ? `: ${n.body}` : ''),
+          createdAt: n.createdAt,
+          isRead: n.isRead,
+        }));
+        set({ notifications: mapped, unreadCount: mapped.filter((n) => !n.isRead).length });
       }
     } catch {
       // silent

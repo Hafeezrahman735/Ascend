@@ -86,12 +86,19 @@ notificationsRouter.patch('/notifications/:id/read', async (req: Request, res: R
 notificationsRouter.patch('/notifications/read-all', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
+    await prisma.notification.updateMany({ where: { userId, isRead: false }, data: { isRead: true } });
+    res.json({ success: true, data: { message: 'All notifications marked as read' } });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('Mark all read error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
 
-    await prisma.notification.updateMany({
-      where: { userId, isRead: false },
-      data: { isRead: true },
-    });
-
+notificationsRouter.post('/notifications/read-all', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    await prisma.notification.updateMany({ where: { userId, isRead: false }, data: { isRead: true } });
     res.json({ success: true, data: { message: 'All notifications marked as read' } });
   } catch (error) {
     if (handleAuthError(res, error)) return;

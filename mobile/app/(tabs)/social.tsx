@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useSocialStore } from '../../stores/socialStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
@@ -316,8 +317,10 @@ function FreePostBlock({ post }: { post: SocialPost }) {
 
 // ─── Post card ───────────────────────────────────────────────────────────────
 
-function PostCard({ post, currentUserId, onToggleReaction }: {
-  post: SocialPost; currentUserId: string; onToggleReaction: (postId: string, emoji: string) => void;
+function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
+  post: SocialPost; currentUserId: string;
+  onToggleReaction: (postId: string, emoji: string) => void;
+  onAuthorPress?: (authorId: string) => void;
 }) {
   const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
   return (
@@ -325,7 +328,10 @@ function PostCard({ post, currentUserId, onToggleReaction }: {
       backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
       marginHorizontal: 16, marginBottom: 12, padding: 14,
     }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+      <Pressable
+        onPress={() => onAuthorPress?.(post.authorId)}
+        style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}
+      >
         <View style={{
           width: 36, height: 36, borderRadius: 11, backgroundColor: RAISED,
           alignItems: 'center', justifyContent: 'center', marginRight: 10,
@@ -346,7 +352,7 @@ function PostCard({ post, currentUserId, onToggleReaction }: {
             {post.groupName ? `${post.groupName} · ` : ''}{timeAgo(post.createdAt)}
           </Text>
         </View>
-      </View>
+      </Pressable>
 
       <PostTypeTag type={post.type} contentTag={post.contentTag} />
 
@@ -1022,6 +1028,7 @@ type Period = typeof PERIODS[number]['key'];
 export default function SocialScreen() {
   const social      = useSocialStore();
   const auth        = useAuthStore();
+  const router      = useRouter();
   const currentUserId = auth.user?.id ?? '';
 
   const [activeTab,          setActiveTab]          = useState<'feed' | 'leaderboard'>('feed');
@@ -1035,6 +1042,7 @@ export default function SocialScreen() {
     social.fetchPosts(social.selectedGroupId ?? undefined);
     social.fetchStudyGroups();
     social.fetchFocusLeaderboard(scope, period);
+    social.fetchNotifications();
   }, []);
 
   useEffect(() => {
@@ -1056,8 +1064,15 @@ export default function SocialScreen() {
     social.toggleReaction(postId, emoji, currentUserId);
   }, [currentUserId]);
 
+  const handleAuthorPress = useCallback((authorId: string) => {
+    router.push(`/user/${authorId}` as never);
+  }, []);
+
   const handleCreatePost = useCallback(async (draft: Partial<SocialPost>) => {
-    await social.createPost(draft);
+    const ok = await social.createPost(draft);
+    if (!ok) {
+      Alert.alert('Post failed', 'Something went wrong. Please try again.');
+    }
   }, []);
 
   const { focusLeaderboard, myFocusEntry } = social;
@@ -1083,6 +1098,7 @@ export default function SocialScreen() {
               onPress={() => handleGroupSelect(social.selectedGroupId === g.id ? null : g.id)}
             />
           ))}
+          <JoinChip onPress={() => router.push('/groups' as never)} />
         </ScrollView>
       </View>
 
@@ -1113,11 +1129,22 @@ export default function SocialScreen() {
                   ? 'No posts in this group yet — be the first to share'
                   : 'Follow students or join a group to see posts here'}
               </Text>
+              {!social.selectedGroupId && (
+                <Pressable
+                  onPress={() => router.push('/search' as never)}
+                  style={{
+                    marginTop: 16, paddingHorizontal: 24, paddingVertical: 10,
+                    backgroundColor: Colors.primary, borderRadius: 20,
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Find People</Text>
+                </Pressable>
+              )}
             </View>
           )
         }
         renderItem={({ item }) => (
-          <PostCard post={item} currentUserId={currentUserId} onToggleReaction={handleToggleReaction} />
+          <PostCard post={item} currentUserId={currentUserId} onToggleReaction={handleToggleReaction} onAuthorPress={handleAuthorPress} />
         )}
       />
     </View>
@@ -1234,6 +1261,9 @@ export default function SocialScreen() {
       {/* Header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
         <Text style={{ color: Colors.textBright, fontSize: 26, fontWeight: '800', flex: 1 }}>Social</Text>
+        <Pressable style={{ marginRight: 14 }} onPress={() => router.push('/search' as never)}>
+          <Ionicons name="search" size={22} color={Colors.text} />
+        </Pressable>
         <Pressable style={{ marginRight: 14 }} onPress={() => {
           social.markNotificationsRead();
           setShowNotifications(true);

@@ -9,8 +9,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { loadTokensFromStorage } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useGamificationStore } from '../stores/gamificationStore';
-import { useTaskStore } from '../stores/taskStore';
-import { useTimerStore } from '../stores/timerStore';
+import { useTaskStore, initTaskStore } from '../stores/taskStore';
+import { useTimerStore, initTimerStore } from '../stores/timerStore';
 import { useSocialStore } from '../stores/socialStore';
 import { Colors } from '../constants/Colors';
 
@@ -33,8 +33,10 @@ export default function RootLayout() {
     if (!isReady) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const currentScreen = segments[1] as string | undefined;
+    const onOnboarding = !!user && isNewUser && (currentScreen === 'onboarding1' || currentScreen === 'onboarding2');
     const needsAuth = !user && !inAuthGroup;
-    const needsApp = !!user && inAuthGroup;
+    const needsApp = !!user && inAuthGroup && !onOnboarding;
 
     if (!needsAuth && !needsApp) return;
     if (isNavigating.current) return;
@@ -61,6 +63,10 @@ export default function RootLayout() {
       if (bootstrapRan) return;
       bootstrapRan = true;
 
+      // Wire up cross-store subscriptions now that all modules are loaded.
+      initTaskStore();
+      initTimerStore();
+
       try {
         // loadTokensFromStorage seeds the in-memory accessToken used by apiRequest.
         const { accessToken: token } = await loadTokensFromStorage();
@@ -78,9 +84,10 @@ export default function RootLayout() {
 
           if (authedUser) {
             await useTaskStore.getState().hydrateTasks(authedUser.id);
+            await useTimerStore.getState().hydrate(authedUser.id);
+          } else {
+            await useTimerStore.getState().hydrate('');
           }
-
-          await useTimerStore.getState().hydrate();
         }
 
         // Always set ready — the auth guard handles all navigation from here.
@@ -92,6 +99,8 @@ export default function RootLayout() {
           useGamificationStore.getState().fetchProfile();
           useGamificationStore.getState().fetchAchievements();
           useSocialStore.getState().fetchNotifications();
+          useSocialStore.getState().fetchStudyGroups();
+          useTimerStore.getState().fetchWeekSessions();
         }
 
       } catch (err) {
@@ -130,6 +139,9 @@ export default function RootLayout() {
         <Stack.Screen name="achievement/[id]" options={{ presentation: 'modal' }} />
         <Stack.Screen name="friend/[id]" />
         <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="search" />
+        <Stack.Screen name="user/[id]" />
+        <Stack.Screen name="groups" />
       </Stack>
     </GestureHandlerRootView>
   );

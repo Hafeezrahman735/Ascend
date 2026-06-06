@@ -9,9 +9,10 @@
 
 import { Platform } from 'react-native';
 
-const DEV_API_URL = 'http://192.168.4.28:3001';
-const DEV_WS_URL = 'http://192.168.1.100:3001';
-const DEV_SOCIAL_WS_URL = 'http://192.168.1.100:3001';
+const LOCAL_IP = '192.168.4.23'; // <-- update this when your IP changes
+const DEV_API_URL = `http://${LOCAL_IP}:3001`;
+const DEV_WS_URL = `http://${LOCAL_IP}:3001`;
+const DEV_SOCIAL_WS_URL = `http://${LOCAL_IP}:3001`;
 
 // Production URLs — replace with your deployed backend URLs before release
 const PROD_API_URL = 'https://api.pomodoro.app';

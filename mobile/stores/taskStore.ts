@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
 import { Task } from '../types';
-import { getAllTaskStatsFromHistory } from '../store/sync';
 import { useAuthStore } from './authStore';
 
 const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
@@ -109,12 +108,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
           return;
         }
         const rawTasks = normalizeTasks(res.data);
-        const taskIds = rawTasks.map((t) => t.id);
-        const statsMap = await getAllTaskStatsFromHistory(taskIds);
-        const serverTasks = rawTasks.map((t) => {
-          const stats = statsMap.get(t.id);
-          return stats ? { ...t, ...stats } : t;
-        });
+        // Use server fields directly — normalizeTasks already applies ?? defaults
+        const serverTasks = rawTasks;
 
         // Preserve locally-created temp tasks whose POST is still in flight.
         const serverIds = new Set(serverTasks.map((t) => t.id));
@@ -276,11 +271,14 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   },
 }));
 
-// Subscribe to auth state changes so the task store cleans itself up on logout.
-// This avoids a circular import (authStore importing taskStore).
-useAuthStore.subscribe((state, prevState) => {
-  if (prevState.user && !state.user) {
-    const userId = prevState.user.id; // Captured from previous state before it was cleared
-    useTaskStore.getState().clearTasks(userId);
-  }
-});
+// Called from _layout.tsx bootstrap after all modules are loaded.
+// Keeping this out of module scope breaks the circular import crash:
+//   authStore → timerStore → taskStore → authStore
+export function initTaskStore(): void {
+  useAuthStore.subscribe((state, prevState) => {
+    if (prevState.user && !state.user) {
+      const userId = prevState.user.id;
+      useTaskStore.getState().clearTasks(userId);
+    }
+  });
+}
