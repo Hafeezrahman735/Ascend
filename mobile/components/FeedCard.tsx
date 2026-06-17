@@ -1,7 +1,6 @@
 import { View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { FeedEvent } from '../types';
-import { Colors } from '../constants/Colors';
 import LevelBadge from './LevelBadge';
 
 function relativeTime(dateStr: string): string {

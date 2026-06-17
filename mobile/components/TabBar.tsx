@@ -1,5 +1,4 @@
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
-import { Colors } from '../constants/Colors';
 
 interface Tab {
   key: string;

@@ -7,18 +7,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSocialStore } from '../stores/socialStore';
-import { Colors } from '../constants/Colors';
-import { BORDER_SOFT } from '../constants/socialTheme';
+import { useTheme } from '../hooks/useTheme';
 import type { UserSearchResult } from '../types';
-
-const SURFACE = Colors.surface;
-const RAISED = Colors.raised;
 
 function UserRow({ user, onFollow, onPress }: {
   user: UserSearchResult;
   onFollow: (id: string, following: boolean) => void;
   onPress: (id: string) => void;
 }) {
+  const Colors = useTheme();
   const [loading, setLoading] = useState(false);
 
   const handleToggle = async () => {
@@ -33,11 +30,11 @@ function UserRow({ user, onFollow, onPress }: {
       style={{
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: 20, paddingVertical: 12,
-        borderBottomWidth: 0.5, borderBottomColor: BORDER_SOFT,
+        borderBottomWidth: 0.5, borderBottomColor: Colors.BORDER_SOFT,
       }}
     >
       <View style={{
-        width: 44, height: 44, borderRadius: 13, backgroundColor: RAISED,
+        width: 44, height: 44, borderRadius: 13, backgroundColor: Colors.raised,
         alignItems: 'center', justifyContent: 'center', marginRight: 12,
       }}>
         <Text style={{ fontSize: 24 }}>{user.avatarEmoji || '🦊'}</Text>
@@ -53,7 +50,7 @@ function UserRow({ user, onFollow, onPress }: {
           paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20,
           backgroundColor: user.isFollowing ? Colors.raised : Colors.primary,
           borderWidth: 1,
-          borderColor: user.isFollowing ? BORDER_SOFT : Colors.primary,
+          borderColor: user.isFollowing ? Colors.BORDER_SOFT : Colors.primary,
         }}
       >
         {loading
@@ -71,6 +68,7 @@ function UserRow({ user, onFollow, onPress }: {
 }
 
 export default function SearchScreen() {
+  const Colors = useTheme();
   const router = useRouter();
   const social = useSocialStore();
   const inputRef = useRef<TextInput>(null);
@@ -110,8 +108,8 @@ export default function SearchScreen() {
           </Pressable>
           <View style={{
             flex: 1, flexDirection: 'row', alignItems: 'center',
-            backgroundColor: SURFACE, borderRadius: 14, borderWidth: 1,
-            borderColor: BORDER_SOFT, paddingHorizontal: 12, height: 44,
+            backgroundColor: Colors.surface, borderRadius: 14, borderWidth: 1,
+            borderColor: Colors.BORDER_SOFT, paddingHorizontal: 12, height: 44,
           }}>
             <Ionicons name="search" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
             <TextInput

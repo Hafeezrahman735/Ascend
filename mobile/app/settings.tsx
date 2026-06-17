@@ -6,7 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../constants/Colors';
+import { useTheme } from '../hooks/useTheme';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../services/api';
 import { useGamificationStore } from '../stores/gamificationStore';
@@ -22,10 +22,12 @@ const AVATAR_EMOJIS = [
 ];
 
 function Divider() {
+  const Colors = useTheme();
   return <View style={{ height: 0.5, backgroundColor: Colors.border }} />;
 }
 
 function SectionTitle({ title }: { title: string }) {
+  const Colors = useTheme();
   return (
     <Text style={{
       color: Colors.subtext, fontSize: 11, fontWeight: '600',
@@ -38,6 +40,7 @@ function SectionTitle({ title }: { title: string }) {
 }
 
 function SettingsCard({ children }: { children: React.ReactNode }) {
+  const Colors = useTheme();
   return (
     <View style={{
       backgroundColor: Colors.surface, borderRadius: 16,
@@ -58,6 +61,7 @@ function SettingsRow({
   onPress?: () => void;
   rightComponent?: React.ReactNode;
 }) {
+  const Colors = useTheme();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -88,6 +92,7 @@ function SettingsRow({
 }
 
 export default function SettingsScreen() {
+  const Colors = useTheme();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -362,6 +367,23 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.notifyAchievements}
                 onValueChange={(v) => user && settings.update(user.id, { notifyAchievements: v })}
+                trackColor={{ false: Colors.inactive, true: Colors.primary }}
+                thumbColor="white"
+              />
+            }
+          />
+        </SettingsCard>
+
+        {/* Appearance */}
+        <SectionTitle title="Appearance" />
+        <SettingsCard>
+          <SettingsRow
+            label="Light mode"
+            subtitle="Off = Deep Focus Midnight · On = Warm Dawn"
+            rightComponent={
+              <Switch
+                value={settings.theme === 'light'}
+                onValueChange={(v) => user && settings.update(user.id, { theme: v ? 'light' : 'dark' })}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />

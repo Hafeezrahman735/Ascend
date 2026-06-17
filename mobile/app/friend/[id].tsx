@@ -5,9 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../services/api';
 import { AnalyticsSummary } from '../../types';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 
 export default function FriendProfileScreen() {
+  const Colors = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);

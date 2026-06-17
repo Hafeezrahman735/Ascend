@@ -1,7 +1,7 @@
 import { View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Achievement } from '../types';
-import { Colors } from '../constants/Colors';
+import { useTheme } from '../hooks/useTheme';
 
 interface AchievementCardProps {
   achievement: Achievement;
@@ -9,6 +9,7 @@ interface AchievementCardProps {
 }
 
 export default function AchievementCard({ achievement, unlocked }: AchievementCardProps) {
+  const Colors = useTheme();
   if (unlocked) {
     return (
       <View className="bg-light-card dark:bg-dark-card rounded-xl p-3 items-center justify-center" style={{ minHeight: 90 }}>

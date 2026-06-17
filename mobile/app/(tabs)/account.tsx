@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../stores/authStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 import { getRank, RANK_META, getXpToNextRank, getXpProgressInRank } from '../../lib/rank';
 
 function fmtXP(n: number): string {
@@ -14,6 +14,7 @@ function fmtXP(n: number): string {
 }
 
 export default function AccountScreen() {
+  const Colors = useTheme();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const xp = useGamificationStore((s) => s.xp);

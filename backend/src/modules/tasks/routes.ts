@@ -24,6 +24,8 @@ const updateTaskSchema = z.object({
   priority: z.enum(PRIORITY_VALUES).optional(),
   isCompleted: z.boolean().optional(),
   completedAt: z.string().optional().nullable(),
+  taskGoalId: z.string().optional().nullable(),
+  order: z.number().int().optional().nullable(),
 });
 
 export function setupTaskRoutes(router: Router): void {
@@ -63,7 +65,7 @@ export function setupTaskRoutes(router: Router): void {
 
       const tasks = await prisma.task.findMany({
         where: { userId, isArchived: false },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
       });
 
       res.json({ success: true, data: tasks });
@@ -88,22 +90,36 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
+      const period = (req.query.period as string | undefined) ?? 'all';
+      const now = new Date();
+      const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const dayOfWeekNow = now.getUTCDay();
+      const mondayOffsetNow = dayOfWeekNow === 0 ? -6 : 1 - dayOfWeekNow;
+      const startOfWeekNow = new Date(startOfDay);
+      startOfWeekNow.setUTCDate(startOfWeekNow.getUTCDate() + mondayOffsetNow);
+      const startOfMonthNow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+      const periodFilter: Record<string, Date | undefined> = {
+        today: startOfDay,
+        week:  startOfWeekNow,
+        month: startOfMonthNow,
+      };
+      const periodStart = periodFilter[period];
+
       const sessions = await prisma.session.findMany({
-        where: { taskId: id, userId },
+        where: {
+          taskId: id,
+          userId,
+          ...(periodStart ? { completedAt: { gte: periodStart } } : {}),
+        },
         select: {
           durationSeconds: true,
           plannedDurationSeconds: true,
           completedAt: true,
         },
       });
-
-      const now = new Date();
-      const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      const dayOfWeek = now.getUTCDay();
-      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-      const startOfWeek = new Date(startOfDay);
-      startOfWeek.setUTCDate(startOfWeek.getUTCDate() + mondayOffset);
-      const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const startOfWeek = startOfWeekNow;
+      const startOfMonth = startOfMonthNow;
 
       const last7Days: { date: string; seconds: number }[] = [];
       for (let i = 6; i >= 0; i--) {
@@ -219,6 +235,8 @@ export function setupTaskRoutes(router: Router): void {
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.isCompleted !== undefined) updateData.isCompleted = data.isCompleted;
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
+      if (data.taskGoalId  !== undefined) updateData.taskGoalId  = data.taskGoalId ?? null;
+      if (data.order       !== undefined) updateData.order       = data.order ?? null;
 
       const task = await prisma.task.update({
         where: { id },

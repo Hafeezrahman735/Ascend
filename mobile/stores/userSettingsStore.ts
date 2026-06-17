@@ -10,7 +10,7 @@ export interface SettingsData {
   notifyDailyReminder: boolean;
   notifyFriendActivity: boolean;
   notifyAchievements: boolean;
-  theme: 'dark' | 'light' | 'system';
+  theme: 'dark' | 'light';
 }
 
 interface UserSettingsState extends SettingsData {
@@ -29,7 +29,7 @@ const DEFAULTS: SettingsData = {
   notifyDailyReminder: true,
   notifyFriendActivity: true,
   notifyAchievements: true,
-  theme: 'system',
+  theme: 'dark',
 };
 
 export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
@@ -41,7 +41,9 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
       const raw = await AsyncStorage.getItem(`settings:${userId}`);
       if (raw) {
         const stored = JSON.parse(raw) as Partial<SettingsData>;
-        set({ ...DEFAULTS, ...stored, isLoaded: true });
+        // Legacy 'system' (or any non-'light' value) resolves to dark.
+        const theme: 'dark' | 'light' = stored.theme === 'light' ? 'light' : 'dark';
+        set({ ...DEFAULTS, ...stored, theme, isLoaded: true });
       } else {
         set({ ...DEFAULTS, isLoaded: true });
       }

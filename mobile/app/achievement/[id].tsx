@@ -5,10 +5,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../services/api';
 import { Achievement } from '../../types';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 import * as Haptics from 'expo-haptics';
 
 export default function AchievementDetailScreen() {
+  const Colors = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [achievements, setAchievements] = useState<Achievement[]>([]);

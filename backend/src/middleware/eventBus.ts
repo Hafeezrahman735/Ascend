@@ -19,6 +19,7 @@ export interface SessionCompletedEvent {
   taskLabel: string | null;
   taskId: string | null;
   completedAt: string;
+  localDate: string; // YYYY-MM-DD in the user's local timezone
 }
 
 export interface GoalCompletedEvent {

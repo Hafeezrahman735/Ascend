@@ -8,26 +8,20 @@ import { checkAchievements } from '../achievements/handler';
 function getStreakIncrement(
   lastSessionDate: Date | null,
   currentStreak: number,
+  localDate: string, // YYYY-MM-DD in the user's local timezone
 ): { currentStreak: number } {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().split('T')[0];
-  const lastStr = lastSessionDate
-    ? new Date(lastSessionDate).toISOString().split('T')[0]
-    : null;
+  const toStr = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 
-  if (lastStr === todayStr) {
-    return { currentStreak: currentStreak || 0 };
-  }
+  const lastStr = lastSessionDate ? toStr(lastSessionDate) : null;
+
+  if (lastStr === localDate) return { currentStreak: currentStreak || 0 };
 
   if (lastStr) {
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-    if (lastStr === yesterdayStr) {
-      return { currentStreak: (currentStreak || 0) + 1 };
-    }
+    const prev = new Date(localDate + 'T00:00:00.000Z');
+    prev.setUTCDate(prev.getUTCDate() - 1);
+    const yesterdayStr = toStr(prev);
+    if (lastStr === yesterdayStr) return { currentStreak: (currentStreak || 0) + 1 };
     return { currentStreak: 1 };
   }
 
@@ -38,6 +32,7 @@ export async function runGamification(
   userId: string,
   elapsedSeconds: number,
   completedAt: Date,
+  localDate?: string, // YYYY-MM-DD in the user's local timezone; falls back to UTC date
 ): Promise<{
   xpEarned: number;
   totalXP: number;
@@ -52,11 +47,14 @@ export async function runGamification(
     throw new Error('User not found');
   }
 
+  const sessionLocalDate = localDate ??
+    `${completedAt.getUTCFullYear()}-${String(completedAt.getUTCMonth() + 1).padStart(2, '0')}-${String(completedAt.getUTCDate()).padStart(2, '0')}`;
+
   const { streak, longestStreak: newLongest, isNewDay } = updateStreak(
     user.lastActiveDate,
     user.currentStreak,
     user.longestStreak,
-    completedAt,
+    sessionLocalDate,
   );
 
   const xpEarned = calculateXP(elapsedSeconds, streak);
@@ -86,7 +84,8 @@ export async function runGamification(
     totalFocusTime: { increment: elapsedSeconds } as never,
   };
   if (isNewDay) {
-    updateData.lastActiveDate = completedAt;
+    // Store as midnight UTC of the local date so future comparisons via toLocalDateStr() are stable.
+    updateData.lastActiveDate = new Date(sessionLocalDate + 'T00:00:00.000Z');
   }
 
   await prisma.user.update({
@@ -181,24 +180,22 @@ export async function handleSessionCompleted(payload: SessionCompletedEvent): Pr
   }
 
   const existingStreak = await prisma.streak.findUnique({ where: { userId } });
+  const eventLocalDate = payload.localDate ??
+    new Date(payload.completedAt).toISOString().split('T')[0];
+
   const { currentStreak } = getStreakIncrement(
     existingStreak?.lastSessionDate || null,
     existingStreak?.currentStreak || 0,
+    eventLocalDate,
   );
   const longestStreak = Math.max(currentStreak, existingStreak?.longestStreak || 0);
 
+  // Store lastSessionDate as midnight UTC of the local date for stable future comparisons.
+  const lastSessionDate = new Date(eventLocalDate + 'T00:00:00.000Z');
+
   await prisma.streak.upsert({
     where: { userId },
-    create: {
-      userId,
-      currentStreak,
-      longestStreak,
-      lastSessionDate: payload.completedAt ? new Date(payload.completedAt) : new Date(),
-    },
-    update: {
-      currentStreak,
-      longestStreak,
-      lastSessionDate: payload.completedAt ? new Date(payload.completedAt) : new Date(),
-    },
+    create: { userId, currentStreak, longestStreak, lastSessionDate },
+    update: { currentStreak, longestStreak, lastSessionDate },
   });
 }

@@ -4,13 +4,14 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../stores/authStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 
 function slugify(str: string): string {
   return str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '').slice(0, 20);
 }
 
 export default function Onboarding1Screen() {
+  const Colors = useTheme();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const saveProfile = useUserProfileStore((s) => s.save);

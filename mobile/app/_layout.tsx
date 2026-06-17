@@ -4,7 +4,6 @@ import { View, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { loadTokensFromStorage } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -12,14 +11,16 @@ import { useGamificationStore } from '../stores/gamificationStore';
 import { useTaskStore, initTaskStore } from '../stores/taskStore';
 import { useTimerStore, initTimerStore } from '../stores/timerStore';
 import { useSocialStore } from '../stores/socialStore';
-import { Colors } from '../constants/Colors';
+import { useGoalStore } from '../stores/goalStore';
+import { useUserSettingsStore } from '../stores/userSettingsStore';
+import { useTheme, useIsDark } from '../hooks/useTheme';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const Colors = useTheme();
+  const isDark = useIsDark();
   const [isReady, setIsReady] = useState(false);
   const router = useRouter();
   const segments = useSegments();
@@ -83,7 +84,10 @@ export default function RootLayout() {
           console.log('[bootstrap] user:', authedUser?.id, authedUser?.username);
 
           if (authedUser) {
+            // Load settings first so the theme is correct before the UI paints.
+            await useUserSettingsStore.getState().load(authedUser.id);
             await useTaskStore.getState().hydrateTasks(authedUser.id);
+            await useGoalStore.getState().hydrateGoals(authedUser.id);
             await useTimerStore.getState().hydrate(authedUser.id);
           } else {
             await useTimerStore.getState().hydrate('');
@@ -96,6 +100,7 @@ export default function RootLayout() {
         // Non-blocking background refresh after Stack mounts.
         if (useAuthStore.getState().user) {
           useTaskStore.getState().fetchTasks(true);
+          useGoalStore.getState().fetchGoals(true);
           useGamificationStore.getState().fetchProfile();
           useGamificationStore.getState().fetchAchievements();
           useSocialStore.getState().fetchNotifications();

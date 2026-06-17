@@ -6,11 +6,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 
 type Mode = 'login' | 'register';
 
 export default function AuthScreen() {
+  const Colors = useTheme();
   const [mode, setMode] = useState<Mode>('login');
   const { login, register, isLoading, error, clearError } = useAuthStore();
 

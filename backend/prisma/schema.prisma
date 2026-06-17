@@ -41,6 +41,7 @@ model User {
   friendshipsReq   Friendship[]      @relation("Requester")
   friendshipsAddr  Friendship[]      @relation("Addressee")
   tasks            Task[]
+  taskGoals        TaskGoal[]
   userAchievs      UserAchievement[]
   notifications    Notification[]
   feedEvents       FeedEvent[]
@@ -216,14 +217,37 @@ model Task {
   sessionsOnTask    Int       @default(0) @map("sessions_on_task")
   totalTimeOnTask   Int       @default(0) @map("total_time_on_task")
   sessionDates      String[]  @default([]) @map("session_dates")
+  taskGoalId        String?   @map("task_goal_id")
+  order             Int?
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   sessions Session[] @relation("TaskSessions")
+  taskGoal TaskGoal? @relation(fields: [taskGoalId], references: [id])
 
   @@index([userId])
   @@map("tasks")
+}
+
+model TaskGoal {
+  id             String    @id @default(cuid())
+  userId         String    @map("user_id") @db.Uuid
+  title          String    @db.VarChar(80)
+  tag            String?   @db.VarChar(30)
+  targetSessions Int?      @map("target_sessions")
+  deadline       DateTime?
+  isCompleted    Boolean   @default(false) @map("is_completed")
+  completedAt    DateTime? @map("completed_at")
+  isArchived     Boolean   @default(false) @map("is_archived")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks Task[]
+
+  @@index([userId])
+  @@map("task_goals")
 }
 
 model FeedEvent {

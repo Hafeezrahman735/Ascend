@@ -25,6 +25,7 @@ const resumeSchema = z.object({
 
 const completeSchema = z.object({
   completedAt: z.number(),
+  localDate: z.string().optional().nullable(), // YYYY-MM-DD in the client's local timezone
   actualElapsedSeconds: z.number().int().min(0),
   taskLabel: z.string().nullable().optional(),
   taskId: z.string().optional().nullable(),
@@ -149,7 +150,9 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
   router.post('/timer/complete', async (req: Request, res: Response) => {
     try {
       const userId = authenticate(req);
-      const { completedAt, actualElapsedSeconds, taskLabel, taskId, plannedDurationSeconds, clientSessionId } = completeSchema.parse(req.body);
+      const { completedAt, localDate, actualElapsedSeconds, taskLabel, taskId, plannedDurationSeconds, clientSessionId } = completeSchema.parse(req.body);
+      // Use the client-supplied local date if provided; fall back to UTC date of completedAt.
+      const sessionLocalDate = localDate ?? new Date(completedAt).toISOString().split('T')[0];
 
       // Idempotency check — reject duplicate submissions before touching the DB
       if (clientSessionId) {
@@ -181,7 +184,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       // Update task session counters if a task was linked
       if (taskId) {
         try {
-          const today = new Date().toISOString().split('T')[0];
+          const today = sessionLocalDate;
           const task = await prisma.task.findUnique({
             where: { id: taskId },
             select: { sessionDates: true },
@@ -203,7 +206,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
         }
       }
 
-      const gamification = await runGamification(userId, actualElapsedSeconds, new Date(completedAt));
+      const gamification = await runGamification(userId, actualElapsedSeconds, new Date(completedAt), sessionLocalDate);
 
       eventBus.emit(EventTypes.FEED_CREATE, {
         userId,
@@ -276,6 +279,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
         taskLabel: taskLabel || null,
         taskId: taskId || null,
         completedAt: new Date(completedAt).toISOString(),
+        localDate: sessionLocalDate,
       });
 
       timerNamespace.to(`user:${userId}`).emit('timer:completed', {
@@ -396,10 +400,15 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
         orderBy: { completedAt: 'desc' },
       });
 
+      // tzOffset: minutes the client's local timezone is ahead of UTC (positive = east, negative = west)
+      const tzOffset = parseInt(req.query.tzOffset as string ?? '0', 10) || 0;
+      const toLocalDateStr = (utcDate: Date): string => {
+        const local = new Date(utcDate.getTime() + tzOffset * 60_000);
+        return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(local.getUTCDate()).padStart(2, '0')}`;
+      };
+
       const activeDates = Array.from(
-        new Set(
-          sessions.map(s => new Date(s.completedAt).toISOString().split('T')[0])
-        )
+        new Set(sessions.map(s => toLocalDateStr(new Date(s.completedAt))))
       );
 
       res.json({ success: true, data: { sessions, activeDates } });

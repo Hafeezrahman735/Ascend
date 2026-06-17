@@ -135,6 +135,34 @@ export interface Task {
   totalTimeOnTask: number;
   sessionDates: string[];
   estimationAccuracy?: number | null;
+  taskGoalId?: string | null;
+  order?: number | null;
+}
+
+export interface TaskGoal {
+  id: string;
+  title: string;
+  tag: string | null;
+  targetSessions: number | null;
+  deadline: string | null;
+  isCompleted: boolean;
+  completedAt: string | null;
+  isArchived: boolean;
+  createdAt: string;
+  linkedTaskCount?: number;
+  completedTaskCount?: number;
+}
+
+export interface TaskAnalytics {
+  totalTimeToday: number;
+  totalTimeThisWeek: number;
+  totalTimeThisMonth: number;
+  totalTimeAllTime: number;
+  timePerDayLast7: { date: string; seconds: number }[];
+  mostProductiveHour: { hour: number; label: string } | null;
+  avgSessionLength: number;
+  completionRate: number;
+  estimationAccuracy: number | null;
 }
 
 export interface FeedEvent {

@@ -1,7 +1,7 @@
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInUp, FadeOutDown } from 'react-native-reanimated';
-import { Colors } from '../constants/Colors';
+import { useTheme } from '../hooks/useTheme';
 
 interface RewardData {
   xpEarned: number;
@@ -20,6 +20,7 @@ interface RewardModalProps {
 }
 
 export default function RewardModal({ visible, reward, onClose }: RewardModalProps) {
+  const Colors = useTheme();
   if (!visible || !reward) return null;
 
   return (

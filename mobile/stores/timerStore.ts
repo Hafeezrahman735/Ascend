@@ -15,14 +15,15 @@ interface Settings {
   shortBreakDuration: number;
   longBreakDuration: number;
   sessionsUntilLong: number;
+  dailySessionTarget: number;
 }
 
-// Device-level keys — shared across all accounts
+// Device-level key — shared across all accounts (settings only)
 const TIMER_SETTINGS_KEY = 'timer:settings';
-const TIMER_ROUNDS_KEY = 'timer:pomodoroRounds';
 
 // User-level key builders — scoped per account
 const timerStatsKeys = (userId: string) => ({
+  pomodoroRounds:  `timer:${userId}:pomodoroRounds`,
   globalSessions:  `timer:${userId}:globalSessions`,
   globalTotalTime: `timer:${userId}:globalTotalTime`,
   lastSessionDate: `timer:${userId}:lastSessionDate`,
@@ -34,6 +35,8 @@ const LEGACY_KEYS = {
   globalTotalTime: 'timer:globalTotalTime',
   lastSessionDate: 'timer:lastSessionDate',
 };
+
+type TimerMode = 'pomodoro' | 'stopwatch';
 
 interface TimerState {
   status: TimerStatus;
@@ -50,6 +53,10 @@ interface TimerState {
   // Wall-clock timing: immune to multiple-interval stacking
   startedAt: number | null;    // Date.now() when current running segment began
   elapsedAtPause: number;      // cumulative elapsed seconds from previous start→pause cycles
+  // Stopwatch mode — counts up; on pause its elapsed is committed as focus time
+  // through the exact same path complete() uses (globalTotalTime + POST /timer/complete).
+  mode: TimerMode;
+  stopwatchElapsed: number;
 
   start: () => void;
   pause: () => void;
@@ -62,6 +69,10 @@ interface TimerState {
   setWorkDuration: (minutes: number) => void;
   setShortBreakDuration: (minutes: number) => void;
   setLongBreakDuration: (minutes: number) => void;
+  setDailySessionTarget: (sessions: number) => void;
+  setMode: (mode: TimerMode) => void;
+  startStopwatch: () => void;
+  pauseStopwatch: () => void;
   hydrate: (userId: string) => Promise<void>;
   fetchWeekSessions: () => Promise<void>;
 }
@@ -71,10 +82,12 @@ const DEFAULT_SETTINGS: Settings = {
   shortBreakDuration: 300,
   longBreakDuration: 900,
   sessionsUntilLong: 4,
+  dailySessionTarget: 8,
 };
 
 function getTodayString() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function getPhaseDuration(phase: TimerPhase, settings: Settings): number {
@@ -97,6 +110,8 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   isLoadingWeek: false,
   startedAt: null,
   elapsedAtPause: 0,
+  mode: 'pomodoro',
+  stopwatchElapsed: 0,
 
   start: () => {
     const { status, currentPhase, settings } = get();
@@ -135,8 +150,15 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   },
 
   tick: () => {
-    const { status, startedAt, elapsedAtPause, currentPhase, settings } = get();
+    const { status, startedAt, elapsedAtPause, currentPhase, settings, mode } = get();
     if (status !== 'running' || !startedAt) return;
+
+    // Stopwatch counts up; never auto-completes.
+    if (mode === 'stopwatch') {
+      const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
+      set({ stopwatchElapsed: elapsed });
+      return;
+    }
 
     const phaseDuration = getPhaseDuration(currentPhase, settings);
     const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
@@ -181,15 +203,12 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         elapsedAtPause: 0,
       });
 
-      // Device-level key (unchanged)
-      AsyncStorage.setItem(TIMER_ROUNDS_KEY, String(newRounds))
-        .catch((err) => console.warn('[timer] persist pomodoroRounds failed:', err));
-
-      // User-scoped stat keys
+      // User-scoped stat keys (including pomodoroRounds)
       const userId = useAuthStore.getState().user?.id;
       if (userId) {
         const keys = timerStatsKeys(userId);
         AsyncStorage.multiSet([
+          [keys.pomodoroRounds,  String(newRounds)],
           [keys.globalSessions,  String(newGlobalSessions)],
           [keys.globalTotalTime, String(newGlobalTotalTime)],
           [keys.lastSessionDate, today],
@@ -221,6 +240,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
         api.post<SessionReward>('/timer/complete', {
           completedAt: Date.now(),
+          localDate: getTodayString(),
           actualElapsedSeconds: sessionDuration,
           taskId: selectedTaskId ?? null,
           taskLabel,
@@ -267,8 +287,12 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         startedAt: null,
         elapsedAtPause: 0,
       });
-      AsyncStorage.setItem(TIMER_ROUNDS_KEY, String(newRounds))
-        .catch((err) => console.warn('[timer] persist pomodoroRounds failed:', err));
+      const skipUserId = useAuthStore.getState().user?.id;
+      if (skipUserId) {
+        const keys = timerStatsKeys(skipUserId);
+        AsyncStorage.setItem(keys.pomodoroRounds, String(newRounds))
+          .catch((err) => console.warn('[timer] persist pomodoroRounds failed:', err));
+      }
     } else {
       // Skip break: return to focus idle
       set({
@@ -301,10 +325,10 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
     try {
       await AsyncStorage.multiRemove([
+        keys.pomodoroRounds,
         keys.globalSessions,
         keys.globalTotalTime,
         keys.lastSessionDate,
-        // timer:settings and timer:pomodoroRounds are device-level — intentionally NOT removed
       ]);
       console.log('[timerStore] cleared user stats for:', userId);
     } catch (err) {
@@ -312,6 +336,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     }
 
     set({
+      pomodoroRounds: 0,
       globalSessions: 0,
       globalTotalTime: 0,
       lastSessionDate: null,
@@ -345,6 +370,46 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     saveSettings();
   },
 
+  setDailySessionTarget: (sessions: number) => {
+    const target = Math.max(1, Math.min(50, sessions));
+    set((state) => ({
+      settings: { ...state.settings, dailySessionTarget: target },
+    }));
+    saveSettings();
+  },
+
+  setMode: (mode: TimerMode) => {
+    // Switching modes always lands on a clean idle state for the target mode.
+    if (mode === 'stopwatch') {
+      set({ mode, status: 'idle', stopwatchElapsed: 0, startedAt: null, elapsedAtPause: 0 });
+    } else {
+      set({
+        mode,
+        status: 'idle',
+        currentPhase: 'focus',
+        timeLeft: get().settings.workDuration,
+        stopwatchElapsed: 0,
+        startedAt: null,
+        elapsedAtPause: 0,
+      });
+    }
+  },
+
+  startStopwatch: () => {
+    if (get().status === 'running') return;
+    set({ status: 'running', startedAt: Date.now(), elapsedAtPause: 0, stopwatchElapsed: 0 });
+  },
+
+  pauseStopwatch: () => {
+    const { status, startedAt, elapsedAtPause } = get();
+    if (status !== 'running' || !startedAt) return;
+    const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
+    // Commit the worked time to today + all-time focus stats via the shared path.
+    recordFocusSession(elapsed);
+    // Reset the stopwatch back to 00:00 / idle.
+    set({ status: 'idle', startedAt: null, elapsedAtPause: 0, stopwatchElapsed: 0 });
+  },
+
   fetchWeekSessions: () => fetchWeekSessionsImpl(),
 
   hydrate: async (userId: string) => {
@@ -353,14 +418,13 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       // Still load device-level settings so the timer UI is correct
       try {
         const settingsRaw = await AsyncStorage.getItem(TIMER_SETTINGS_KEY);
-        const roundsRaw   = await AsyncStorage.getItem(TIMER_ROUNDS_KEY);
         const settings = settingsRaw
           ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsRaw) }
           : { ...DEFAULT_SETTINGS };
         set({
           settings,
           timeLeft: settings.workDuration,
-          pomodoroRounds: parseInt(roundsRaw ?? '0', 10),
+          pomodoroRounds: 0,
           startedAt: null,
           elapsedAtPause: 0,
         });
@@ -400,11 +464,11 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         console.log('[timerStore] legacy migration complete — keys removed');
       }
 
-      // Load device-level keys (settings and rounds — shared across accounts)
+      // Load device-level key (settings only)
       const settingsRaw  = await AsyncStorage.getItem(TIMER_SETTINGS_KEY);
-      const roundsRaw    = await AsyncStorage.getItem(TIMER_ROUNDS_KEY);
 
       // Load user-scoped stat keys
+      const roundsRaw    = await AsyncStorage.getItem(keys.pomodoroRounds);
       const sessionsRaw  = await AsyncStorage.getItem(keys.globalSessions);
       const totalTimeRaw = await AsyncStorage.getItem(keys.globalTotalTime);
       const lastDateRaw  = await AsyncStorage.getItem(keys.lastSessionDate);
@@ -412,13 +476,15 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       const lastSessionDate = lastDateRaw ?? null;
       const isNewDay = lastSessionDate !== null && lastSessionDate !== today;
 
-      // New-day reset: zero stats and persist immediately so a crash before the next
-      // write doesn't leave the previous day's totals visible on next launch.
+      // New-day reset: zero all daily stats and persist immediately so a crash before the
+      // next write doesn't leave the previous day's totals visible on next launch.
+      const pomodoroRounds  = isNewDay ? 0 : parseInt(roundsRaw   ?? '0', 10);
       const globalSessions  = isNewDay ? 0 : parseInt(sessionsRaw  ?? '0', 10);
       const globalTotalTime = isNewDay ? 0 : parseInt(totalTimeRaw ?? '0', 10);
 
       if (isNewDay) {
         await AsyncStorage.multiSet([
+          [keys.pomodoroRounds,  '0'],
           [keys.globalSessions,  '0'],
           [keys.globalTotalTime, '0'],
           [keys.lastSessionDate, today],
@@ -428,7 +494,6 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       const settings = settingsRaw
         ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsRaw) }
         : { ...DEFAULT_SETTINGS };
-      const pomodoroRounds = parseInt(roundsRaw ?? '0', 10);
 
       set({
         status: 'idle',
@@ -452,11 +517,80 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   },
 }));
 
+// Records `sessionDuration` seconds of focus time through the exact same source the
+// pomodoro timer uses: updates today's globalTotalTime/globalSessions, appends to local
+// session history, and POSTs /timer/complete (which increments all-time User.totalFocusTime).
+// Used by the stopwatch on pause. Does NOT touch pomodoroRounds or the break phase.
+function recordFocusSession(sessionDuration: number): void {
+  if (sessionDuration <= 0) return;
+
+  const today = getTodayString();
+  const { lastSessionDate, globalSessions, globalTotalTime } = useTimerStore.getState();
+  const isNewDay = lastSessionDate !== null && lastSessionDate !== today;
+  const newGlobalSessions = isNewDay ? 1 : globalSessions + 1;
+  const newGlobalTotalTime = isNewDay ? sessionDuration : globalTotalTime + sessionDuration;
+
+  useTimerStore.setState({
+    globalSessions: newGlobalSessions,
+    globalTotalTime: newGlobalTotalTime,
+    lastSessionDate: today,
+  });
+
+  const userId = useAuthStore.getState().user?.id;
+  if (userId) {
+    const keys = timerStatsKeys(userId);
+    AsyncStorage.multiSet([
+      [keys.globalSessions,  String(newGlobalSessions)],
+      [keys.globalTotalTime, String(newGlobalTotalTime)],
+      [keys.lastSessionDate, today],
+    ]).catch((err) => console.warn('[timer] persist stopwatch stats failed:', err));
+  }
+
+  const selectedTaskId = useTaskStore.getState().selectedTaskId;
+  const taskLabel = selectedTaskId
+    ? useTaskStore.getState().tasks.find((t) => t.id === selectedTaskId)?.title ?? null
+    : null;
+  const sessionId = generateSessionId();
+  useTimerStore.setState({ lastCompletedSessionId: sessionId });
+
+  if (selectedTaskId) {
+    useTaskStore.getState().incrementTaskSession(selectedTaskId, sessionDuration);
+  }
+
+  recordCompletedSession({
+    sessionId,
+    completedAt: Date.now(),
+    durationSeconds: sessionDuration,
+    taskLabel,
+    taskId: selectedTaskId ?? null,
+    type: 'focus',
+  });
+
+  api.post<SessionReward>('/timer/complete', {
+    completedAt: Date.now(),
+    localDate: today,
+    actualElapsedSeconds: sessionDuration,
+    taskId: selectedTaskId ?? null,
+    taskLabel,
+    clientSessionId: sessionId,
+    plannedDurationSeconds: null,
+  })
+  .then((res) => {
+    if (res.success && res.data) {
+      useGamificationStore.getState().applySessionReward(res.data, sessionDuration);
+    }
+    useTimerStore.getState().fetchWeekSessions();
+  })
+  .catch((err) => console.warn('[timer] stopwatch complete sync failed:', err));
+}
+
 // Separate function so it can call useTimerStore.getState() after the store is created
 async function fetchWeekSessionsImpl() {
   useTimerStore.setState({ isLoadingWeek: true });
   try {
-    const res = await api.get<{ sessions: unknown[]; activeDates: string[] }>('/timer/sessions/week');
+    // tzOffset: minutes the local timezone is ahead of UTC (positive = east, negative = west)
+    const tzOffset = -new Date().getTimezoneOffset();
+    const res = await api.get<{ sessions: unknown[]; activeDates: string[] }>(`/timer/sessions/week?tzOffset=${tzOffset}`);
     if (res.success && res.data) {
       useTimerStore.setState({ weekActiveDates: res.data.activeDates ?? [], isLoadingWeek: false });
     } else {

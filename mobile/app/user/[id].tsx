@@ -7,12 +7,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSocialStore } from '../../stores/socialStore';
 import { api } from '../../services/api';
-import { Colors } from '../../constants/Colors';
-import { BORDER_SOFT, GOLD } from '../../constants/socialTheme';
+import { useTheme } from '../../hooks/useTheme';
 import type { PublicUserProfile, SocialPost } from '../../types';
-
-const SURFACE = Colors.surface;
-const RAISED = Colors.raised;
 
 function formatFocus(seconds: number): string {
   const h = Math.floor(seconds / 3600);

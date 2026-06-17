@@ -1017,7 +1017,6 @@ const SCOPES = [
 ] as const;
 
 const PERIODS = [
-  { key: 'week',     label: 'This week' },
   { key: 'month',    label: 'This month' },
   { key: 'all_time', label: 'All time' },
 ] as const;
@@ -1035,8 +1034,8 @@ export default function SocialScreen() {
   const [showCreatePost,     setShowCreatePost]     = useState(false);
   const [showNotifications,  setShowNotifications]  = useState(false);
   const [refreshing,         setRefreshing]         = useState(false);
-  const [scope,              setScope]              = useState<Scope>('friends');
-  const [period,             setPeriod]             = useState<Period>('week');
+  const [scope,              setScope]              = useState<Scope>('global');
+  const [period,             setPeriod]             = useState<Period>('all_time');
 
   useEffect(() => {
     social.fetchPosts(social.selectedGroupId ?? undefined);

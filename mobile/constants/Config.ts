@@ -9,7 +9,7 @@
 
 import { Platform } from 'react-native';
 
-const LOCAL_IP = '192.168.4.23'; // <-- update this when your IP changes
+const LOCAL_IP = '172.20.10.2'; // <-- update this when your IP changes
 const DEV_API_URL = `http://${LOCAL_IP}:3001`;
 const DEV_WS_URL = `http://${LOCAL_IP}:3001`;
 const DEV_SOCIAL_WS_URL = `http://${LOCAL_IP}:3001`;

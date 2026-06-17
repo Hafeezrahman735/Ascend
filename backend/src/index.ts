@@ -15,6 +15,7 @@ import { achievementsRouter } from './modules/achievements/routes';
 import { notificationsRouter } from './modules/notifications/routes';
 import { analyticsRouter } from './modules/analytics/routes';
 import { setupTaskRoutes } from './modules/tasks/routes';
+import { taskGoalsRouter } from './modules/taskgoals/routes';
 import { setupTimerHandlers } from './modules/timer/handlers';
 import { setupTimerRoutes } from './modules/timer/routes';
 import { setupSocialSocket } from './modules/social/socket';
@@ -58,6 +59,7 @@ app.use('/', analyticsRouter);
 const taskRouter = Router();
 setupTaskRoutes(taskRouter);
 app.use('/', taskRouter);
+app.use('/', taskGoalsRouter);
 
 const timerNamespace = io.of('/timer');
 const socialNamespace = io.of('/social');

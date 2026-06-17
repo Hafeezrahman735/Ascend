@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../stores/authStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 
 const AVATAR_EMOJIS = [
   '🦊', '🐸', '🦁', '🐳', '🦉', '🐰',
@@ -14,6 +14,7 @@ const AVATAR_EMOJIS = [
 ];
 
 export default function Onboarding2Screen() {
+  const Colors = useTheme();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setIsNewUser = useAuthStore((s) => s.setIsNewUser);

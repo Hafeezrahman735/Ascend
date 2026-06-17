@@ -230,7 +230,17 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     const task = get().tasks.find((t) => t.id === id);
     if (!task) return;
     const nowCompleted = !task.isCompleted;
-    const completedAt = nowCompleted ? new Date().toISOString() : null;
+    // Build a local-timezone ISO string so the date portion reflects the user's local date,
+    // not UTC. e.g. "2026-06-15T23:00:00+05:00" instead of "2026-06-16T06:00:00.000Z"
+    const completedAt = nowCompleted ? (() => {
+      const d = new Date();
+      const off = -d.getTimezoneOffset(); // minutes ahead of UTC
+      const sign = off >= 0 ? '+' : '-';
+      const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T` +
+             `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+             `${sign}${pad(off/60)}:${pad(off%60)}`;
+    })() : null;
     const optimistic = get().tasks.map((t) =>
       t.id === id ? { ...t, isCompleted: nowCompleted, completedAt: completedAt ?? undefined } : t,
     );
@@ -249,7 +259,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
 
   incrementTaskSession: (id: string, duration: number) => {
     const userId = useAuthStore.getState().user?.id;
-    const today = new Date().toISOString().split('T')[0];
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     const updated = get().tasks.map((task) =>
       task.id !== id ? task : {
         ...task,
@@ -279,6 +290,8 @@ export function initTaskStore(): void {
     if (prevState.user && !state.user) {
       const userId = prevState.user.id;
       useTaskStore.getState().clearTasks(userId);
+      // Lazy import to avoid circular deps
+      import('./goalStore').then(({ useGoalStore }) => useGoalStore.getState().clearGoals(userId));
     }
   });
 }

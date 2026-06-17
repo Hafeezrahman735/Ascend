@@ -1,6 +1,5 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../constants/Colors';
 import LevelBadge from './LevelBadge';
 
 interface UserRowProps {

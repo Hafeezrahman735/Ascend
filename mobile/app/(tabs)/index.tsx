@@ -104,6 +104,11 @@ export default function TimerScreen() {
   const setWorkDuration = useTimerStore((s) => s.setWorkDuration);
   const setShortBreakDuration = useTimerStore((s) => s.setShortBreakDuration);
   const setLongBreakDuration = useTimerStore((s) => s.setLongBreakDuration);
+  const mode = useTimerStore((s) => s.mode);
+  const stopwatchElapsed = useTimerStore((s) => s.stopwatchElapsed);
+  const setMode = useTimerStore((s) => s.setMode);
+  const startStopwatch = useTimerStore((s) => s.startStopwatch);
+  const pauseStopwatch = useTimerStore((s) => s.pauseStopwatch);
 
   const tasks = useTaskStore((s) => s.tasks);
   const selectedTaskId = useTaskStore((s) => s.selectedTaskId);
@@ -183,9 +188,11 @@ export default function TimerScreen() {
   const progress = useSharedValue(currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1);
 
   useEffect(() => {
-    const newProgress = currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1;
+    const newProgress = mode === 'stopwatch'
+      ? 1
+      : (currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1);
     progress.value = withTiming(newProgress, { duration: 400 });
-  }, [timeLeft, currentPhaseDuration]);
+  }, [timeLeft, currentPhaseDuration, mode]);
 
   const circleProps = useAnimatedProps(() => ({
     strokeDashoffset: CIRCUMFERENCE * (1 - progress.value),
@@ -221,9 +228,37 @@ export default function TimerScreen() {
 
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
+  const isStopwatch = mode === 'stopwatch';
 
-  const phaseLabel =
-    currentPhase === 'longBreak'
+  const formatGlobalTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+    if (mins >= 1) return `${mins}m`;
+    return `${seconds}s`;
+  };
+
+  const handleStopwatchStart = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    startStopwatch();
+  };
+
+  const handleStopwatchPause = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const added = stopwatchElapsed;
+    pauseStopwatch();
+    if (added > 0) {
+      Alert.alert('Focus time saved', `Added ${formatGlobalTime(added)} to your focus time.`);
+    }
+  };
+
+  const handleStopwatchDiscard = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setMode('stopwatch'); // resets stopwatch to idle / 00:00 without saving
+  };
+
+  const phaseLabel = isStopwatch
+    ? (isRunning ? 'STOPWATCH' : 'STOPWATCH · READY')
+    : currentPhase === 'longBreak'
       ? 'LONG BREAK'
       : currentPhase === 'shortBreak'
       ? 'BREAK'
@@ -238,14 +273,14 @@ export default function TimerScreen() {
       : pomodoroRounds % settings.sessionsUntilLong;
   const totalBreakBlocks = settings.sessionsUntilLong;
 
-  const formatGlobalTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-    return `${mins}m`;
-  };
-
   const minutes = Math.floor(timeLeft / 60).toString().padStart(2, '0');
   const seconds = (timeLeft % 60).toString().padStart(2, '0');
+
+  // Stopwatch counts up; show H:MM:SS past an hour, otherwise MM:SS.
+  const swDisplay = stopwatchElapsed >= 3600
+    ? `${Math.floor(stopwatchElapsed / 3600)}:${String(Math.floor((stopwatchElapsed % 3600) / 60)).padStart(2, '0')}:${String(stopwatchElapsed % 60).padStart(2, '0')}`
+    : `${Math.floor(stopwatchElapsed / 60).toString().padStart(2, '0')}:${(stopwatchElapsed % 60).toString().padStart(2, '0')}`;
+  const mainDisplay = isStopwatch ? swDisplay : `${minutes}:${seconds}`;
 
   const [showDurationModal, setShowDurationModal] = useState(false);
   const [draftFocus, setDraftFocus] = useState(0);
@@ -319,13 +354,13 @@ export default function TimerScreen() {
 
             <View style={{ position: 'absolute', alignItems: 'center' }}>
               <Text style={{
-                fontSize: 56,
+                fontSize: isStopwatch && stopwatchElapsed >= 3600 ? 44 : 56,
                 fontWeight: '700',
                 color: Colors.textBright,
                 fontVariant: ['tabular-nums'],
                 letterSpacing: 2,
               }}>
-                {`${minutes}:${seconds}`}
+                {mainDisplay}
               </Text>
               <Text style={{
                 color: Colors.text,
@@ -341,14 +376,14 @@ export default function TimerScreen() {
           </View>
         </View>
 
-        {/* BREAK PROGRESS BLOCKS */}
+        {/* BREAK PROGRESS BLOCKS — pomodoro cycle only */}
         <View style={{
           flexDirection: 'row',
           justifyContent: 'center',
           alignItems: 'center',
           paddingVertical: 10,
         }}>
-          {Array.from({ length: totalBreakBlocks }).map((_, i) => (
+          {!isStopwatch && Array.from({ length: totalBreakBlocks }).map((_, i) => (
             <View
               key={i}
               style={{
@@ -375,8 +410,9 @@ export default function TimerScreen() {
           paddingVertical: 8,
         }}>
           <TouchableOpacity
-            onPress={handleSkip}
+            onPress={isStopwatch ? handleStopwatchDiscard : handleSkip}
             activeOpacity={0.7}
+            disabled={isStopwatch && stopwatchElapsed === 0 && !isRunning}
             style={{
               width: 50,
               height: 50,
@@ -387,14 +423,19 @@ export default function TimerScreen() {
               borderWidth: 1,
               borderColor: Colors.border,
               marginRight: 32,
+              opacity: isStopwatch && stopwatchElapsed === 0 && !isRunning ? 0.4 : 1,
             }}
           >
-            <Ionicons name="play-skip-forward" size={20} color={Colors.text} />
+            <Ionicons name={isStopwatch ? 'refresh' : 'play-skip-forward'} size={20} color={Colors.text} />
           </TouchableOpacity>
 
           <View style={{ alignItems: 'center' }}>
             <TouchableOpacity
-              onPress={isRunning ? handlePause : isPaused ? handleResume : handleStart}
+              onPress={
+                isStopwatch
+                  ? (isRunning ? handleStopwatchPause : handleStopwatchStart)
+                  : (isRunning ? handlePause : isPaused ? handleResume : handleStart)
+              }
               activeOpacity={0.8}
               style={{
                 width: 72,
@@ -424,7 +465,9 @@ export default function TimerScreen() {
               opacity: 0.6,
               marginTop: 6,
             }}>
-              {isRunning ? 'PAUSE' : isPaused ? 'RESUME' : 'START'}
+              {isStopwatch
+                ? (isRunning ? 'PAUSE & SAVE' : 'START')
+                : (isRunning ? 'PAUSE' : isPaused ? 'RESUME' : 'START')}
             </Text>
           </View>
 
@@ -728,7 +771,32 @@ export default function TimerScreen() {
                 onChange={setDraftLong}
               />
 
-              <View style={{ flexDirection: 'row', marginTop: 24 }}>
+              {/* Mode toggle — switch between the countdown timer and the count-up stopwatch */}
+              <TouchableOpacity
+                onPress={() => {
+                  setMode(isStopwatch ? 'pomodoro' : 'stopwatch');
+                  setShowDurationModal(false);
+                }}
+                activeOpacity={0.8}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginTop: 8,
+                  paddingVertical: 14,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: Colors.primary,
+                  backgroundColor: Colors.primaryDim,
+                }}
+              >
+                <Ionicons name={isStopwatch ? 'timer-outline' : 'stopwatch-outline'} size={18} color={Colors.primarySoft} style={{ marginRight: 8 }} />
+                <Text style={{ color: Colors.primarySoft, fontWeight: '700' }}>
+                  {isStopwatch ? 'Switch to Timer' : 'Switch to Stopwatch'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={{ flexDirection: 'row', marginTop: 16 }}>
                 <TouchableOpacity
                   onPress={() => setShowDurationModal(false)}
                   style={{

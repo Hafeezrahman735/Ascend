@@ -1,9 +1,10 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 
 export default function TabLayout() {
+  const Colors = useTheme();
   return (
     <Tabs
       screenOptions={{

@@ -1340,23 +1340,17 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
   try {
     const userId = authenticate(req);
     const scope = (req.query.scope as string) || 'global';
-    const period = (req.query.period as string) || 'week';
+    const period = (req.query.period as string) || 'all_time';
 
-    let sinceDate: Date | undefined;
-    if (period === 'week') {
-      sinceDate = new Date();
-      sinceDate.setDate(sinceDate.getDate() - 7);
-      sinceDate.setHours(0, 0, 0, 0);
-    } else if (period === 'month') {
-      sinceDate = new Date();
-      sinceDate.setDate(1);
-      sinceDate.setHours(0, 0, 0, 0);
-    }
-
+    // Resolve which users this scope covers. undefined = everyone (global).
     let scopeUserIds: string[] | undefined;
     if (scope === 'friends') {
-      const friendIds = await getFriendIds(userId);
-      scopeUserIds = [...friendIds, userId];
+      // Friends = people you follow (+ yourself), via the Follow table.
+      const following = await prisma.follow.findMany({
+        where: { followerId: userId },
+        select: { followingId: true },
+      });
+      scopeUserIds = [...following.map((f) => f.followingId), userId];
     } else if (scope === 'group') {
       const groupIdParam = req.query.groupId as string | undefined;
       if (!groupIdParam) {
@@ -1370,44 +1364,70 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
       scopeUserIds = members.map((m) => m.userId);
     }
 
-    const sessionWhere: Record<string, unknown> = { type: 'focus' };
-    if (sinceDate) sessionWhere.completedAt = { gte: sinceDate };
-    if (scopeUserIds) sessionWhere.userId = { in: scopeUserIds };
+    let entries;
 
-    const results = await prisma.session.groupBy({
-      by: ['userId'],
-      where: sessionWhere as never,
-      _sum: { durationSeconds: true },
-      orderBy: { _sum: { durationSeconds: 'desc' } },
-      take: 100,
-    });
+    if (period === 'month') {
+      // Monthly board: sum focus sessions since the start of this month.
+      const sinceDate = new Date();
+      sinceDate.setDate(1);
+      sinceDate.setHours(0, 0, 0, 0);
 
-    const userIds = results.map((r) => r.userId);
-    const users = await prisma.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, username: true, xp: true, currentStreak: true },
-    });
-    const userMap = new Map(users.map((u) => [u.id, u]));
+      const sessionWhere: Record<string, unknown> = { type: 'focus', completedAt: { gte: sinceDate } };
+      if (scopeUserIds) sessionWhere.userId = { in: scopeUserIds };
 
-    const entries = results.map((r, idx) => {
-      const u = userMap.get(r.userId);
-      return {
-        userId: r.userId,
-        displayName: u?.username ?? 'Unknown',
-        avatarEmoji: getAvatarEmoji(r.userId),
-        rank: getRankTitle(u?.xp ?? 0),
-        currentStreak: u?.currentStreak ?? 0,
-        focusMinutes: Math.floor((r._sum.durationSeconds ?? 0) / 60),
+      const results = await prisma.session.groupBy({
+        by: ['userId'],
+        where: sessionWhere as never,
+        _sum: { durationSeconds: true },
+        orderBy: { _sum: { durationSeconds: 'desc' } },
+        take: 100,
+      });
+
+      const userIds = results.map((r) => r.userId);
+      const users = await prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, username: true, xp: true, currentStreak: true },
+      });
+      const userMap = new Map(users.map((u) => [u.id, u]));
+
+      entries = results.map((r, idx) => {
+        const u = userMap.get(r.userId);
+        return {
+          userId: r.userId,
+          displayName: u?.username ?? 'Unknown',
+          avatarEmoji: getAvatarEmoji(r.userId),
+          rank: getRankTitle(u?.xp ?? 0),
+          currentStreak: u?.currentStreak ?? 0,
+          focusMinutes: Math.floor((r._sum.durationSeconds ?? 0) / 60),
+          position: idx + 1,
+          positionDelta: null,
+          isMe: r.userId === userId,
+        };
+      });
+    } else {
+      // All-time board: rank straight from User.totalFocusTime so EVERY user appears,
+      // no dependence on session rows in a time window.
+      const users = await prisma.user.findMany({
+        where: scopeUserIds ? { id: { in: scopeUserIds } } : undefined,
+        select: { id: true, username: true, xp: true, currentStreak: true, totalFocusTime: true },
+        orderBy: { totalFocusTime: 'desc' },
+        take: 100,
+      });
+
+      entries = users.map((u, idx) => ({
+        userId: u.id,
+        displayName: u.username,
+        avatarEmoji: getAvatarEmoji(u.id),
+        rank: getRankTitle(u.xp ?? 0),
+        currentStreak: u.currentStreak ?? 0,
+        focusMinutes: Math.floor((u.totalFocusTime ?? 0) / 60),
         position: idx + 1,
         positionDelta: null,
-        isMe: r.userId === userId,
-      };
-    });
+        isMe: u.id === userId,
+      }));
+    }
 
     const myEntry = entries.find((e) => e.userId === userId) ?? null;
-    if (myEntry && !entries.some((e) => e.userId === userId)) {
-      // user has no sessions in this period — don't add to list
-    }
 
     res.json({ success: true, data: { entries, myEntry } });
   } catch (error) {

@@ -1,7 +1,7 @@
 import { View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LeaderboardEntry } from '../types';
-import { Colors } from '../constants/Colors';
+import { useTheme } from '../hooks/useTheme';
 import LevelBadge from './LevelBadge';
 
 interface LeaderboardRowProps {
@@ -11,12 +11,12 @@ interface LeaderboardRowProps {
   isMe: boolean;
 }
 
-function getRankStyle(rank: number) {
+function getRankStyle(rank: number, fallbackColor: string) {
   if (rank === 1) return { bg: '#FFD70015', border: '#FFD70040', icon: 'trophy', color: '#FFD700' };
   if (rank === 2) return { bg: '#C0C0C015', border: '#C0C0C040', icon: 'trophy', color: '#C0C0C0' };
   if (rank === 3) return { bg: '#CD7F3215', border: '#CD7F3240', icon: 'trophy', color: '#CD7F32' };
   if (rank <= 10) return { bg: '#3B82F608', border: '#3B82F620', icon: null, color: '#3B82F6' };
-  return { bg: 'transparent', border: 'transparent', icon: null, color: Colors.darkSubtext };
+  return { bg: 'transparent', border: 'transparent', icon: null, color: fallbackColor };
 }
 
 export default function LeaderboardRow({
@@ -25,7 +25,8 @@ export default function LeaderboardRow({
   type,
   isMe,
 }: LeaderboardRowProps) {
-  const rankStyle = getRankStyle(rank);
+  const Colors = useTheme();
+  const rankStyle = getRankStyle(rank, Colors.subtext);
   const valueText = type === 'longest_streak'
     ? `${entry.currentStreak || 0} 🔥`
     : `${entry.value || 0} min`;
