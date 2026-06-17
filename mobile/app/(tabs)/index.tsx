@@ -13,7 +13,7 @@ import { useTimerStore } from '../../stores/timerStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useAppForeground } from '../../hooks/useAppState';
-import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../hooks/useTheme';
 
 const { width } = Dimensions.get('window');
 
@@ -36,6 +36,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
   step: number;
   onChange: (v: number) => void;
 }) {
+  const Colors = useTheme();
   return (
     <View style={{
       flexDirection: 'row',
@@ -89,6 +90,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
 }
 
 export default function TimerScreen() {
+  const Colors = useTheme();
   const status = useTimerStore((s) => s.status);
   const currentPhase = useTimerStore((s) => s.currentPhase);
   const timeLeft = useTimerStore((s) => s.timeLeft);

@@ -178,7 +178,7 @@ export default function SettingsScreen() {
           <View style={{
             position: 'absolute', top: -20, right: -20,
             width: 100, height: 100, borderRadius: 50,
-            backgroundColor: '#7B6EF612',
+            backgroundColor: Colors.primary + '12',
           }} />
 
           <TouchableOpacity

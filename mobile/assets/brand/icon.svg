@@ -1,0 +1,33 @@
+<svg width="1024" height="1024" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ig1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7B6EF6"/>
+      <stop offset="100%" stop-color="#00E5C3"/>
+    </linearGradient>
+    <radialGradient id="ibg" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#1A1A4A"/>
+      <stop offset="100%" stop-color="#08081A"/>
+    </radialGradient>
+    <filter id="iglow">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="160" height="160" fill="url(#ibg)"/>
+  <!-- outer glow halo -->
+  <circle cx="80" cy="80" r="68" fill="none" stroke="url(#ig1)" stroke-width="0.5" opacity="0.15"/>
+  <!-- track -->
+  <circle cx="80" cy="80" r="54" fill="none" stroke="#2C2C6A" stroke-width="3"/>
+  <!-- arc — 80% progress -->
+  <circle cx="80" cy="80" r="54" fill="none"
+    stroke="url(#ig1)" stroke-width="5"
+    stroke-dasharray="339" stroke-dashoffset="68"
+    stroke-linecap="round"
+    transform="rotate(-90 80 80)"
+    filter="url(#iglow)"/>
+  <!-- rising dot — upper left quadrant, ascending -->
+  <circle cx="41" cy="56" r="8" fill="url(#ig1)" filter="url(#iglow)"/>
+  <circle cx="41" cy="56" r="3.5" fill="white" opacity="0.8"/>
+  <!-- center A lettermark -->
+  <text x="80" y="87" text-anchor="middle" font-family="'Plus Jakarta Sans','Segoe UI',Arial,sans-serif" font-size="28" font-weight="800" fill="url(#ig1)">A</text>
+</svg>

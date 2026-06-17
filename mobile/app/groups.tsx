@@ -7,31 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSocialStore } from '../stores/socialStore';
-import { Colors } from '../constants/Colors';
-import { BORDER_SOFT, AMBER, AMBER_DIM, ROSE } from '../constants/socialTheme';
+import { useTheme } from '../hooks/useTheme';
 import type { StudyGroup } from '../types';
 
-const SURFACE = Colors.surface;
-const RAISED = Colors.raised;
-
-const GROUP_BG: Record<string, string> = {
-  purple: Colors.primaryDim,
-  teal: Colors.tealDim,
-  amber: AMBER_DIM,
-  rose: '#3A0F20',
-};
-const GROUP_BORDER: Record<string, string> = {
-  purple: Colors.primary,
-  teal: Colors.accent,
-  amber: AMBER,
-  rose: ROSE,
-};
-const COLOR_OPTIONS = [
-  { key: 'purple', color: Colors.primary },
-  { key: 'teal', color: Colors.accent },
-  { key: 'amber', color: AMBER },
-  { key: 'rose', color: ROSE },
-] as const;
 const EMOJI_OPTIONS = ['📚','🧠','💡','🔥','⚡','🎯','🏆','🌙','🚀','🎓','✏️','🧮'];
 
 function GroupCard({ group, onJoin, onLeave }: {
@@ -39,9 +17,16 @@ function GroupCard({ group, onJoin, onLeave }: {
   onJoin: (id: string) => void;
   onLeave: (id: string) => void;
 }) {
+  const Colors = useTheme();
   const [loading, setLoading] = useState(false);
+  const GROUP_BG: Record<string, string> = {
+    purple: Colors.primaryDim, teal: Colors.tealDim, amber: Colors.AMBER_DIM, rose: Colors.ROSE_DIM,
+  };
+  const GROUP_BORDER: Record<string, string> = {
+    purple: Colors.primary, teal: Colors.accent, amber: Colors.AMBER, rose: Colors.ROSE,
+  };
   const border = GROUP_BORDER[group.color] ?? Colors.primary;
-  const bg = GROUP_BG[group.color] ?? SURFACE;
+  const bg = GROUP_BG[group.color] ?? Colors.surface;
 
   const handleToggle = async () => {
     setLoading(true);
@@ -55,7 +40,7 @@ function GroupCard({ group, onJoin, onLeave }: {
 
   return (
     <View style={{
-      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
+      backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.BORDER_SOFT,
       marginHorizontal: 16, marginBottom: 10, padding: 14,
       flexDirection: 'row', alignItems: 'center',
     }}>
@@ -78,8 +63,8 @@ function GroupCard({ group, onJoin, onLeave }: {
         disabled={loading}
         style={{
           paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-          backgroundColor: group.isMember ? RAISED : Colors.primary,
-          borderWidth: 1, borderColor: group.isMember ? BORDER_SOFT : Colors.primary,
+          backgroundColor: group.isMember ? Colors.raised : Colors.primary,
+          borderWidth: 1, borderColor: group.isMember ? Colors.BORDER_SOFT : Colors.primary,
         }}
       >
         {loading
@@ -101,6 +86,13 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
   onClose: () => void;
   onCreate: (data: { name: string; emoji: string; color: string; isPrivate: boolean }) => Promise<void>;
 }) {
+  const Colors = useTheme();
+  const COLOR_OPTIONS = [
+    { key: 'purple', color: Colors.primary },
+    { key: 'teal', color: Colors.accent },
+    { key: 'amber', color: Colors.AMBER },
+    { key: 'rose', color: Colors.ROSE },
+  ] as const;
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('📚');
   const [color, setColor] = useState<'purple' | 'teal' | 'amber' | 'rose'>('purple');
@@ -121,7 +113,7 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#00000080', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40 }}>
+        <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40 }}>
           <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
           </View>
@@ -140,8 +132,8 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
               placeholderTextColor={Colors.subtext}
               maxLength={50}
               style={{
-                backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
-                borderColor: BORDER_SOFT, padding: 12, color: Colors.textBright,
+                backgroundColor: Colors.raised, borderRadius: 12, borderWidth: 1,
+                borderColor: Colors.BORDER_SOFT, padding: 12, color: Colors.textBright,
                 fontSize: 15, marginBottom: 20,
               }}
             />
@@ -155,8 +147,8 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
                   style={{
                     width: 44, height: 44, borderRadius: 12, marginRight: 8, marginBottom: 8,
                     alignItems: 'center', justifyContent: 'center',
-                    backgroundColor: emoji === e ? Colors.primaryDim : RAISED,
-                    borderWidth: 1.5, borderColor: emoji === e ? Colors.primary : BORDER_SOFT,
+                    backgroundColor: emoji === e ? Colors.primaryDim : Colors.raised,
+                    borderWidth: 1.5, borderColor: emoji === e ? Colors.primary : Colors.BORDER_SOFT,
                   }}
                 >
                   <Text style={{ fontSize: 22 }}>{e}</Text>
@@ -217,6 +209,7 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
 }
 
 export default function GroupsScreen() {
+  const Colors = useTheme();
   const router = useRouter();
   const social = useSocialStore();
   const [allGroups, setAllGroups] = useState<StudyGroup[]>([]);

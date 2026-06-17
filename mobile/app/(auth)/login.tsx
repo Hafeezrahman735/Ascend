@@ -75,7 +75,7 @@ export default function AuthScreen() {
           <View style={{ alignItems: 'center', marginBottom: 40 }}>
             <Text style={{ fontSize: 56, marginBottom: 10 }}>🧠</Text>
             <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', letterSpacing: 0.5 }}>
-              Pomodoro
+              Ascend
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 14, marginTop: 6 }}>
               Focus. Track. Achieve.

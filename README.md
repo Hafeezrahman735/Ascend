@@ -1,6 +1,6 @@
-# Pomodoro Accountability App
+# Ascend
 
-A full-stack Pomodoro timer with social accountability features. Track focus sessions, set goals, compete on leaderboards, earn achievements, and share progress with friends.
+A full-stack focus & accountability app. Track focus sessions with a Pomodoro timer, set goals, compete on leaderboards, earn achievements, and share progress with friends.
 
 ## Tech Stack
 
@@ -317,7 +317,7 @@ Mobile env variables can be set in `mobile/.env` or will default to `http://192.
 Before shipping, replace these values:
 
 - [ ] **`backend/.env`**: Replace `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` with 32+ char random strings
-- [ ] **`mobile/app.config.ts`**: Replace `com.yourname.pomodoroapp` with real iOS bundle ID and Android package
+- [ ] **`mobile/app.config.ts`**: Confirm `com.ascend.app` is the iOS bundle ID / Android package you own (or replace it)
 - [ ] **`mobile/constants/Config.ts`**: Update `EXPO_PUBLIC_API_URL` defaults to production URLs
 - [ ] **`mobile/constants/Config.ts`**: Replace `EXPO_PROJECT_ID` with real ID from [expo.dev](https://expo.dev)
 - [ ] **Push notifications**: Sign up at [expo.dev](https://expo.dev), create a project, get the project ID

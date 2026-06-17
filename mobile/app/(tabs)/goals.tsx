@@ -34,11 +34,8 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useSocialStore } from '../../stores/socialStore';
 import type { SocialPost, UserSocialStats, UserListItem } from '../../types';
-import { Colors } from '../../constants/Colors';
-import {
-  BORDER_SOFT, AMBER, AMBER_DIM, TEAL, ROSE, ROSE_DIM, GOLD, GOLD_DIM,
-  POST_TYPE_META, FREE_TAG_META,
-} from '../../constants/socialTheme';
+import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
 import {
   getRank, getXpToNextRank, getXpProgressInRank,
   RANK_ORDER, RANK_META, RANK_THRESHOLDS,
@@ -62,12 +59,9 @@ type MergedAchievement = CatalogEntry & {
 
 // ─── Local constants ──────────────────────────────────────────────────────────
 
-const GROUP_AVATAR_BG: Record<string, string> = {
-  purple: Colors.primaryDim,
-  teal:   Colors.tealDim,
-  amber:  AMBER_DIM,
-  rose:   ROSE_DIM,
-};
+function groupAvatarBg(c: ThemeColors): Record<string, string> {
+  return { purple: c.primaryDim, teal: c.tealDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
+}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -145,6 +139,9 @@ function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
   onFollowing: () => void;
   onFriends: () => void;
 }) {
+  const Colors = useTheme();
+  const { BORDER_SOFT } = Colors;
+  const GROUP_AVATAR_BG = groupAvatarBg(Colors);
   return (
     <View style={{
       flexDirection: 'row', marginTop: 14, paddingTop: 12,
@@ -214,6 +211,7 @@ function UserListModal({ visible, title, items, isLoading, onClose, renderAction
   renderAction?: (item: UserListItem) => React.ReactNode;
   onItemPress?: (item: UserListItem) => void;
 }) {
+  const Colors = useTheme();
   const [search, setSearch] = useState('');
   const filtered = items.filter(
     (i) => i.displayName.toLowerCase().includes(search.toLowerCase()) ||
@@ -287,6 +285,8 @@ function UserListModal({ visible, title, items, isLoading, onClose, renderAction
 // ─── Compact post card ────────────────────────────────────────────────────────
 
 function CompactPostCard({ post, onPress }: { post: SocialPost; onPress: () => void }) {
+  const Colors = useTheme();
+  const POST_TYPE_META = makePostTypeMeta(Colors);
   const meta = POST_TYPE_META[post.type] ?? POST_TYPE_META.free_post;
   const tagLabel = post.type === 'free_post' && post.contentTag
     ? `${FREE_TAG_META[post.contentTag].emoji} ${FREE_TAG_META[post.contentTag].label}`
@@ -370,6 +370,7 @@ function PostsPane({ posts, isLoading, hasMore, onLoadMore, onPostPress }: {
   onLoadMore: () => void;
   onPostPress: (post: SocialPost) => void;
 }) {
+  const Colors = useTheme();
   const router = useRouter();
   if (posts.length === 0 && !isLoading) {
     return (
@@ -406,6 +407,7 @@ function PostsPane({ posts, isLoading, hasMore, onLoadMore, onPostPress }: {
 // ─── XP bar fill ─────────────────────────────────────────────────────────────
 
 function XPBarFill({ progress, reduceMotion }: { progress: number; reduceMotion: boolean }) {
+  const Colors = useTheme();
   const fill = useSharedValue(reduceMotion ? progress : 0);
 
   useEffect(() => {
@@ -459,6 +461,8 @@ function FlameIcon({ isMilestone, reduceMotion }: { isMilestone: boolean; reduce
 // ─── Rank-up overlay ─────────────────────────────────────────────────────────
 
 function RankUpOverlay({ tier, reduceMotion }: { tier: RankTier; reduceMotion: boolean }) {
+  const Colors = useTheme();
+  const { GOLD } = Colors;
   const scale = useSharedValue(reduceMotion ? 1 : 0.3);
   const opacity = useSharedValue(reduceMotion ? 1 : 0);
 
@@ -497,6 +501,8 @@ function RankUpOverlay({ tier, reduceMotion }: { tier: RankTier; reduceMotion: b
 // ─── Achievement toast ────────────────────────────────────────────────────────
 
 function AchievementToast({ icon, name, xpReward }: { icon: string; name: string; xpReward: number }) {
+  const Colors = useTheme();
+  const { TEAL } = Colors;
   const translateY = useSharedValue(-80);
 
   useEffect(() => {
@@ -556,6 +562,8 @@ function HeroCard({
   reduceMotion, onSettings,
   socialStats, onFollowersPress, onFollowingPress, onFriendsPress,
 }: HeroCardProps) {
+  const Colors = useTheme();
+  const { GOLD_DIM, GOLD, BORDER_SOFT } = Colors;
   const avatarEmoji = getAvatarEmoji(username);
   const isNewUser = xp === 0;
   const focusHours = Math.round(totalFocusMinutes / 60);
@@ -572,7 +580,7 @@ function HeroCard({
       <View style={{
         position: 'absolute', top: -40, right: -40,
         width: 160, height: 160, borderRadius: 80,
-        backgroundColor: '#7B6EF620',
+        backgroundColor: Colors.primary + '20',
       }} />
 
       {/* Top row: avatar + name | rank badge + settings */}
@@ -694,6 +702,8 @@ function HeroCard({
 // ─── Week dots ────────────────────────────────────────────────────────────────
 
 function WeekDots({ days, studiedToday }: { days: boolean[]; studiedToday: boolean }) {
+  const Colors = useTheme();
+  const { AMBER_DIM, AMBER } = Colors;
   const todayIdx = (new Date().getDay() + 6) % 7;
 
   return (
@@ -739,6 +749,8 @@ function StreakSection({
   streakState: StreakState;
   reduceMotion: boolean;
 }) {
+  const Colors = useTheme();
+  const { AMBER, TEAL } = Colors;
   const { currentStreak, longestStreak, studiedToday, thisWeekDays, streakAtRisk } = streakState;
   const isMilestone = STREAK_MILESTONES.has(currentStreak);
   const isPersonalBest = currentStreak > 0 && currentStreak >= longestStreak;
@@ -746,7 +758,7 @@ function StreakSection({
 
   return (
     <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-      <Text style={sectionLabel}>Streak</Text>
+      <Text style={sectionLabel(Colors)}>Streak</Text>
 
       {/* Banner + side cards */}
       <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -849,6 +861,8 @@ function RankSection({
   level: number;
   currentRank: RankTier;
 }) {
+  const Colors = useTheme();
+  const { GOLD, BORDER_SOFT, GOLD_DIM } = Colors;
   const [tooltip, setTooltip] = useState<string | null>(null);
   const currentIdx = RANK_ORDER.indexOf(currentRank);
   const xpToNext = getXpToNextRank(xp);
@@ -857,7 +871,7 @@ function RankSection({
 
   return (
     <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-      <Text style={sectionLabel}>Current Rank</Text>
+      <Text style={sectionLabel(Colors)}>Current Rank</Text>
 
       <View style={{
         backgroundColor: Colors.surface,
@@ -971,6 +985,8 @@ function RankSection({
 // ─── Achievement Card ─────────────────────────────────────────────────────────
 
 function AchievementItem({ achievement }: { achievement: MergedAchievement }) {
+  const Colors = useTheme();
+  const { GOLD, TEAL } = Colors;
   const { isUnlocked, unlockedAt, progress, icon, name, description, isGoldTier, threshold } = achievement;
   const hasProgress = !isUnlocked && progress > 0;
 
@@ -1058,9 +1074,11 @@ function AchievementsSection({
   achievements: MergedAchievement[];
   allUnlocked: boolean;
 }) {
+  const Colors = useTheme();
+  const { GOLD_DIM, GOLD } = Colors;
   return (
     <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-      <Text style={sectionLabel}>Achievements</Text>
+      <Text style={sectionLabel(Colors)}>Achievements</Text>
 
       {allUnlocked && (
         <View style={{
@@ -1095,6 +1113,8 @@ function AchievementsSection({
 // ─── Badge Card ───────────────────────────────────────────────────────────────
 
 function BadgeCard({ badge }: { badge: SubjectBadge }) {
+  const Colors = useTheme();
+  const { GOLD, GOLD_DIM, AMBER_DIM, AMBER } = Colors;
   const [showTooltip, setShowTooltip] = useState(false);
 
   const borderColor =
@@ -1167,9 +1187,10 @@ function BadgeCard({ badge }: { badge: SubjectBadge }) {
 // ─── Subject Badges Section ───────────────────────────────────────────────────
 
 function SubjectBadgesSection({ badges }: { badges: SubjectBadge[] }) {
+  const Colors = useTheme();
   return (
     <View style={{ marginTop: 24 }}>
-      <Text style={[sectionLabel, { paddingHorizontal: 16 }]}>Subject Badges</Text>
+      <Text style={[sectionLabel(Colors), { paddingHorizontal: 16 }]}>Subject Badges</Text>
 
       {badges.length === 0 ? (
         <View style={{ paddingHorizontal: 16 }}>
@@ -1203,18 +1224,20 @@ function SubjectBadgesSection({ badges }: { badges: SubjectBadge[] }) {
 
 // ─── Section label style ──────────────────────────────────────────────────────
 
-const sectionLabel = {
-  color: Colors.subtext,
+const sectionLabel = (c: ThemeColors) => ({
+  color: c.subtext,
   fontSize: 11,
   fontWeight: '600' as const,
   letterSpacing: 1.5,
   textTransform: 'uppercase' as const,
   marginBottom: 12,
-};
+});
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
+  const Colors = useTheme();
+  const { BORDER_SOFT } = Colors;
   const router = useRouter();
   const auth = useAuthStore();
   const gamification = useGamification();

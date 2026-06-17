@@ -11,7 +11,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { Swipeable, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 import { Task, TaskGoal, TaskAnalytics } from '../../types';
-import { Colors } from '../../constants/Colors';
+import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
@@ -30,9 +30,8 @@ import {
 import { calcDaysUntilDue } from '../../store/selectors/tasks';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
-const ROSE = '#F06292';
-const ROSE_DIM = '#3A0F20';
-const AMBER = '#F59E0B';
+// ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
+// them from `Colors` (AMBER maps to Colors.warning to preserve the exact dark hue).
 const SCREEN_H = Dimensions.get('window').height;
 const SCREEN_W = Dimensions.get('window').width;
 const DAY_LABELS = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
@@ -84,16 +83,16 @@ function formatDuration(seconds: number): string {
   if (seconds >= 3600) { const h = Math.floor(seconds/3600); const m = Math.round((seconds%3600)/60); return m > 0 ? `${h}h ${m}m` : `${h}h`; }
   return `${Math.round(seconds/60)}m`;
 }
-function getDueChip(task: Task): { label: string; bg: string; fg: string } | null {
+function getDueChip(task: Task, c: ThemeColors): { label: string; bg: string; fg: string } | null {
   if (!task.dueDate) return null;
-  if (task.isCompleted) return { label: '✓ Done', bg: Colors.tealDim, fg: Colors.accent };
+  if (task.isCompleted) return { label: '✓ Done', bg: c.tealDim, fg: c.accent };
   const daysLeft = calcDaysUntilDue(task);
   if (daysLeft === null) return null;
   const dueDateOnly = task.dueDate.substring(0, 10);
   const dayName = new Date(dueDateOnly + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-  if (daysLeft < 0) return { label: '⚠ Overdue', bg: ROSE_DIM, fg: ROSE };
-  if (daysLeft <= 3) return { label: `⚠ ${dayName}`, bg: ROSE_DIM, fg: ROSE };
-  return { label: `Due ${dayName}`, bg: Colors.inactive, fg: Colors.subtext };
+  if (daysLeft < 0) return { label: '⚠ Overdue', bg: c.ROSE_DIM, fg: c.ROSE };
+  if (daysLeft <= 3) return { label: `⚠ ${dayName}`, bg: c.ROSE_DIM, fg: c.ROSE };
+  return { label: `Due ${dayName}`, bg: c.inactive, fg: c.subtext };
 }
 
 // ─── Time-per-subject grouping ────────────────────────────────────────────────
@@ -194,6 +193,7 @@ function getCompletionRate(tasks: Task[], period: string): number | null {
 function BottomSheet({ visible, onClose, children, sheetHeight }: {
   visible: boolean; onClose: () => void; children: React.ReactNode; sheetHeight: number;
 }) {
+  const Colors = useTheme();
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   const panResponder = useRef(PanResponder.create({
@@ -222,6 +222,7 @@ function BottomSheet({ visible, onClose, children, sheetHeight }: {
 
 // ─── StatRow ──────────────────────────────────────────────────────────────────
 function StatRow({ label, value }: { label: string; value: string }) {
+  const Colors = useTheme();
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
       <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '500' }}>{label}</Text>
@@ -232,6 +233,7 @@ function StatRow({ label, value }: { label: string; value: string }) {
 
 // ─── ZoneHeader ───────────────────────────────────────────────────────────────
 function ZoneHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => void }) {
+  const Colors = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
       <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{title}</Text>
@@ -249,6 +251,7 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
   task: Task | null; sessionLengthMinutes: number;
   onClose: () => void; onLoadTimer: (taskId: string) => void; onToggleComplete: (taskId: string) => void;
 }) {
+  const Colors = useTheme();
   const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
   const [analyticsError, setAnalyticsError] = useState(false);
 
@@ -337,6 +340,7 @@ function GoalPickerModal({ visible, goals, selectedGoalId, onSelect, onClose }: 
   visible: boolean; goals: TaskGoal[]; selectedGoalId: string | null;
   onSelect: (id: string | null) => void; onClose: () => void;
 }) {
+  const Colors = useTheme();
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
       <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
@@ -378,6 +382,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   visible: boolean; task: Task | null; existingTags: string[]; sessionLengthMinutes: number;
   goals: TaskGoal[]; onSave: (data: FormSaveData) => void; onClose: () => void; onDelete?: () => void;
 }) {
+  const Colors = useTheme();
+  const { ROSE, ROSE_DIM } = Colors;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -524,6 +531,9 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
   onSave: (data: { title: string; tag?: string | null; targetSessions?: number | null; deadline?: string | null }) => void;
   onClose: () => void;
 }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const [title, setTitle] = useState('');
   const [tag, setTag] = useState<string | null>(null);
   const [targetSessions, setTargetSessions] = useState(0);
@@ -613,9 +623,11 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
   task: Task; isActive: boolean; goals: TaskGoal[];
   onTap: () => void; onEdit: () => void; onComplete: () => void; onLongPressTag?: (t: string) => void;
 }) {
+  const Colors = useTheme();
+  const { ROSE, ROSE_DIM } = Colors;
   const isCompleted = task.isCompleted;
   const barColor = isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
-  const chip = getDueChip(task);
+  const chip = getDueChip(task, Colors);
   const subjectTag = task.tags.length > 0 ? task.tags[0] : null;
   const tagStyle = useTagStyle(subjectTag ?? '');
   const progressFrac = task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
@@ -680,6 +692,7 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message }: { message: string | null }) {
+  const Colors = useTheme();
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (message) {
@@ -696,6 +709,7 @@ function Toast({ message }: { message: string | null }) {
 
 // ─── GroupHeader ──────────────────────────────────────────────────────────────
 function GroupHeader({ dotColor, label, count }: { dotColor: string; label: string; count: number }) {
+  const Colors = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginTop: 4 }}>
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: dotColor, marginRight: 8 }} />
@@ -707,6 +721,7 @@ function GroupHeader({ dotColor, label, count }: { dotColor: string; label: stri
 
 // ─── BarColumn ────────────────────────────────────────────────────────────────
 function BarColumn({ dayLabel, sessions, maxSessions, isToday, isFuture }: { dayLabel: string; sessions: number; maxSessions: number; isToday: boolean; isFuture: boolean }) {
+  const Colors = useTheme();
   const BAR_MAX_H = 56;
   const barHeight = isFuture ? 3 : Math.max(sessions > 0 ? (sessions / maxSessions) * BAR_MAX_H : 3, 3);
   const barColor = isToday ? Colors.accent : Colors.primary;
@@ -725,6 +740,8 @@ function BarColumn({ dayLabel, sessions, maxSessions, isToday, isFuture }: { day
 
 // ─── DaysWorkedGrid (monthly calendar heatmap) ────────────────────────────────
 function DaysWorkedGrid({ sessionsByDate, tasks, onDayPress }: { sessionsByDate: Map<string, number>; tasks: Task[]; onDayPress: (dateStr: string) => void }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
   const today = new Date(); const year = today.getFullYear(); const month = today.getMonth();
   const todayDateStr = getDateStr(today); const monthName = today.toLocaleString('en-US', { month: 'long' });
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -777,6 +794,8 @@ function DaysWorkedGrid({ sessionsByDate, tasks, onDayPress }: { sessionsByDate:
 
 // ─── DayDetailSheet ───────────────────────────────────────────────────────────
 function DayDetailSheet({ dateStr, tasks, onClose }: { dateStr: string | null; tasks: Task[]; onClose: () => void }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
   if (!dateStr) return null;
   const label = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const completed = tasks.filter((t) => t.completedAt && getDateStr(new Date(t.completedAt)) === dateStr);
@@ -814,6 +833,7 @@ function DayDetailSheet({ dateStr, tasks, onClose }: { dateStr: string | null; t
 function SubjectBar({ tag, seconds, totalSeconds, compact, onLongPressTag }: {
   tag: string; seconds: number; totalSeconds: number; compact?: boolean; onLongPressTag?: (t: string) => void;
 }) {
+  const Colors = useTheme();
   const ts = useTagStyle(tag);
   const pct = totalSeconds > 0 ? (seconds / totalSeconds) * 100 : 0;
   return (
@@ -836,6 +856,7 @@ function SubjectBar({ tag, seconds, totalSeconds, compact, onLongPressTag }: {
 
 // ─── TodayPill ────────────────────────────────────────────────────────────────
 function TodayPill({ value, label }: { value: string; label: string }) {
+  const Colors = useTheme();
   return (
     <View style={{ flex: 1, backgroundColor: Colors.surface, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 10, alignItems: 'center', borderWidth: 0.5, borderColor: Colors.border }}>
       <Text style={{ color: Colors.primarySoft, fontSize: 18, fontWeight: '700', marginBottom: 3 }}>{value}</Text>
@@ -845,12 +866,14 @@ function TodayPill({ value, label }: { value: string; label: string }) {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  input: { backgroundColor: Colors.raised, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, marginBottom: 16, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
-  fieldLabel: { color: Colors.subtext, fontSize: 11, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 },
-  stepper: { width: 36, height: 36, borderRadius: 10, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' },
-  card: { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 0.5, borderColor: Colors.border, padding: 16 },
-});
+function getStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    input: { backgroundColor: c.raised, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: c.textBright, marginBottom: 16, fontSize: 14, borderWidth: 1, borderColor: c.border },
+    fieldLabel: { color: c.subtext, fontSize: 11, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 },
+    stepper: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' },
+    card: { backgroundColor: c.surface, borderRadius: 16, borderWidth: 0.5, borderColor: c.border, padding: 16 },
+  });
+}
 
 // ─── PillStrip ────────────────────────────────────────────────────────────────
 function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate, lastWeekRate, focusSecondsToday, dailyFocusTargetSeconds, onSetGoal }: {
@@ -859,6 +882,9 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
   focusSecondsToday: number; dailyFocusTargetSeconds: number;
   onSetGoal: () => void;
 }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const AMBER = Colors.warning;
   const taskDelta = completedToday - yesterdayCompleted;
   const taskDeltaColor = taskDelta > 0 ? Colors.accent : taskDelta < 0 ? ROSE : Colors.subtext;
   const taskDeltaLabel = taskDelta > 0 ? '↑ vs yesterday' : taskDelta < 0 ? '↓ vs yesterday' : 'Same as yesterday';
@@ -898,6 +924,8 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
 
 // ─── GoalZoneRow — compact goal row used in Zone 2 of the main screen ─────────
 function GoalZoneRow({ goal, tasks }: { goal: TaskGoal; tasks: Task[] }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
   const linked = tasks.filter((t) => t.taskGoalId === goal.id && !t.isArchived);
   const completedCount = linked.filter((t) => t.isCompleted).length;
   const pct = linked.length > 0 ? Math.round((completedCount / linked.length) * 100) : 0;
@@ -941,6 +969,9 @@ function GoalZoneRow({ goal, tasks }: { goal: TaskGoal; tasks: Task[] }) {
 
 // ─── GoalCard ─────────────────────────────────────────────────────────────────
 function GoalCard({ goal, tasks, onLongPressTag }: { goal: TaskGoal; tasks: Task[]; onLongPressTag?: (t: string) => void }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const linked = tasks.filter((t) => t.taskGoalId === goal.id && !t.isArchived);
   const completed = linked.filter((t) => t.isCompleted).length;
   const pct = linked.length > 0 ? Math.round((completed / linked.length) * 100) : 0;
@@ -973,11 +1004,16 @@ function GoalCard({ goal, tasks, onLongPressTag }: { goal: TaskGoal; tasks: Task
 
 // ─── Hero card shared header ──────────────────────────────────────────────────
 function HeroLabel({ text, color }: { text: string; color?: string }) {
+  const Colors = useTheme();
   return <Text style={{ color: color ?? Colors.subtext, fontSize: 9, fontWeight: '700', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>{text}</Text>;
 }
 
 // ─── Card 1: Urgency ──────────────────────────────────────────────────────────
 function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFocus: (id: string) => void }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const urgent = tasks
     .filter((t) => !t.isCompleted && !t.isArchived && !!t.dueDate)
     .map((t) => ({ ...t, daysLeft: diffCalendarDaysTasks(new Date(t.dueDate!), new Date()) }))
@@ -1013,6 +1049,8 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
 
 // ─── Card 2: Goal Progress ────────────────────────────────────────────────────
 function GoalProgressCard({ goals, tasks, onGoalPress }: { goals: TaskGoal[]; tasks: Task[]; onGoalPress: () => void }) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const activeGoals = goals.filter((g) => !g.isCompleted && !g.isArchived);
   if (activeGoals.length === 0) return null;
 
@@ -1047,6 +1085,8 @@ function GoalProgressCard({ goals, tasks, onGoalPress }: { goals: TaskGoal[]; ta
 
 // ─── Card 3: Time Nudge ───────────────────────────────────────────────────────
 function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number | null; sessionHistory: SessionRecord[]; onFocus: () => void }) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const now = new Date();
   const hourLabel = `${now.getHours() % 12 || 12}:${String(now.getMinutes()).padStart(2, '0')} ${now.getHours() < 12 ? 'am' : 'pm'}`;
   const peakLabel = peakHour !== null ? formatPeakWindow(peakHour) : '—';
@@ -1080,6 +1120,9 @@ function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number
 
 // ─── Card 4: Momentum ─────────────────────────────────────────────────────────
 function MomentumCard({ currentStreak, longestStreak, sessionHistory }: { currentStreak: number; longestStreak: number; sessionHistory: SessionRecord[] }) {
+  const Colors = useTheme();
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const isPersonalBest = currentStreak > 0 && currentStreak === longestStreak;
   const thisWeekStart = startOfThisWeekMs();
   const thisWeekHours = sessionHistory
@@ -1130,6 +1173,9 @@ function MomentumCard({ currentStreak, longestStreak, sessionHistory }: { curren
 
 // ─── Card 5: Self-comparison ──────────────────────────────────────────────────
 function SelfComparisonCard({ sessionHistory, onFocus }: { sessionHistory: SessionRecord[]; onFocus: () => void }) {
+  const Colors = useTheme();
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const thisWeekStart = startOfThisWeekMs();
   const lastWeekStart = startOfWeekNMs(1);
   const thisHours = sessionHistory.filter((s) => s.completedAt >= thisWeekStart).reduce((sum, s) => sum + s.durationSeconds, 0) / 3600;
@@ -1184,6 +1230,7 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
   currentStreak: number; longestStreak: number;
   onSelectAndFocus: (id: string) => void; onGoalPress: () => void; onFocus: () => void;
 }) {
+  const Colors = useTheme();
   // Only include cards that have real content — prevents empty cards (urgency with no
   // due tasks, goal_progress with no goals) from falling back to self_comparison and
   // appearing as duplicate cards in the rotation. self_comparison is always the anchor.
@@ -1265,6 +1312,8 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
 
 // ─── TagOverrideSheet ─────────────────────────────────────────────────────────
 function TagOverrideSheet({ tag, visible, onClose }: { tag: string; visible: boolean; onClose: () => void }) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const { overrides, setOverride, clearOverride } = useTagOverrideStore();
   const current = overrides[tag];
   // Initialize to null — the effect sets the correct value the moment visible becomes true,
@@ -1331,6 +1380,9 @@ function TagOverrideSheet({ tag, visible, onClose }: { tag: string; visible: boo
 type ActiveView = null | 'goal-detail' | 'time-tracker' | 'task-list' | 'calendar';
 
 export default function TasksScreen() {
+  const Colors = useTheme();
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
   const tasks = useTasksList();
   const selectedTaskId = useSelectedTaskId();
   const taskActions = useTaskActions();

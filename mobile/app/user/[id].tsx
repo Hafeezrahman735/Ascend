@@ -17,6 +17,7 @@ function formatFocus(seconds: number): string {
 }
 
 function StatBox({ label, value }: { label: string; value: string }) {
+  const Colors = useTheme();
   return (
     <View style={{ flex: 1, alignItems: 'center', paddingVertical: 14 }}>
       <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '800' }}>{value}</Text>
@@ -26,6 +27,7 @@ function StatBox({ label, value }: { label: string; value: string }) {
 }
 
 export default function UserProfileScreen() {
+  const Colors = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const social = useSocialStore();
@@ -61,7 +63,7 @@ export default function UserProfileScreen() {
   };
 
   const isGold = profile && (profile.rank === 'Champion' || profile.rank === 'Legend');
-  const rankColor = isGold ? GOLD : Colors.primarySoft;
+  const rankColor = isGold ? Colors.GOLD : Colors.primarySoft;
 
   if (loading) {
     return (
@@ -102,7 +104,7 @@ export default function UserProfileScreen() {
         {/* Avatar + follow */}
         <View style={{ alignItems: 'center', paddingTop: 20, paddingBottom: 24 }}>
           <View style={{
-            width: 80, height: 80, borderRadius: 24, backgroundColor: RAISED,
+            width: 80, height: 80, borderRadius: 24, backgroundColor: Colors.raised,
             alignItems: 'center', justifyContent: 'center',
             borderWidth: 2, borderColor: rankColor,
           }}>
@@ -127,8 +129,8 @@ export default function UserProfileScreen() {
               style={{
                 marginTop: 16, paddingHorizontal: 32, paddingVertical: 10,
                 borderRadius: 24, borderWidth: 1,
-                backgroundColor: profile.isFollowing ? RAISED : Colors.primary,
-                borderColor: profile.isFollowing ? BORDER_SOFT : Colors.primary,
+                backgroundColor: profile.isFollowing ? Colors.raised : Colors.primary,
+                borderColor: profile.isFollowing ? Colors.BORDER_SOFT : Colors.primary,
               }}
             >
               {followLoading
@@ -158,22 +160,22 @@ export default function UserProfileScreen() {
 
         {/* Stats grid */}
         <View style={{
-          backgroundColor: SURFACE, marginHorizontal: 16, borderRadius: 16,
-          borderWidth: 1, borderColor: BORDER_SOFT, marginBottom: 16,
+          backgroundColor: Colors.surface, marginHorizontal: 16, borderRadius: 16,
+          borderWidth: 1, borderColor: Colors.BORDER_SOFT, marginBottom: 16,
         }}>
           <View style={{ flexDirection: 'row' }}>
             <StatBox label="Streak" value={`${profile.currentStreak}d`} />
-            <View style={{ width: 1, backgroundColor: BORDER_SOFT }} />
+            <View style={{ width: 1, backgroundColor: Colors.BORDER_SOFT}} />
             <StatBox label="Best Streak" value={`${profile.longestStreak}d`} />
-            <View style={{ width: 1, backgroundColor: BORDER_SOFT }} />
+            <View style={{ width: 1, backgroundColor: Colors.BORDER_SOFT}} />
             <StatBox label="Sessions" value={String(profile.totalSessions)} />
           </View>
-          <View style={{ height: 1, backgroundColor: BORDER_SOFT }} />
+          <View style={{ height: 1, backgroundColor: Colors.BORDER_SOFT}} />
           <View style={{ flexDirection: 'row' }}>
             <StatBox label="Total Focus" value={formatFocus(profile.totalFocusTime)} />
-            <View style={{ width: 1, backgroundColor: BORDER_SOFT }} />
+            <View style={{ width: 1, backgroundColor: Colors.BORDER_SOFT}} />
             <StatBox label="Level" value={String(profile.level)} />
-            <View style={{ width: 1, backgroundColor: BORDER_SOFT }} />
+            <View style={{ width: 1, backgroundColor: Colors.BORDER_SOFT}} />
             <StatBox label="Rank" value={profile.rank} />
           </View>
         </View>
@@ -187,8 +189,8 @@ export default function UserProfileScreen() {
             {profile.recentAchievements.map((a) => (
               <View key={a.id} style={{
                 flexDirection: 'row', alignItems: 'center',
-                backgroundColor: SURFACE, borderRadius: 14, borderWidth: 1,
-                borderColor: BORDER_SOFT, padding: 12, marginBottom: 8,
+                backgroundColor: Colors.surface, borderRadius: 14, borderWidth: 1,
+                borderColor: Colors.BORDER_SOFT, padding: 12, marginBottom: 8,
               }}>
                 <Text style={{ fontSize: 28, marginRight: 12 }}>{a.icon}</Text>
                 <View style={{ flex: 1 }}>
@@ -215,12 +217,12 @@ export default function UserProfileScreen() {
           ) : (
             posts.map((post) => (
               <View key={post.id} style={{
-                backgroundColor: SURFACE, borderRadius: 14, borderWidth: 1,
-                borderColor: BORDER_SOFT, padding: 14, marginBottom: 10,
+                backgroundColor: Colors.surface, borderRadius: 14, borderWidth: 1,
+                borderColor: Colors.BORDER_SOFT, padding: 14, marginBottom: 10,
               }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                   <View style={{
-                    width: 32, height: 32, borderRadius: 10, backgroundColor: RAISED,
+                    width: 32, height: 32, borderRadius: 10, backgroundColor: Colors.raised,
                     alignItems: 'center', justifyContent: 'center', marginRight: 10,
                   }}>
                     <Text style={{ fontSize: 18 }}>{profile.avatarEmoji}</Text>

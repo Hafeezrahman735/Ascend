@@ -45,7 +45,7 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 app.get('/health', (_req, res) => {
-  res.json({ success: true, data: { service: 'pomodoro-backend', status: 'healthy' } });
+  res.json({ success: true, data: { service: 'ascend-backend', status: 'healthy' } });
 });
 
 app.use('/', authRouter);
@@ -112,7 +112,7 @@ eventBus.on(EventTypes.FRIEND_REQUEST_ACCEPTED, (payload) => {
 });
 
 server.listen(Number(config.PORT), () => {
-  console.log(`Pomodoro backend running on port ${config.PORT}`);
+  console.log(`Ascend backend running on port ${config.PORT}`);
 });
 
 export default app;

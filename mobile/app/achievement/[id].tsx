@@ -36,7 +36,7 @@ export default function AchievementDetailScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     try {
       await Share.share({
-        message: `I just unlocked "${achievement.title}" 🏆 on Pomodoro!`,
+        message: `I just unlocked "${achievement.title}" 🏆 on Ascend!`,
         title: 'Achievement Unlocked!',
       });
     } catch {}

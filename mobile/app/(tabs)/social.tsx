@@ -12,35 +12,22 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
 import { useTimerStore } from '../../stores/timerStore';
 import { getSessionHistory } from '../../store/sync';
-import { Colors } from '../../constants/Colors';
-import {
-  BORDER_SOFT, AMBER, AMBER_DIM, ROSE, ROSE_DIM, GOLD, GOLD_DIM,
-  POST_TYPE_META, FREE_TAG_META,
-} from '../../constants/socialTheme';
+import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
 import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
-
-// ─── Local aliases ────────────────────────────────────────────────────────────
-
-const SURFACE = Colors.surface;
-const RAISED  = Colors.raised;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const AVATAR_EMOJIS = ['🦊','🐸','🦁','🐳','🦉','🐰','🦋','🐙','🦚','🐻','🦝','🐵'];
 const REACTIONS = ['🔥','🫡','❤️','💪'] as const;
 
-const GROUP_BG: Record<string, string> = {
-  purple: Colors.primaryDim,
-  teal: Colors.tealDim,
-  amber: AMBER_DIM,
-  rose: '#3A0F20',
-};
-const GROUP_BORDER_COLOR: Record<string, string> = {
-  purple: Colors.primary,
-  teal: Colors.accent,
-  amber: AMBER,
-  rose: ROSE,
-};
+// Theme-aware group chip palettes, derived from the active Colors object.
+function groupBg(c: ThemeColors): Record<string, string> {
+  return { purple: c.primaryDim, teal: c.tealDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
+}
+function groupBorderColor(c: ThemeColors): Record<string, string> {
+  return { purple: c.primary, teal: c.accent, amber: c.AMBER, rose: c.ROSE };
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -77,6 +64,10 @@ function isGoldRank(rank: string): boolean {
 function GroupChip({ group, selected, onPress }: {
   group: StudyGroup; selected: boolean; onPress: () => void;
 }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const GROUP_BG = groupBg(Colors);
+  const GROUP_BORDER_COLOR = groupBorderColor(Colors);
   const border = selected ? Colors.primary : (GROUP_BORDER_COLOR[group.color] ?? Colors.border);
   const bg = GROUP_BG[group.color] ?? SURFACE;
   return (
@@ -104,6 +95,7 @@ function GroupChip({ group, selected, onPress }: {
 }
 
 function JoinChip({ onPress }: { onPress: () => void }) {
+  const Colors = useTheme();
   return (
     <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
       <View style={{
@@ -122,6 +114,8 @@ function JoinChip({ onPress }: { onPress: () => void }) {
 
 
 function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePostTag | null }) {
+  const Colors = useTheme();
+  const POST_TYPE_META = makePostTypeMeta(Colors);
   const base = POST_TYPE_META[type];
   const label = type === 'free_post' && contentTag
     ? `${FREE_TAG_META[contentTag].emoji} ${FREE_TAG_META[contentTag].label}`
@@ -139,6 +133,8 @@ function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePo
 // ─── Stat pill ───────────────────────────────────────────────────────────────
 
 function StatPill({ label, value }: { label: string; value: string }) {
+  const Colors = useTheme();
+  const RAISED = Colors.raised;
   return (
     <View style={{
       backgroundColor: RAISED, borderRadius: 10,
@@ -163,6 +159,8 @@ function SessionRecapBlock({ post }: { post: SocialPost }) {
 }
 
 function AchievementUnlockBlock({ post }: { post: SocialPost }) {
+  const Colors = useTheme();
+  const { GOLD, GOLD_DIM } = Colors;
   return (
     <View style={{
       backgroundColor: GOLD_DIM, borderRadius: 12, borderWidth: 1,
@@ -186,6 +184,8 @@ function AchievementUnlockBlock({ post }: { post: SocialPost }) {
 }
 
 function AccountabilityBlock({ post }: { post: SocialPost }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
   const ch = post.challenge;
   if (!ch) return null;
   const completed = Object.values(ch.memberProgress).reduce((a, b) => a + b, 0);
@@ -240,6 +240,9 @@ function StreakMilestoneBlock({ post }: { post: SocialPost }) {
 function ReactionRow({ post, currentUserId, onToggle }: {
   post: SocialPost; currentUserId: string; onToggle: (emoji: string) => void;
 }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT } = Colors;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       {REACTIONS.map((emoji) => {
@@ -322,6 +325,10 @@ function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
   onToggleReaction: (postId: string, emoji: string) => void;
   onAuthorPress?: (authorId: string) => void;
 }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT, GOLD } = Colors;
   const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
   return (
     <View style={{
@@ -386,6 +393,9 @@ const PODIUM_HEIGHTS = [48, 36, 28];
 const PODIUM_ORDER = [1, 0, 2];
 
 function PodiumEntry({ entry, pos }: { entry: FocusLeaderboardEntry; pos: number }) {
+  const Colors = useTheme();
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT, GOLD } = Colors;
   const isFirst = pos === 0;
   const borderColor = pos === 0 ? GOLD : pos === 1 ? '#C0C0C080' : '#CD7F3280';
   return (
@@ -418,6 +428,9 @@ function PodiumEntry({ entry, pos }: { entry: FocusLeaderboardEntry; pos: number
 }
 
 function PodiumBlock({ entries }: { entries: FocusLeaderboardEntry[] }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT } = Colors;
   const top3 = entries.slice(0, 3);
   const ordered = PODIUM_ORDER.map((i) => top3[i]).filter(Boolean) as FocusLeaderboardEntry[];
   return (
@@ -437,6 +450,10 @@ function PodiumBlock({ entries }: { entries: FocusLeaderboardEntry[] }) {
 // ─── Leaderboard list row ────────────────────────────────────────────────────
 
 function LeaderboardListRow({ entry }: { entry: FocusLeaderboardEntry }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const RAISED = Colors.raised;
+  const { GOLD, ROSE } = Colors;
   const posColor = entry.position <= 5 ? Colors.primarySoft : Colors.subtext;
   const rankColor = isGoldRank(entry.rank) ? GOLD : Colors.primarySoft;
   const delta = entry.positionDelta;
@@ -493,6 +510,9 @@ function LeaderboardListRow({ entry }: { entry: FocusLeaderboardEntry }) {
 function NextTargetCard({ me, above }: {
   me: FocusLeaderboardEntry | null; above: FocusLeaderboardEntry | null;
 }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT, GOLD, GOLD_DIM } = Colors;
   if (!me) return null;
 
   if (me.position === 1) {
@@ -568,6 +588,9 @@ function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId
   setTargetGroupId: (id: string | null) => void;
   studyGroups: StudyGroup[];
 }) {
+  const Colors = useTheme();
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT } = Colors;
   return (
     <>
       <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Share to</Text>
@@ -617,6 +640,10 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
   onPost: (draft: Partial<SocialPost>) => void;
   studyGroups: StudyGroup[];
 }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT, ROSE, ROSE_DIM, GOLD, GOLD_DIM } = Colors;
   const gamification = useGamification();
   const timer = useTimerStore();
 
@@ -1025,6 +1052,9 @@ type Scope  = typeof SCOPES[number]['key'];
 type Period = typeof PERIODS[number]['key'];
 
 export default function SocialScreen() {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT, ROSE } = Colors;
   const social      = useSocialStore();
   const auth        = useAuthStore();
   const router      = useRouter();

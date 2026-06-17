@@ -13,31 +13,31 @@ const EXPO_PROJECT_ID = process.env.EXPO_PUBLIC_EXPO_PROJECT_ID || 'YOUR_EXPO_PR
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: 'Pomodoro',
-  slug: 'pomodoro',
+  name: 'Ascend',
+  slug: 'ascend',
   version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/images/icon.png',
-  scheme: 'pomodoro',
+  scheme: 'ascend',
   userInterfaceStyle: 'automatic',
   splash: {
-    backgroundColor: '#0F0F0F',
+    backgroundColor: '#08081A',
   },
   assetBundlePatterns: ['**/*'],
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.yourname.pomodoroapp',
+    bundleIdentifier: 'com.ascend.app',
     infoPlist: {
       UIBackgroundModes: ['remote-notification', 'fetch'],
       NSUserNotificationUsageDescription:
-        'Pomodoro sends you reminders when your focus session ends and when your friends start focusing.',
+        'Ascend sends you reminders when your focus session ends and when your friends start focusing.',
     },
   },
   android: {
     adaptiveIcon: {
-      backgroundColor: '#0F0F0F',
+      backgroundColor: '#08081A',
     },
-    package: 'com.yourname.pomodoroapp',
+    package: 'com.ascend.app',
     permissions: ['RECEIVE_BOOT_COMPLETED', 'VIBRATE', 'POST_NOTIFICATIONS'],
   },
   plugins: [
@@ -47,7 +47,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'expo-notifications',
       {
         icon: './assets/images/notification-icon.png',
-        color: '#FF6B6B',
+        color: '#7B6EF6',
       },
     ],
   ],

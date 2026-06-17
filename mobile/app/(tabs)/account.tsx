@@ -65,7 +65,7 @@ export default function AccountScreen() {
           <View style={{
             position: 'absolute', top: -30, right: -30,
             width: 120, height: 120, borderRadius: 60,
-            backgroundColor: '#7B6EF618',
+            backgroundColor: Colors.primary + '18',
           }} />
 
           <View style={{
