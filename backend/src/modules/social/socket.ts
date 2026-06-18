@@ -2,7 +2,6 @@ import { Namespace, Socket } from 'socket.io';
 import { verifyAccessToken } from '../../middleware/auth';
 import { Server as SocketIOServer } from 'socket.io';
 import {
-  FeedCreateEvent,
   FriendRequestSentEvent,
   FriendRequestAcceptedEvent,
 } from '../../middleware/eventBus';
@@ -55,28 +54,6 @@ export function setupSocialSocket(namespace: Namespace): void {
       }
     });
   });
-}
-
-export function emitFeedEvent(
-  io: SocketIOServer,
-  event: FeedCreateEvent,
-): void {
-  const socialNamespace = io.of('/social');
-  const { userId, eventType, payload } = event;
-
-  const friendIds = [...activeUserSockets.keys()].filter(
-    (id) => id !== userId,
-  );
-
-  for (const friendId of friendIds) {
-    socialNamespace.to(`user:${friendId}`).emit('feed:new_event', {
-      id: payload._eventId || undefined,
-      userId,
-      eventType,
-      payload,
-      createdAt: new Date().toISOString(),
-    });
-  }
 }
 
 export function emitFriendRequestReceived(

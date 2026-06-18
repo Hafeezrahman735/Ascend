@@ -1,0 +1,11 @@
+# Environment / secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Expo
+.expo/
+expo-env.d.ts
+
+# Dependencies
+node_modules/
