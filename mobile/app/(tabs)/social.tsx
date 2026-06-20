@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSocialStore } from '../../stores/socialStore';
+import { api } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
 import { useTimerStore } from '../../stores/timerStore';
@@ -330,36 +331,68 @@ function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
   const RAISED = Colors.raised;
   const { BORDER_SOFT, GOLD } = Colors;
   const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
+  const isOwnPost = post.authorId === currentUserId;
+
+  const handleReport = () => {
+    Alert.alert(
+      'Report Post',
+      'Report this post as inappropriate? Our team will review it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Report',
+          style: 'destructive',
+          onPress: async () => {
+            await api.post(`/social/posts/${post.id}/report`, { reason: 'inappropriate' });
+            Alert.alert('Reported', 'Thanks — we\'ll review this post.');
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <View style={{
       backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
       marginHorizontal: 16, marginBottom: 12, padding: 14,
     }}>
-      <Pressable
-        onPress={() => onAuthorPress?.(post.authorId)}
-        style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}
-      >
-        <View style={{
-          width: 36, height: 36, borderRadius: 11, backgroundColor: RAISED,
-          alignItems: 'center', justifyContent: 'center', marginRight: 10,
-        }}>
-          <Text style={{ fontSize: 20 }}>{post.authorEmoji || getAvatarEmoji(post.authorId)}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 14 }}>{post.authorName}</Text>
-            <View style={{
-              marginLeft: 6, backgroundColor: rankColor + '22', borderRadius: 6,
-              paddingHorizontal: 6, paddingVertical: 2,
-            }}>
-              <Text style={{ color: rankColor, fontSize: 10, fontWeight: '600' }}>{post.authorRank}</Text>
-            </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+        <Pressable
+          onPress={() => onAuthorPress?.(post.authorId)}
+          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+        >
+          <View style={{
+            width: 36, height: 36, borderRadius: 11, backgroundColor: RAISED,
+            alignItems: 'center', justifyContent: 'center', marginRight: 10,
+          }}>
+            <Text style={{ fontSize: 20 }}>{post.authorEmoji || getAvatarEmoji(post.authorId)}</Text>
           </View>
-          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>
-            {post.groupName ? `${post.groupName} · ` : ''}{timeAgo(post.createdAt)}
-          </Text>
-        </View>
-      </Pressable>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 14 }}>{post.authorName}</Text>
+              <View style={{
+                marginLeft: 6, backgroundColor: rankColor + '22', borderRadius: 6,
+                paddingHorizontal: 6, paddingVertical: 2,
+              }}>
+                <Text style={{ color: rankColor, fontSize: 10, fontWeight: '600' }}>{post.authorRank}</Text>
+              </View>
+            </View>
+            <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>
+              {post.groupName ? `${post.groupName} · ` : ''}{timeAgo(post.createdAt)}
+            </Text>
+          </View>
+        </Pressable>
+        {!isOwnPost && (
+          <Pressable
+            onPress={handleReport}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ padding: 4, marginLeft: 8 }}
+            accessibilityLabel="Report post"
+          >
+            <Ionicons name="flag-outline" size={16} color={Colors.subtext} />
+          </Pressable>
+        )}
+      </View>
 
       <PostTypeTag type={post.type} contentTag={post.contentTag} />
 
@@ -572,11 +605,10 @@ function NextTargetCard({ me, above }: {
 // ─── Create post sheet ───────────────────────────────────────────────────────
 
 const POST_TYPE_CARDS: { type: PostType; icon: string; label: string; desc: string; comingSoon?: boolean }[] = [
-  { type: 'free_post',          icon: '✏️', label: 'Share something',                 desc: 'Write a free post with optional stats or photo' },
+  { type: 'free_post',          icon: '✏️', label: 'Share something',                 desc: 'Write a free post with optional stats' },
   { type: 'session_recap',      icon: '⚡', label: 'Share a session recap',           desc: 'Show off your recent focus block' },
   { type: 'achievement_unlock', icon: '🏅', label: 'Share an achievement',            desc: 'Celebrate a milestone you unlocked' },
   { type: 'streak_milestone',   icon: '🔥', label: 'Share a streak milestone',        desc: 'Brag about your consistency' },
-  { type: 'accountability',     icon: '🤝', label: 'Start an accountability challenge', desc: 'Challenge your study group', comingSoon: true },
 ];
 
 const FREE_TAGS = Object.entries(FREE_TAG_META) as [FreePostTag, { emoji: string; label: string }][];
@@ -708,10 +740,6 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
   const toggleStat = (key: string) => {
     setCheckedStats((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
     setStatsError(false);
-  };
-
-  const handlePickPhoto = () => {
-    Alert.alert('Add Photo', 'Install expo-image-picker to enable photo uploads.', [{ text: 'OK' }]);
   };
 
   const handlePost = () => {
@@ -846,36 +874,6 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
                     );
                   })}
                 </ScrollView>
-
-                {/* Photo picker */}
-                <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Photo (optional)</Text>
-                {photoUri ? (
-                  <View style={{ marginBottom: 14, position: 'relative' }}>
-                    <Image source={{ uri: photoUri }} style={{ width: '100%', height: 160, borderRadius: 12 }} resizeMode="cover" />
-                    <Pressable
-                      onPress={() => setPhotoUri(null)}
-                      style={{
-                        position: 'absolute', top: 8, right: 8,
-                        backgroundColor: '#00000099', borderRadius: 12,
-                        width: 24, height: 24, alignItems: 'center', justifyContent: 'center',
-                      }}
-                    >
-                      <Ionicons name="close" size={14} color="#fff" />
-                    </Pressable>
-                  </View>
-                ) : (
-                  <Pressable
-                    onPress={handlePickPhoto}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                      backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
-                      borderColor: BORDER_SOFT, paddingVertical: 14, marginBottom: 14,
-                    }}
-                  >
-                    <Ionicons name="image-outline" size={20} color={Colors.subtext} />
-                    <Text style={{ color: Colors.subtext, fontSize: 13, marginLeft: 8 }}>Add photo</Text>
-                  </Pressable>
-                )}
 
                 {/* Attach stats */}
                 <Pressable
@@ -1108,7 +1106,17 @@ export default function SocialScreen() {
   const aboveMe = myFocusEntry && myFocusEntry.position > 1
     ? focusLeaderboard.find((e) => e.position === myFocusEntry.position - 1) ?? null
     : null;
-  const listEntries = focusLeaderboard.filter((e) => e.position > 3);
+  // The friends list always includes you, so "no friends to compare" means
+  // there's nobody besides yourself — not length === 0.
+  const friendsEmpty = focusLeaderboard.filter((e) => !e.isMe).length === 0;
+  // The podium only renders with ≥3 entries and covers ranks 1–3. When there's
+  // no podium (1–2 entries), the list must show every rank, otherwise ranks 1–3
+  // would never be drawn and the board looks empty. In the friends scope, the
+  // lone "you" row is suppressed in favour of the empty-state below.
+  const hasPodium = focusLeaderboard.length >= 3;
+  const listEntries = (scope === 'friends' && friendsEmpty)
+    ? []
+    : focusLeaderboard.filter((e) => (hasPodium ? e.position > 3 : true));
 
   // ── Feed tab ──────────────────────────────────────────────────────────────
 
@@ -1231,11 +1239,20 @@ export default function SocialScreen() {
       </View>
 
       {/* Empty states */}
-      {scope === 'friends' && focusLeaderboard.length === 0 && !social.isLoading && (
+      {scope === 'friends' && friendsEmpty && !social.isLoading && (
         <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
           <Ionicons name="people-outline" size={48} color={Colors.subtext} />
           <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
             Follow other students to see a friends leaderboard
+          </Text>
+        </View>
+      )}
+
+      {scope === 'global' && focusLeaderboard.length === 0 && !social.isLoading && (
+        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
+          <Ionicons name="trophy-outline" size={48} color={Colors.subtext} />
+          <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
+            No one's on the leaderboard yet — finish a focus session to claim a spot
           </Text>
         </View>
       )}

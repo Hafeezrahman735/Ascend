@@ -23,6 +23,38 @@ function getRankTitle(xp: number): string {
   return 'Rookie';
 }
 
+// ─── Moderation helpers (App Store Guideline 1.2) ────────────────────────────
+// Minimal server-side profanity gate on user-generated captions. STEM_TERMS are
+// matched with a leading word boundary + optional suffix so inflections are
+// caught ("fuck" → "fucking", "shit" → "shitty") without matching mid-word.
+// EXACT_TERMS are short stems that collide with legit words ("spic"→"spice",
+// "dick"→"Dickens"), so they only match as whole words. Expand the lists freely.
+const STEM_TERMS = [
+  'fuck', 'shit', 'bitch', 'cunt', 'asshole', 'nigger', 'nigga', 'faggot',
+  'retard', 'slut', 'whore', 'rape', 'kike',
+];
+const EXACT_TERMS = ['spic', 'chink', 'dick'];
+const STEM_RE = new RegExp(`\\b(${STEM_TERMS.join('|')})\\w*`, 'i');
+const EXACT_RE = new RegExp(`\\b(${EXACT_TERMS.join('|')})\\b`, 'i');
+function containsBlockedContent(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return STEM_RE.test(text) || EXACT_RE.test(text);
+}
+
+// Users hidden from `userId` in both directions: people they blocked and people
+// who blocked them. Their posts/profiles are excluded from feeds and search.
+async function getHiddenUserIds(userId: string): Promise<string[]> {
+  const blocks = await prisma.userBlock.findMany({
+    where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+    select: { blockerId: true, blockedId: true },
+  });
+  const ids = new Set<string>();
+  for (const b of blocks) {
+    ids.add(b.blockerId === userId ? b.blockedId : b.blockerId);
+  }
+  return [...ids];
+}
+
 socialRouter.post('/social/friend-request', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
@@ -279,8 +311,10 @@ socialRouter.get('/social/feed', async (req: Request, res: Response) => {
     const limit = 50;
 
     const friendIds = await getFriendIds(userId);
+    const hiddenSet = new Set(await getHiddenUserIds(userId));
 
-    const userIds = [...friendIds, userId];
+    // Exclude blocked users (both directions) from the activity feed.
+    const userIds = [...friendIds, userId].filter((id) => !hiddenSet.has(id));
 
     const where: Record<string, unknown> = {
       userId: { in: userIds },
@@ -338,10 +372,12 @@ socialRouter.get('/social/users/search', async (req: Request, res: Response) => 
       return;
     }
 
+    const hiddenIds = await getHiddenUserIds(userId);
     const users = await prisma.user.findMany({
       where: {
         AND: [
           { id: { not: userId } },
+          { id: { notIn: hiddenIds } },
           { username: { contains: query, mode: 'insensitive' } },
         ],
       },
@@ -706,28 +742,27 @@ socialRouter.get('/social/stats/me', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
 
-    const friendCount = await prisma.friendship.count({
-      where: {
-        OR: [
-          { requesterId: userId, status: 'accepted' },
-          { addresseeId: userId, status: 'accepted' },
-        ],
-      },
-    });
+    const acceptedWhere = {
+      OR: [
+        { requesterId: userId, status: 'accepted' },
+        { addresseeId: userId, status: 'accepted' },
+      ],
+    };
 
-    const friendships = await prisma.friendship.findMany({
-      where: {
-        OR: [
-          { requesterId: userId, status: 'accepted' },
-          { addresseeId: userId, status: 'accepted' },
-        ],
-      },
-      include: {
-        requester: { select: { id: true, username: true, avatarUrl: true } },
-        addressee: { select: { id: true, username: true, avatarUrl: true } },
-      },
-      take: 5,
-    });
+    // All four reads are independent — run them in parallel.
+    const [friendCount, friendships, followerCount, followingCount] = await Promise.all([
+      prisma.friendship.count({ where: acceptedWhere }),
+      prisma.friendship.findMany({
+        where: acceptedWhere,
+        include: {
+          requester: { select: { id: true, username: true, avatarUrl: true } },
+          addressee: { select: { id: true, username: true, avatarUrl: true } },
+        },
+        take: 5,
+      }),
+      prisma.follow.count({ where: { followingId: userId } }),
+      prisma.follow.count({ where: { followerId: userId } }),
+    ]);
 
     const friendPreviews = friendships.map((f) => {
       const friend = f.requesterId === userId ? f.addressee : f.requester;
@@ -738,9 +773,6 @@ socialRouter.get('/social/stats/me', async (req: Request, res: Response) => {
         avatarColor: 'blue',
       };
     });
-
-    const followerCount = await prisma.follow.count({ where: { followingId: userId } });
-    const followingCount = await prisma.follow.count({ where: { followerId: userId } });
 
     res.json({
       success: true,
@@ -839,8 +871,14 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
     }
     if (cursor) whereClause.createdAt = { lt: new Date(cursor) };
 
+    // Exclude posts authored by blocked users (both directions).
+    const hiddenIds = await getHiddenUserIds(userId);
+    const finalWhere = hiddenIds.length > 0
+      ? { AND: [whereClause, { authorId: { notIn: hiddenIds } }] }
+      : whereClause;
+
     const posts = await prisma.socialPost.findMany({
-      where: whereClause as never,
+      where: finalWhere as never,
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       include: {
@@ -896,6 +934,12 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
       groupId: z.string().uuid().nullable().optional(),
     });
     const { type, caption, visibility, groupId } = schema.parse(req.body);
+
+    // Content moderation (Guideline 1.2): reject objectionable captions.
+    if (containsBlockedContent(caption)) {
+      res.status(400).json({ success: false, error: "Your post contains language that isn't allowed." });
+      return;
+    }
 
     const payloadFields = { ...req.body };
     delete payloadFields.type;
@@ -983,6 +1027,71 @@ socialRouter.post('/social/posts/:id/react', async (req: Request, res: Response)
   }
 });
 
+// ─── Moderation: report & block (Guideline 1.2) ──────────────────────────────
+socialRouter.post('/social/posts/:id/report', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id } = req.params;
+    const schema = z.object({ reason: z.string().max(500).nullable().optional() });
+    const { reason } = schema.parse(req.body);
+
+    const post = await prisma.socialPost.findUnique({ where: { id }, select: { id: true } });
+    if (!post) {
+      res.status(404).json({ success: false, error: 'Post not found' });
+      return;
+    }
+
+    await prisma.postReport.create({
+      data: { postId: id, reportedBy: userId, reason: reason ?? null },
+    });
+    res.json({ success: true, data: { reported: true } });
+  } catch (error) {
+    if (handleZodError(res, error)) return;
+    if (handleAuthError(res, error)) return;
+    console.error('[social/posts/:id/report] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+socialRouter.post('/social/users/:id/block', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id } = req.params;
+    if (id === userId) {
+      res.status(400).json({ success: false, error: 'You cannot block yourself' });
+      return;
+    }
+    const target = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!target) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
+    await prisma.userBlock.upsert({
+      where: { blockerId_blockedId: { blockerId: userId, blockedId: id } },
+      create: { blockerId: userId, blockedId: id },
+      update: {},
+    });
+    res.json({ success: true, data: { blocked: true } });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('[social/users/:id/block POST] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+socialRouter.delete('/social/users/:id/block', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id } = req.params;
+    await prisma.userBlock.deleteMany({ where: { blockerId: userId, blockedId: id } });
+    res.json({ success: true, data: { blocked: false } });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('[social/users/:id/block DELETE] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // ─── Social v2: Search & Follow ──────────────────────────────────────────────
 
 socialRouter.get('/social/search', async (req: Request, res: Response) => {
@@ -994,10 +1103,12 @@ socialRouter.get('/social/search', async (req: Request, res: Response) => {
       return;
     }
 
+    const hiddenIds = await getHiddenUserIds(userId);
     const users = await prisma.user.findMany({
       where: {
         AND: [
           { id: { not: userId } },
+          { id: { notIn: hiddenIds } },
           { username: { contains: query, mode: 'insensitive' } },
         ],
       },
@@ -1143,6 +1254,12 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
         }))
       : false;
 
+    const isBlocked = requestingUserId !== targetId
+      ? !!(await prisma.userBlock.findUnique({
+          where: { blockerId_blockedId: { blockerId: requestingUserId, blockedId: targetId } },
+        }))
+      : false;
+
     const followerCount = await prisma.follow.count({ where: { followingId: targetId } });
     const followingCount = await prisma.follow.count({ where: { followerId: targetId } });
 
@@ -1171,6 +1288,7 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
         followerCount,
         followingCount,
         isFollowing,
+        isBlocked,
         isMe: requestingUserId === targetId,
         recentAchievements: recentAchievements.map((ua) => ({
           ...ua.achievement,

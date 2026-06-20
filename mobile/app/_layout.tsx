@@ -14,6 +14,8 @@ import { useSocialStore } from '../stores/socialStore';
 import { useGoalStore } from '../stores/goalStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { useTheme, useIsDark } from '../hooks/useTheme';
+import * as Notifications from 'expo-notifications';
+import { setupNotifications, subscribeTimerNotifications } from '../services/notifications';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
@@ -115,6 +117,28 @@ export default function RootLayout() {
     }
 
     bootstrap();
+  }, []);
+
+  // Request notification permission once a user is logged in — not on the cold
+  // launch splash. iOS only shows the system prompt once, so timing matters.
+  useEffect(() => {
+    if (user) {
+      setupNotifications();
+    }
+  }, [user]);
+
+  // Local timer notifications: a store observer schedules/cancels them (no timer
+  // logic is modified), plus a listener that routes the user to the timer when
+  // they tap a delivered notification.
+  useEffect(() => {
+    const unsubscribe = subscribeTimerNotifications();
+    const responseSub = Notifications.addNotificationResponseReceivedListener(() => {
+      router.push('/(tabs)');
+    });
+    return () => {
+      unsubscribe();
+      responseSub.remove();
+    };
   }, []);
 
   if (!isReady) {

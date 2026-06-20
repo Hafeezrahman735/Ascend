@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
+import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
 import { handleAuthError } from '../../lib/errors';
 
 export const achievementsRouter = Router();
@@ -9,9 +10,7 @@ achievementsRouter.get('/achievements', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
 
-    const allAchievements = await prisma.achievement.findMany({
-      orderBy: { threshold: 'asc' },
-    });
+    const allAchievements = await ensureAchievementCatalogue();
 
     const userAchievements = await prisma.userAchievement.findMany({
       where: { userId },
@@ -66,9 +65,7 @@ achievementsRouter.get('/achievements/:userId', async (req: Request, res: Respon
       }
     }
 
-    const allAchievements = await prisma.achievement.findMany({
-      orderBy: { threshold: 'asc' },
-    });
+    const allAchievements = await ensureAchievementCatalogue();
 
     const userAchievements = await prisma.userAchievement.findMany({
       where: { userId },

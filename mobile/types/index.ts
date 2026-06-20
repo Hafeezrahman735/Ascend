@@ -312,6 +312,7 @@ export interface PublicUserProfile {
   followerCount: number;
   followingCount: number;
   isFollowing: boolean;
+  isBlocked: boolean;
   isMe: boolean;
   recentAchievements: Achievement[];
 }

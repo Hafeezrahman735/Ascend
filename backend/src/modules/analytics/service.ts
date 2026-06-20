@@ -43,37 +43,34 @@ export async function getFriendSummary(
     }
   }
 
-  const totalSessions = await prisma.session.count({
-    where: { userId: targetUserId, type: 'focus' },
-  });
-
-  const totalSecondsAgg = await prisma.session.aggregate({
-    where: { userId: targetUserId, type: 'focus' },
-    _sum: { durationSeconds: true },
-  });
-  const totalHours = totalSecondsAgg._sum.durationSeconds
-    ? Math.round((totalSecondsAgg._sum.durationSeconds / 3600) * 10) / 10
-    : 0;
-
-  const streak = await prisma.streak.findUnique({ where: { userId: targetUserId } });
-
   const weekStart = new Date();
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
   weekStart.setHours(0, 0, 0, 0);
 
-  const thisWeekSessions = await prisma.session.count({
-    where: {
-      userId: targetUserId,
-      type: 'focus',
-      completedAt: { gte: weekStart },
-    },
-  });
+  // These four reads are independent — run them in parallel and fold the
+  // total-count + total-duration into a single aggregate. Same results, fewer
+  // round-trips, shorter DB compute window.
+  const [totalAgg, streak, thisWeekSessions, oldestSession] = await Promise.all([
+    prisma.session.aggregate({
+      where: { userId: targetUserId, type: 'focus' },
+      _count: true,
+      _sum: { durationSeconds: true },
+    }),
+    prisma.streak.findUnique({ where: { userId: targetUserId } }),
+    prisma.session.count({
+      where: { userId: targetUserId, type: 'focus', completedAt: { gte: weekStart } },
+    }),
+    prisma.session.findFirst({
+      where: { userId: targetUserId, type: 'focus' },
+      orderBy: { completedAt: 'asc' },
+      select: { completedAt: true },
+    }),
+  ]);
 
-  const oldestSession = await prisma.session.findFirst({
-    where: { userId: targetUserId, type: 'focus' },
-    orderBy: { completedAt: 'asc' },
-    select: { completedAt: true },
-  });
+  const totalSessions = totalAgg._count;
+  const totalHours = totalAgg._sum.durationSeconds
+    ? Math.round((totalAgg._sum.durationSeconds / 3600) * 10) / 10
+    : 0;
 
   let averageSessionsPerDay = 0;
   if (oldestSession) {

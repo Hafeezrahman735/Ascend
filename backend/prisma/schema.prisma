@@ -94,6 +94,7 @@ model Session {
 
   @@index([userId, completedAt])
   @@index([taskId])
+  @@index([type, completedAt])
   @@map("sessions")
 }
 
@@ -124,6 +125,7 @@ model GoalProgress {
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, periodStart])
+  @@index([goalId, periodStart])
   @@map("goal_progress")
 }
 
@@ -309,6 +311,31 @@ model SocialPost {
   @@index([groupId, createdAt])
   @@index([createdAt])
   @@map("social_posts")
+}
+
+// Moderation (App Store Guideline 1.2). Standalone tables (no relation fields on
+// User/SocialPost) to keep the schema impact minimal.
+model PostReport {
+  id         String   @id @default(cuid())
+  postId     String   @map("post_id")
+  reportedBy String   @map("reported_by") @db.Uuid
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([postId])
+  @@map("post_reports")
+}
+
+model UserBlock {
+  id        String   @id @default(cuid())
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("user_blocks")
 }
 
 enum PrivacySetting {

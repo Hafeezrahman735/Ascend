@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, Switch, Alert, ActivityIndicator,
-  ScrollView, TextInput, Modal, Pressable,
+  ScrollView, TextInput, Modal, Pressable, Linking,
 } from 'react-native';
+
+// TODO: replace with your real published values before App Store submission.
+const SUPPORT_EMAIL = 'support@ascend-app.com';
+const PRIVACY_POLICY_URL = 'https://ascend-app.com/privacy';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -392,6 +396,21 @@ export default function SettingsScreen() {
         </SettingsCard>
 
         {/* App */}
+        {/* Legal & Support */}
+        <SectionTitle title="Legal & Support" />
+        <SettingsCard>
+          <SettingsRow
+            label="Privacy Policy"
+            onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+          />
+          <Divider />
+          <SettingsRow
+            label="Support"
+            value={SUPPORT_EMAIL}
+            onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)}
+          />
+        </SettingsCard>
+
         <SectionTitle title="App" />
         <SettingsCard>
           <SettingsRow label="Version" value="1.0.0" />

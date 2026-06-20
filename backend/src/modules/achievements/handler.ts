@@ -6,6 +6,7 @@ import {
   EventTypes,
 } from '../../middleware/eventBus';
 import { prisma } from '../../lib/prisma';
+import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
 import { getFriendCount } from '../../services/friendshipService';
 
 export async function checkAchievements(
@@ -15,7 +16,7 @@ export async function checkAchievements(
   totalFocusTime: number,
   level: number,
 ): Promise<{ id: string; key: string; title: string; description: string; icon: string; xpReward: number; category: string; threshold: number; unlockedAt: Date }[]> {
-  const allAchievements = await prisma.achievement.findMany();
+  const allAchievements = await ensureAchievementCatalogue();
   const userAchievements = await prisma.userAchievement.findMany({
     where: { userId },
   });
@@ -80,7 +81,7 @@ export async function handleFriendGoalCompleted(
   payload: FriendGoalCompletedEvent,
 ): Promise<void> {
   const friendIds = payload.friendIds || [];
-  const allAchievements = await prisma.achievement.findMany();
+  const allAchievements = await ensureAchievementCatalogue();
   const accountabilityAchievement = allAchievements.find((a) => a.key === 'accountability-partner');
   if (!accountabilityAchievement) return;
 
@@ -115,10 +116,10 @@ export async function handleSessionCompleted(
 ): Promise<void> {
   const userId = payload.userId;
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
   if (!user) return;
 
-  const allAchievements = await prisma.achievement.findMany();
+  const allAchievements = await ensureAchievementCatalogue();
   const userAchievements = await prisma.userAchievement.findMany({
     where: { userId },
   });
@@ -197,13 +198,13 @@ export async function handleGoalCompleted(
   payload: GoalCompletedEvent,
 ): Promise<void> {
   const userId = payload.userId;
-  const allAchievements = await prisma.achievement.findMany();
+  const allAchievements = await ensureAchievementCatalogue();
   const userAchievements = await prisma.userAchievement.findMany({
     where: { userId },
   });
   const unlockedIds = new Set(userAchievements.map((ua) => ua.achievementId));
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
   if (!user) return;
 
   const friendCount = await getFriendCount(userId);

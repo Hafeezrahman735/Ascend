@@ -30,7 +30,7 @@ export const Config = {
 
   // TODO: Replace with your Expo project ID from https://expo.dev
   // After setting up your Expo account at expo.dev, create a project and paste its ID here
-  EXPO_PROJECT_ID: process.env.EXPO_PUBLIC_EXPO_PROJECT_ID || 'YOUR_EXPO_PROJECT_ID',
+  EXPO_PROJECT_ID: process.env.EXPO_PUBLIC_EXPO_PROJECT_ID,
 
   // Timer defaults
   DEFAULT_FOCUS_MINUTES: 25,

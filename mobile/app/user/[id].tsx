@@ -34,6 +34,7 @@ export default function UserProfileScreen() {
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [followLoading, setFollowLoading] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [postsLoading, setPostsLoading] = useState(false);
 
@@ -60,6 +61,34 @@ export default function UserProfileScreen() {
       if (ok) setProfile((p) => p ? { ...p, isFollowing: true, followerCount: p.followerCount + 1 } : p);
     }
     setFollowLoading(false);
+  };
+
+  const handleToggleBlock = async () => {
+    if (!profile || profile.isMe) return;
+    const blocking = !profile.isBlocked;
+    const run = async () => {
+      setBlockLoading(true);
+      const res = blocking
+        ? await api.post(`/social/users/${profile.id}/block`, {})
+        : await api.delete(`/social/users/${profile.id}/block`);
+      if (res.success) {
+        // Blocking also implicitly stops following so the relationship is clean.
+        setProfile((p) => p ? { ...p, isBlocked: blocking, isFollowing: blocking ? false : p.isFollowing } : p);
+      }
+      setBlockLoading(false);
+    };
+    if (blocking) {
+      Alert.alert(
+        'Block User',
+        `Block ${profile.username}? You won't see their posts and they won't see yours.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Block', style: 'destructive', onPress: run },
+        ],
+      );
+    } else {
+      run();
+    }
   };
 
   const isGold = profile && (profile.rank === 'Champion' || profile.rank === 'Legend');
@@ -98,6 +127,24 @@ export default function UserProfileScreen() {
         <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }} numberOfLines={1}>
           {profile.username}
         </Text>
+        {!profile.isMe && (
+          <Pressable
+            onPress={handleToggleBlock}
+            disabled={blockLoading}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ marginLeft: 12, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            accessibilityLabel={profile.isBlocked ? 'Unblock user' : 'Block user'}
+          >
+            <Ionicons
+              name={profile.isBlocked ? 'ban' : 'ban-outline'}
+              size={18}
+              color={profile.isBlocked ? Colors.error : Colors.subtext}
+            />
+            <Text style={{ color: profile.isBlocked ? Colors.error : Colors.subtext, fontSize: 13, fontWeight: '600' }}>
+              {profile.isBlocked ? 'Unblock' : 'Block'}
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>

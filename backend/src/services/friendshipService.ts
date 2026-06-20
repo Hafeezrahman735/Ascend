@@ -38,22 +38,36 @@ export async function getFriendsWithDetails(userId: string) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  return Promise.all(friendships.map(async (f) => {
-    const friend = f.requesterId === userId ? f.addressee : f.requester;
+  const friendIds = friendships.map((f) =>
+    f.requesterId === userId ? f.addresseeId : f.requesterId,
+  );
 
-    const todaySession = await prisma.session.findFirst({
-      where: { userId: friend.id, type: 'focus', completedAt: { gte: today } },
-      orderBy: { completedAt: 'desc' },
-    });
+  // One query for everyone's focus sessions today (newest first); the first row
+  // seen per user is their latest. Replaces the per-friend N+1 findFirst.
+  const todaySessions = friendIds.length > 0
+    ? await prisma.session.findMany({
+        where: { userId: { in: friendIds }, type: 'focus', completedAt: { gte: today } },
+        orderBy: { completedAt: 'desc' },
+        select: { userId: true, completedAt: true },
+      })
+    : [];
+  const latestByUser = new Map<string, Date>();
+  for (const s of todaySessions) {
+    if (!latestByUser.has(s.userId)) latestByUser.set(s.userId, s.completedAt);
+  }
+
+  return friendships.map((f) => {
+    const friend = f.requesterId === userId ? f.addressee : f.requester;
+    const lastActive = latestByUser.get(friend.id) || null;
 
     return {
       friendshipId: f.id,
       ...friend,
       createdAt: f.createdAt,
-      activeToday: !!todaySession,
-      lastActive: todaySession?.completedAt || null,
+      activeToday: !!lastActive,
+      lastActive,
     };
-  }));
+  });
 }
 
 export async function getFriendSessions(

@@ -7,6 +7,7 @@ import morgan from 'morgan';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { config } from './config';
+import { loadAchievementCatalogue } from './lib/achievementCatalogue';
 import { authenticateMiddleware } from './middleware/auth';
 import { Router } from 'express';
 import { eventBus, EventTypes } from './middleware/eventBus';
@@ -58,7 +59,10 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
-app.use(morgan('dev'));
+// Verbose per-request logging is a dev aid; skip it in production to save CPU/IO.
+if (process.env.NODE_ENV !== 'production') {
+  app.use(morgan('dev'));
+}
 
 // Throttle credential endpoints against brute-force / enumeration.
 const authLimiter = rateLimit({
@@ -145,6 +149,11 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   if (res.headersSent) return;
   res.status(500).json({ success: false, error: 'Internal server error' });
 });
+
+// Warm the static achievement catalogue into memory at boot so session/goal
+// events serve it from RAM instead of re-querying on every request. Non-fatal:
+// the accessor lazy-loads on first use if this fails.
+loadAchievementCatalogue().catch((err) => console.error('Achievement catalogue warm-up failed:', err));
 
 server.listen(Number(config.PORT), () => {
   console.log(`Ascend backend running on port ${config.PORT}`);
