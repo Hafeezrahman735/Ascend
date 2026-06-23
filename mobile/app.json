@@ -19,9 +19,16 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification",
+          "fetch",
+          "remote-notification",
+          "fetch",
+          "remote-notification",
+          "fetch",
+          "remote-notification",
           "fetch"
         ],
-        "NSUserNotificationUsageDescription": "Ascend sends you reminders when your focus session ends and when your friends start focusing."
+        "NSUserNotificationUsageDescription": "Ascend sends you reminders when your focus session ends and when your friends start focusing.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -30,6 +37,9 @@
       },
       "package": "com.hafeezrahman.ascend",
       "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "POST_NOTIFICATIONS"
@@ -45,6 +55,17 @@
         }
       ]
     ],
-    "extra": {}
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e891b005-10df-49b0-9e5a-2eae20e42b11"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/e891b005-10df-49b0-9e5a-2eae20e42b11"
+    }
   }
 }

@@ -502,7 +502,7 @@ export default function TimerScreen() {
           onPress={() => setShowTaskPicker(true)}
           activeOpacity={0.7}
           style={{
-            backgroundColor: 'rgba(16, 16, 58, 0.75)',
+            backgroundColor: Colors.surface,
             borderRadius: 22,
             borderWidth: 1,
             borderColor: Colors.border,

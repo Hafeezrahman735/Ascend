@@ -11,7 +11,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { Swipeable, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 import { Task, TaskGoal, TaskAnalytics, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
-import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { useTheme, useIsDark, type ThemeColors } from '../../hooks/useTheme';
 import { useAppForeground } from '../../hooks/useAppState';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -426,6 +426,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   goals: TaskGoal[]; onSave: (data: FormSaveData) => void; onClose: () => void; onDelete?: () => void;
 }) {
   const Colors = useTheme();
+  const isDark = useIsDark();
   const { ROSE, ROSE_DIM } = Colors;
   const monoLabel = { fontSize: 10, fontWeight: '700' as const, letterSpacing: 1, color: Colors.subtext, marginBottom: 9, fontFamily: MONO };
   const [title, setTitle] = useState('');
@@ -663,7 +664,19 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                 </View>
               )}
 
-              {showDatePicker && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={new Date()} />}
+              {showDatePicker && (
+                <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
+                  <DateTimePicker
+                    value={datePickerValue}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                    onChange={handleDateChange}
+                    minimumDate={new Date()}
+                    themeVariant={isDark ? 'dark' : 'light'}
+                    accentColor={Colors.primary}
+                  />
+                </View>
+              )}
 
               {/* link to goal — no slot in the design; kept here when goals exist */}
               {goals.length > 0 && (
@@ -804,6 +817,7 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
   const isCompleted = task.isCompleted;
   const barColor = isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
   const chip = getDueChip(task, Colors);
+  const prioColor = priorityColor(task.priority);
   const subjectTag = task.tags.length > 0 ? task.tags[0] : null;
   const tagStyle = useTagStyle(subjectTag ?? '');
   const progressFrac = task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
@@ -834,19 +848,28 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
               {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
             </View>
             <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
-            {task.parentTaskId && (
-              <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, marginLeft: 6 }}>
-                <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
+            <View style={{ marginLeft: 6, alignItems: 'flex-end', gap: 4 }}>
+              {(task.parentTaskId || subjectTag) && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {task.parentTaskId && (
+                    <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 }}>
+                      <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
+                    </View>
+                  )}
+                  {subjectTag && (
+                    <TouchableOpacity
+                      onLongPress={() => onLongPressTag?.(subjectTag)} delayLongPress={400}
+                      style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: tagStyle.bg }}
+                    >
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {subjectTag}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+              <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: prioColor + '22' }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
               </View>
-            )}
-            {subjectTag && (
-              <TouchableOpacity
-                onLongPress={() => onLongPressTag?.(subjectTag)} delayLongPress={400}
-                style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, marginLeft: 6, backgroundColor: tagStyle.bg }}
-              >
-                <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {subjectTag}</Text>
-              </TouchableOpacity>
-            )}
+            </View>
           </View>
           {linkedGoal && (
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5 }}>
@@ -2076,15 +2099,18 @@ export default function TasksScreen() {
               <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 10 }}>No tasks yet — tap + to add one</Text>
             </View>
           ) : (<>
-            {activeTask && <View style={{ marginBottom: 12 }}>
-              <GroupHeader dotColor={Colors.primary} label="Active" count={1} />
-              <TaskRow task={activeTask} isActive goals={goals} onTap={() => setStatsTask(activeTask)} onEdit={() => openEdit(activeTask)} onComplete={() => handleComplete(activeTask.id)} onLongPressTag={setOverrideTag} />
-            </View>}
-            {pendingTasks.slice(0, 3).length > 0 && <View style={{ marginBottom: 12 }}>
-              <GroupHeader dotColor={Colors.subtext} label="Pending" count={pendingTasks.length} />
-              {pendingTasks.slice(0, 3).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />)}
-              {pendingTasks.length > 3 && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{pendingTasks.length - 3} more →</Text></TouchableOpacity>}
-            </View>}
+            {(() => {
+              const combined = activeTask ? [activeTask, ...pendingTasks] : pendingTasks;
+              if (combined.length === 0) return null;
+              return (
+                <View style={{ marginBottom: 12 }}>
+                  {combined.slice(0, 4).map((task) => (
+                    <TaskRow key={task.id} task={task} isActive={task.id === activeTask?.id} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
+                  ))}
+                  {combined.length > 4 && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{combined.length - 4} more →</Text></TouchableOpacity>}
+                </View>
+              );
+            })()}
             {doneTasks.slice(0, 2).length > 0 && <View>
               <GroupHeader dotColor={Colors.accent} label="Done" count={doneTasks.length} />
               {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />)}
