@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ascend",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "backgroundColor": "#08081A"
     },
@@ -14,16 +14,14 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.hafeezrahman.ascend",
-      "buildNumber": "1",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
-          "fetch",
-          "remote-notification"
+          "remote-notification",
+          "fetch"
         ],
-        "NSUserNotificationUsageDescription": "Ascend notifies you when your focus session ends so you know when to take a break, even when the app is in the background."
+        "NSUserNotificationUsageDescription": "Ascend sends you reminders when your focus session ends and when your friends start focusing."
       }
     },
     "android": {
@@ -47,10 +45,6 @@
         }
       ]
     ],
-    "extra": {
-      "eas": {
-        "projectId": "e891b005-10df-49b0-9e5a-2eae20e42b11"
-      }
-    }
+    "extra": {}
   }
 }

@@ -9,15 +9,15 @@
 
 import { Platform } from 'react-native';
 
-const LOCAL_IP = '172.16.0.5'; // <-- update this when your IP changes
+const LOCAL_IP = '172.16.0.4'; // <-- update this when your IP changes
 const DEV_API_URL = `http://${LOCAL_IP}:3001`;
 const DEV_WS_URL = `http://${LOCAL_IP}:3001`;
 const DEV_SOCIAL_WS_URL = `http://${LOCAL_IP}:3001`;
 
 // Production URLs — replace with your deployed backend URLs before release
-const PROD_API_URL = 'https://api.pomodoro.app';
-const PROD_WS_URL = 'https://ws.pomodoro.app';
-const PROD_SOCIAL_WS_URL = 'https://social-ws.pomodoro.app';
+const PROD_API_URL = 'https://ascend-backend-production-e719.up.railway.app';
+const PROD_WS_URL = 'https://ascend-backend-production-e719.up.railway.app';
+const PROD_SOCIAL_WS_URL = 'https://ascend-backend-production-e719.up.railway.app';
 
 // Auto-switch between dev and prod based on __DEV__ (Expo global)
 // __DEV__ is true in development builds and Expo Go, false in production builds

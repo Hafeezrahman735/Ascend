@@ -83,13 +83,22 @@ export async function apiRequest<T>(
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  let response = await fetchWithTimeout(url, { ...options, headers });
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, { ...options, headers });
+  } catch {
+    return { success: false, error: 'Network error: Could not reach the server. Check your connection.' };
+  }
 
   if (response.status === 401 && refreshToken) {
     const refreshed = await refreshAccessToken();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${accessToken}`;
-      response = await fetchWithTimeout(url, { ...options, headers });
+      try {
+        response = await fetchWithTimeout(url, { ...options, headers });
+      } catch {
+        return { success: false, error: 'Network error: Could not reach the server. Check your connection.' };
+      }
     }
   }
 
