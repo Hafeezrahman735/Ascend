@@ -79,6 +79,22 @@ export async function clearSessionHistory(): Promise<void> {
   } catch {}
 }
 
+// Drops every locally-cached session belonging to a task. Called when a task is
+// deleted so its focus time leaves the time tracker immediately, without waiting
+// for the next server reconcile.
+export async function removeTaskSessionsFromHistory(taskId: string): Promise<void> {
+  if (!taskId) return;
+  try {
+    const local = await getSessionHistory();
+    const filtered = local.filter((s) => s.taskId !== taskId);
+    if (filtered.length !== local.length) {
+      await AsyncStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(filtered));
+    }
+  } catch (err) {
+    console.warn('[sync] removeTaskSessionsFromHistory failed:', err);
+  }
+}
+
 export async function getDailyAggregate(date?: string): Promise<DailyAggregate | null> {
   try {
     const key = date ? `${DAILY_KEY_PREFIX}${date}` : getTodayKey();
@@ -89,6 +105,18 @@ export async function getDailyAggregate(date?: string): Promise<DailyAggregate |
   }
 }
 
+// Grace window for a just-completed local session whose /timer/complete POST may
+// not have round-tripped to the server yet. Anything older that the server doesn't
+// know about is treated as an orphan and dropped.
+const PENDING_SYNC_GRACE_MS = 15 * 60 * 1000;
+
+// Reconciles local session history against the server, which is the source of
+// truth. The server list replaces local history wholesale; the only local records
+// kept are ones completed within the grace window that the server hasn't confirmed
+// yet (a session the user just finished). This guarantees local history can never
+// silently diverge from the server — stale records from a previous backend, a
+// deleted task, or a failed sync are pruned on the next successful fetch rather
+// than lingering in the time tracker forever.
 export async function mergeWithServerSessions(
   serverSessions: {
     id: string;
@@ -102,38 +130,32 @@ export async function mergeWithServerSessions(
   try {
     const local = await getSessionHistory();
 
-    const localSessionIds = new Set(
-      local.filter((s) => s.sessionId).map((s) => s.sessionId as string),
+    const serverRecords: SessionRecord[] = serverSessions.map((s) => ({
+      sessionId: s.id,
+      completedAt: new Date(s.completedAt).getTime(),
+      durationSeconds: s.durationSeconds,
+      taskLabel: s.taskLabel || null,
+      taskId: s.taskId || null,
+      type: 'focus',
+    }));
+
+    const serverClientIds = new Set(
+      serverSessions.filter((s) => s.clientSessionId).map((s) => s.clientSessionId as string),
     );
-    const localKeys = new Set(
-      local.map((s) => `${s.completedAt}:${s.durationSeconds}:${s.taskId || ''}`),
+    const serverKeys = new Set(
+      serverSessions.map((s) => `${new Date(s.completedAt).getTime()}:${s.durationSeconds}:${s.taskId || ''}`),
     );
 
-    const newFromServer: SessionRecord[] = [];
-    for (const s of serverSessions) {
-      let isDuplicate: boolean;
-      if (s.clientSessionId && localSessionIds.has(s.clientSessionId)) {
-        isDuplicate = true;
-      } else {
-        const key = `${new Date(s.completedAt).getTime()}:${s.durationSeconds}:${s.taskId || ''}`;
-        isDuplicate = localKeys.has(key);
-      }
+    const now = Date.now();
+    const pendingLocal = local.filter((s) => {
+      // Only keep recent, not-yet-confirmed local sessions awaiting their POST.
+      if (now - s.completedAt > PENDING_SYNC_GRACE_MS) return false;
+      if (s.sessionId && serverClientIds.has(s.sessionId)) return false;
+      if (serverKeys.has(`${s.completedAt}:${s.durationSeconds}:${s.taskId || ''}`)) return false;
+      return true;
+    });
 
-      if (!isDuplicate) {
-        newFromServer.push({
-          sessionId: s.id,
-          completedAt: new Date(s.completedAt).getTime(),
-          durationSeconds: s.durationSeconds,
-          taskLabel: s.taskLabel || null,
-          taskId: s.taskId || null,
-          type: 'focus',
-        });
-      }
-    }
-
-    if (newFromServer.length === 0) return;
-
-    const merged = [...local, ...newFromServer]
+    const merged = [...serverRecords, ...pendingLocal]
       .sort((a, b) => b.completedAt - a.completedAt)
       .slice(0, 1000);
 

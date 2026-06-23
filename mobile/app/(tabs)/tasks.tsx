@@ -1786,11 +1786,21 @@ export default function TasksScreen() {
   }, [formTask, taskActions]);
 
   const handleDeleteById = useCallback((taskId: string) => {
-    Alert.alert('Delete Task', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => { await taskActions.deleteTask(taskId); setShowFormModal(false); setFormTask(null); } },
-    ]);
-  }, [taskActions]);
+    Alert.alert(
+      'Delete task?',
+      "This permanently deletes the task and all of its focus sessions. That time is removed from your total focus time and the time tracker. This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: async () => {
+            await taskActions.deleteTask(taskId);
+            setShowFormModal(false); setFormTask(null);
+            // Refresh the local tracker history and server-backed totals.
+            loadSessionHistory();
+            useGamificationStore.getState().fetchProfile();
+          } },
+      ],
+    );
+  }, [taskActions, loadSessionHistory]);
 
   const handleComplete = useCallback(async (taskId: string) => {
     const task = tasks.find((t) => t.id === taskId);

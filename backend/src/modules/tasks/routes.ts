@@ -441,12 +441,38 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
+      // Remove this task's focus-session stats from the user's all-time totals,
+      // then delete the sessions so they leave the time tracker and analytics.
+      const agg = await prisma.session.aggregate({
+        where: { taskId: id, userId, type: 'focus' },
+        _sum: { durationSeconds: true },
+        _count: true,
+      });
+      const removedSeconds = agg._sum.durationSeconds ?? 0;
+      const removedCount = agg._count ?? 0;
+
+      await prisma.session.deleteMany({ where: { taskId: id, userId } });
+
+      if (removedSeconds > 0 || removedCount > 0) {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { totalFocusTime: true, totalSessions: true },
+        });
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            totalFocusTime: Math.max(0, (user?.totalFocusTime ?? 0) - removedSeconds),
+            totalSessions: Math.max(0, (user?.totalSessions ?? 0) - removedCount),
+          },
+        });
+      }
+
       await prisma.task.update({
         where: { id },
         data: { isArchived: true },
       });
 
-      res.json({ success: true, data: null });
+      res.json({ success: true, data: { removedSeconds, removedCount } });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('Delete task error:', err);
