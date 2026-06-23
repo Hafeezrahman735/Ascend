@@ -3,15 +3,16 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   View, Text, TouchableOpacity, ScrollView, Modal, TextInput,
   Alert, Platform, Dimensions, PanResponder, Animated,
-  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator,
+  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Swipeable, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
-import { Task, TaskGoal, TaskAnalytics } from '../../types';
+import { Task, TaskGoal, TaskAnalytics, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { useAppForeground } from '../../hooks/useAppState';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
@@ -34,6 +35,8 @@ import { calcDaysUntilDue } from '../../store/selectors/tasks';
 // them from `Colors` (AMBER maps to Colors.warning to preserve the exact dark hue).
 const SCREEN_H = Dimensions.get('window').height;
 const SCREEN_W = Dimensions.get('window').width;
+// Monospace family for stat numerals / section labels (matches the design's JetBrains Mono).
+const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const DAY_LABELS = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
 const PRIORITIES = [
   { value: 'low', label: 'Low' },
@@ -41,6 +44,7 @@ const PRIORITIES = [
   { value: 'high', label: 'High' },
   { value: 'urgent', label: 'Urgent' },
 ] as const;
+const ALL_DAYS: DayOfWeek[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 // ─── Date helpers (no date-fns) ───────────────────────────────────────────────
 function getDateStr(date: Date): string {
@@ -70,10 +74,6 @@ function filterByPeriod(sessions: SessionRecord[], period: string): SessionRecor
   if (period === 'week')  return sessions.filter((s) => isThisWeek(s.completedAt));
   if (period === 'month') return sessions.filter((s) => isThisMonth(s.completedAt));
   return sessions;
-}
-function formatFocusTime(minutes: number): string {
-  const h = Math.floor(minutes / 60); const m = Math.round(minutes % 60);
-  if (h > 0 && m > 0) return `${h}h ${m}m`; if (h > 0) return `${h}h`; return `${m}m`;
 }
 function formatSeconds(seconds: number): string {
   const h = Math.floor(seconds / 3600); const m = Math.round((seconds % 3600) / 60);
@@ -208,26 +208,15 @@ function BottomSheet({ visible, onClose, children, sheetHeight }: {
           <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
         </TouchableWithoutFeedback>
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
-          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, minHeight: sheetHeight }}>
-            <View {...panResponder.panHandlers} style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, minHeight: sheetHeight }}>
+            <View {...panResponder.panHandlers} style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+              <View style={{ width: 38, height: 4, borderRadius: 3, backgroundColor: Colors.inactive }} />
             </View>
             {children}
           </View>
         </View>
       </View>
     </Modal>
-  );
-}
-
-// ─── StatRow ──────────────────────────────────────────────────────────────────
-function StatRow({ label, value }: { label: string; value: string }) {
-  const Colors = useTheme();
-  return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '500' }}>{label}</Text>
-      <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>{value}</Text>
-    </View>
   );
 }
 
@@ -246,14 +235,35 @@ function ZoneHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => voi
   );
 }
 
+// ─── StatBox ──────────────────────────────────────────────────────────────────
+// One cell of the task-stats grid. `big` renders a headline numeral (display font);
+// otherwise a compact mono value. Featured cells pass a tinted bg + colored border.
+function StatBox({ bg, border, icon, iconColor, label, labelColor, value, sub, big, Colors }: {
+  bg: string; border: string; icon: keyof typeof Ionicons.glyphMap; iconColor: string;
+  label: string; labelColor: string; value: string; sub?: string; big?: boolean; Colors: ThemeColors;
+}) {
+  return (
+    <View style={{ flexGrow: 1, flexBasis: '47%', backgroundColor: bg, borderWidth: 1, borderColor: border, borderRadius: 15, padding: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+        <Ionicons name={icon} size={14} color={iconColor} />
+        <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1, color: labelColor, fontFamily: MONO }}>{label}</Text>
+      </View>
+      <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: big ? 30 : 19, letterSpacing: big ? -1 : 0, fontFamily: big ? undefined : MONO }}>{value}</Text>
+      {sub && <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 3 }}>{sub}</Text>}
+    </View>
+  );
+}
+
 // ─── TaskStatsModal ───────────────────────────────────────────────────────────
-function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onToggleComplete }: {
+function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onToggleComplete, onEdit }: {
   task: Task | null; sessionLengthMinutes: number;
   onClose: () => void; onLoadTimer: (taskId: string) => void; onToggleComplete: (taskId: string) => void;
+  onEdit: (taskId: string) => void;
 }) {
   const Colors = useTheme();
   const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
   const [analyticsError, setAnalyticsError] = useState(false);
+  const [recurringStreak, setRecurringStreak] = useState(0);
 
   useEffect(() => {
     if (!task) return;
@@ -263,73 +273,105 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
       .catch(() => setAnalyticsError(true));
   }, [task?.id]);
 
+  // Recurring instances carry their streak on the parent template.
+  useEffect(() => {
+    setRecurringStreak(0);
+    if (task?.parentTaskId) {
+      useTaskStore.getState().fetchTemplateStreak(task.parentTaskId).then(setRecurringStreak);
+    }
+  }, [task?.parentTaskId]);
+
   const subjectTag = task?.tags[0] ?? null;
   const tagStyle = useTagStyle(subjectTag ?? '');
 
   if (!task) return null;
   const isPending = !task.isCompleted;
+  const prioColor = priorityColor(task.priority);
   const progressFrac = task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
+  // Until analytics land, the server-derived cells show an em-dash; sessions come from the task itself.
+  const ready = !!analytics;
+  const val = (v: string) => (ready ? v : '—');
 
   return (
-    <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.58}>
+    <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.66}>
+      {/* header */}
       <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '700', flex: 1, marginRight: 12 }} numberOfLines={2}>{task.title}</Text>
-          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={Colors.subtext} /></TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 11 }}>
+          <Text numberOfLines={2} style={{ flex: 1, marginRight: 12, color: Colors.textBright, fontSize: 19, fontWeight: '700', lineHeight: 24, letterSpacing: -0.3 }}>{task.title}</Text>
+          <TouchableOpacity onPress={onClose} style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="close" size={16} color={Colors.subtext} />
+          </TouchableOpacity>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {subjectTag && (
-            <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: tagStyle.bg }}>
+            <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: tagStyle.bg }}>
               <Text style={{ fontSize: 11, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {subjectTag}</Text>
             </View>
           )}
-          <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: priorityColor(task.priority) + '25' }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: priorityColor(task.priority) }}>{priorityLabel(task.priority)}</Text>
+          <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: prioColor + '22' }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
           </View>
         </View>
       </View>
-      <View style={{ height: 0.5, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 12 }} />
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }} showsVerticalScrollIndicator={false}>
-        <View style={{ marginBottom: 12 }}>
-          <Text style={{ color: Colors.textBright, fontSize: 26, fontWeight: '700' }}>{task.sessionsOnTask}</Text>
-          <Text style={{ color: Colors.subtext, fontSize: 12 }}>sessions completed</Text>
+      <View style={{ height: 1, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
+        {/* stat grid */}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginBottom: 16 }}>
+          <StatBox big bg={Colors.primaryDim} border={Colors.primary} icon="timer-outline" iconColor={Colors.primarySoft} label="SESSIONS" labelColor={Colors.primarySoft} value={String(task.sessionsOnTask)} sub="completed" Colors={Colors} />
+          <StatBox big bg={Colors.tealDim} border={Colors.accent} icon="checkmark-done-outline" iconColor={Colors.accent} label="COMPLETION" labelColor={Colors.accent} value={val(`${analytics?.completionRate ?? 0}%`)} sub="done / planned" Colors={Colors} />
+          <StatBox bg={Colors.raised} border={Colors.border} icon="time-outline" iconColor={Colors.subtext} label="TOTAL FOCUS" labelColor={Colors.subtext} value={val(formatSeconds(analytics?.totalTimeAllTime ?? 0))} Colors={Colors} />
+          <StatBox bg={Colors.raised} border={Colors.border} icon="pulse-outline" iconColor={Colors.subtext} label="AVG SESSION" labelColor={Colors.subtext} value={val(formatSeconds(analytics?.avgSessionLength ?? 0))} Colors={Colors} />
+          <StatBox bg={Colors.raised} border={Colors.border} icon="sunny-outline" iconColor={Colors.warning} label="PEAK HOUR" labelColor={Colors.subtext} value={val(analytics?.mostProductiveHour?.label ?? '—')} Colors={Colors} />
+          <StatBox bg={Colors.raised} border={Colors.border} icon="locate-outline" iconColor={Colors.subtext} label="EST. ACCURACY" labelColor={Colors.subtext} value={val(analytics?.estimationAccuracy != null ? `${analytics.estimationAccuracy}%` : '—')} Colors={Colors} />
         </View>
-        {analytics ? (
-          <View style={{ backgroundColor: Colors.raised, borderRadius: 14, padding: 14, borderWidth: 0.5, borderColor: Colors.border, marginBottom: 12, gap: 8 }}>
-            <StatRow label="Total focus time" value={formatSeconds(analytics.totalTimeAllTime)} />
-            <StatRow label="Avg session" value={formatSeconds(analytics.avgSessionLength)} />
-            <StatRow label="Completion rate" value={`${analytics.completionRate}%`} />
-            {analytics.mostProductiveHour && <StatRow label="Peak focus hour" value={analytics.mostProductiveHour.label} />}
-            {analytics.estimationAccuracy != null && <StatRow label="Est. accuracy" value={`${analytics.estimationAccuracy}%`} />}
-          </View>
-        ) : analyticsError ? (
-          <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>Analytics unavailable — try again</Text>
-        ) : (
-          <ActivityIndicator color={Colors.primary} style={{ marginBottom: 12 }} />
-        )}
-        {progressFrac !== null && (
-          <View style={{ marginBottom: 12 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-              <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600' }}>Time progress</Text>
-              <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '700' }}>{Math.round(progressFrac * 100)}%</Text>
+        {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: 12 }} />}
+        {analyticsError && <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>Analytics unavailable — try again later.</Text>}
+
+        {/* recurring streak — only on recurring instances */}
+        {task.parentTaskId && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 28 }}>🔥</Text>
+              <View>
+                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring Streak</Text>
+                <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Consecutive days completed</Text>
+              </View>
             </View>
-            <View style={{ height: 8, backgroundColor: Colors.inactive, borderRadius: 4, overflow: 'hidden' }}>
+            <Text style={{ color: Colors.primarySoft, fontSize: 32, fontWeight: '800' }}>{recurringStreak}</Text>
+          </View>
+        )}
+
+        {/* time progress */}
+        {progressFrac !== null && (
+          <View style={{ marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600' }}>Time progress</Text>
+              <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600', fontFamily: MONO }}>{Math.round(progressFrac * 100)}%</Text>
+            </View>
+            <View style={{ height: 8, backgroundColor: Colors.raised, borderRadius: 4, overflow: 'hidden' }}>
               <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 4, backgroundColor: task.isCompleted ? Colors.accent : Colors.primary }} />
             </View>
-            <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 4 }}>{formatSeconds(task.totalTimeOnTask)} of {task.estimatedMinutes}m estimated</Text>
+            <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 6, fontFamily: MONO }}>{formatSeconds(task.totalTimeOnTask)} of {task.estimatedMinutes}m estimated</Text>
           </View>
         )}
       </ScrollView>
-      <View style={{ paddingHorizontal: 20, paddingBottom: 28, paddingTop: 12, borderTopWidth: 0.5, borderTopColor: Colors.border }}>
+
+      {/* footer */}
+      <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 28 }}>
         {isPending ? (
-          <TouchableOpacity style={{ backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }} onPress={() => { onLoadTimer(task.id); onClose(); }}>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Load into Timer</Text>
+          <TouchableOpacity onPress={() => { onLoadTimer(task.id); onClose(); }} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15 }}>
+            <Ionicons name="play" size={15} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Load into Timer</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={{ borderRadius: 14, paddingVertical: 13, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }} onPress={() => { onToggleComplete(task.id); onClose(); }}>
-            <Text style={{ color: Colors.subtext, fontSize: 15, fontWeight: '600' }}>Mark Incomplete</Text>
+          <TouchableOpacity onPress={() => { onToggleComplete(task.id); onClose(); }} style={{ borderRadius: 14, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}>
+            <Text style={{ color: Colors.subtext, fontSize: 14, fontWeight: '600' }}>Mark Incomplete</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity onPress={() => onEdit(task.id)} style={{ alignItems: 'center', marginTop: 12 }}>
+          <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '500' }}>Edit task details</Text>
+        </TouchableOpacity>
       </View>
     </BottomSheet>
   );
@@ -377,6 +419,7 @@ type FormSaveData = {
   title: string; description?: string | null; dueDate?: string | null;
   tags?: string[]; estimatedMinutes?: number | null;
   priority?: 'low' | 'medium' | 'high' | 'urgent'; taskGoalId?: string | null;
+  isRecurring?: boolean; recurringDays?: DayOfWeek[];
 };
 function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goals, onSave, onClose, onDelete }: {
   visible: boolean; task: Task | null; existingTags: string[]; sessionLengthMinutes: number;
@@ -384,7 +427,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
 }) {
   const Colors = useTheme();
   const { ROSE, ROSE_DIM } = Colors;
-  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const monoLabel = { fontSize: 10, fontWeight: '700' as const, letterSpacing: 1, color: Colors.subtext, marginBottom: 9, fontFamily: MONO };
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -393,18 +436,42 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
   const [taskGoalId, setTaskGoalId] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState('');
+  const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGoalPicker, setShowGoalPicker] = useState(false);
   const [titleError, setTitleError] = useState(false);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringDays, setRecurringDays] = useState<DayOfWeek[]>([]); // empty = every day
+  const [editingTemplate, setEditingTemplate] = useState<Task | null>(null);
 
   useEffect(() => {
     if (visible) {
       setTitle(task?.title ?? ''); setDescription(task?.description ?? '');
       setDueDate(task?.dueDate ?? ''); setTags(task?.tags ?? []);
       setEstimatedMinutes(task?.estimatedMinutes ?? 0); setPriority(task?.priority ?? 'medium');
-      setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTitleError(false);
+      setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTagEditorOpen(false); setTitleError(false);
+      // Recurring lives on the template; an instance carries it via parentTaskId.
+      setIsRecurring(task?.isRecurring ?? false);
+      setRecurringDays(task?.recurringDays ?? []);
+      setEditingTemplate(null);
     }
   }, [visible, task]);
+
+  // Editing a recurring instance — load the parent template's recurring settings.
+  useEffect(() => {
+    if (visible && task?.parentTaskId) {
+      api.get<Task>(`/tasks/${task.parentTaskId}`)
+        .then((res) => { if (res.success && res.data) setEditingTemplate(res.data); })
+        .catch(() => {});
+    }
+  }, [visible, task?.parentTaskId]);
+
+  useEffect(() => {
+    if (editingTemplate) {
+      setIsRecurring(editingTemplate.isRecurring);
+      setRecurringDays(editingTemplate.recurringDays ?? []);
+    }
+  }, [editingTemplate]);
 
   const allTagChips = useMemo(() => Array.from(new Set([...existingTags, ...tags])), [existingTags, tags]);
   const toggleTag = (tag: string) => setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
@@ -423,9 +490,12 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       if (newEst !== (task.estimatedMinutes ?? null)) update.estimatedMinutes = newEst;
       if (priority !== task.priority) update.priority = priority;
       if (taskGoalId !== (task.taskGoalId ?? null)) update.taskGoalId = taskGoalId;
+      // Always carry recurring settings — the screen routes them to the template.
+      update.isRecurring = isRecurring;
+      update.recurringDays = recurringDays;
       onSave(update);
     } else {
-      onSave({ title: title.trim(), description: description.trim() || undefined, dueDate: dueDate || undefined, tags, estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : undefined, priority, taskGoalId });
+      onSave({ title: title.trim(), description: description.trim() || undefined, dueDate: dueDate || undefined, tags, estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : undefined, priority, taskGoalId, isRecurring, recurringDays });
     }
   };
 
@@ -436,90 +506,196 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
     if (date) setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
 
+  const estSessions = estimatedMinutes > 0 && sessionLengthMinutes > 0 ? Math.max(1, Math.round(estimatedMinutes / sessionLengthMinutes)) : 0;
+
   return (
-    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'center' }} pointerEvents="box-none">
-        <TouchableOpacity activeOpacity={1} style={{ marginHorizontal: 20 }}>
-          <View style={{ backgroundColor: Colors.surface, borderRadius: 20, height: SCREEN_H * 0.84, overflow: 'hidden' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}>
-              <TouchableOpacity onPress={onClose}><Text style={{ color: Colors.subtext, fontSize: 15, fontWeight: '500' }}>Cancel</Text></TouchableOpacity>
-              <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{task ? 'Edit Task' : 'New Task'}</Text>
-              <TouchableOpacity onPress={handleSave}><Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Save</Text></TouchableOpacity>
+    <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
+      <View style={{ flex: 1 }}>
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(2,2,12,0.62)' }]} />
+        </TouchableWithoutFeedback>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, maxHeight: SCREEN_H * 0.92 }}>
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+              <View style={{ width: 38, height: 4, borderRadius: 3, backgroundColor: Colors.inactive }} />
             </View>
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE, borderWidth: 1.5 }]} placeholder="What are you working on?" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={100} returnKeyType="next" />
-              {titleError && <Text style={{ color: ROSE, fontSize: 11, marginTop: -8, marginBottom: 12 }}>Task name can't be empty</Text>}
-              <Text style={styles.fieldLabel}>Priority</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+            {/* header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 14 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 19, fontWeight: '700', letterSpacing: -0.3 }}>{task ? 'Edit task' : 'New task'}</Text>
+              <TouchableOpacity onPress={onClose} style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="close" size={16} color={Colors.subtext} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 26 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {/* title */}
+              <TextInput
+                style={[{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 15, paddingVertical: 15, color: Colors.textBright, fontSize: 15, fontWeight: '600', marginBottom: titleError ? 6 : 18 }, titleError && { borderColor: ROSE, borderWidth: 1.5 }]}
+                placeholder="What are you working on?" placeholderTextColor={Colors.subtext}
+                value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={100} returnKeyType="next"
+              />
+              {titleError && <Text style={{ color: ROSE, fontSize: 11, marginBottom: 18 }}>Task name can't be empty</Text>}
+
+              {/* priority */}
+              <Text style={monoLabel}>PRIORITY</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
                 {PRIORITIES.map(({ value, label }) => { const sel = priority === value; const color = priorityColor(value); return (
-                  <TouchableOpacity key={value} onPress={() => setPriority(value)} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center', backgroundColor: sel ? color + '25' : Colors.raised, borderWidth: 1.5, borderColor: sel ? color : Colors.border }}>
-                    <Text style={{ color: sel ? color : Colors.subtext, fontSize: 11, fontWeight: '700' }}>{label}</Text>
+                  <TouchableOpacity key={value} onPress={() => setPriority(value)} style={{ flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10, backgroundColor: sel ? color + '22' : Colors.raised, borderWidth: 1, borderColor: sel ? color : 'transparent' }}>
+                    <Text style={{ color, fontSize: 12, fontWeight: sel ? '700' : '600' }}>{label}</Text>
                   </TouchableOpacity>
                 ); })}
               </View>
-              <Text style={styles.fieldLabel}>Subject / Tags</Text>
-              {allTagChips.length > 0 && (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                  {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
-                    <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
-                      <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
-                    </TouchableOpacity>
-                  ); })}
-                </ScrollView>
-              )}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder="Add tag…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
-                <TouchableOpacity style={{ width: 36, height: 44, borderRadius: 10, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }} onPress={addCustomTag}>
-                  <Ionicons name="add" size={18} color={Colors.primarySoft} />
-                </TouchableOpacity>
+
+              {/* recurring toggle */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, marginBottom: isRecurring ? 4 : 18 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring</Text>
+                  <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Repeats automatically each day</Text>
+                </View>
+                <Switch
+                  value={isRecurring}
+                  onValueChange={(val) => { setIsRecurring(val); if (!val) setRecurringDays([]); }}
+                  trackColor={{ false: Colors.inactive, true: Colors.primary }}
+                  thumbColor="#FFFFFF"
+                />
               </View>
-              <Text style={styles.fieldLabel}>Estimated focus time</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-                <TouchableOpacity style={[styles.stepper, { opacity: estimatedMinutes <= 0 ? 0.3 : 1 }]} disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))}>
+
+              {/* day selector — only when recurring is on */}
+              {isRecurring && (
+                <View style={{ marginBottom: 18 }}>
+                  <Text style={[monoLabel, { marginTop: 8 }]}>REPEAT ON</Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {ALL_DAYS.map((day) => {
+                      const isSelected = recurringDays.length === 0 || recurringDays.includes(day);
+                      return (
+                        <TouchableOpacity
+                          key={day}
+                          onPress={() => {
+                            if (recurringDays.length === 0) {
+                              // Currently "every day" — deselect this one.
+                              setRecurringDays(ALL_DAYS.filter((d) => d !== day));
+                            } else if (recurringDays.includes(day)) {
+                              const next = recurringDays.filter((d) => d !== day);
+                              setRecurringDays(next.length === 0 ? [] : next);
+                            } else {
+                              const next = [...recurringDays, day];
+                              setRecurringDays(next.length === 7 ? [] : next);
+                            }
+                          }}
+                          style={{ flex: 1, aspectRatio: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: isSelected ? Colors.primary : Colors.border }}
+                        >
+                          <Text style={{ color: isSelected ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{DOW_LABELS[day]}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 8 }}>
+                    {recurringDays.length === 0 ? 'Every day' : recurringDays.map((d) => DAY_FULL_LABELS[d]).join(', ')}
+                  </Text>
+                </View>
+              )}
+
+              {/* estimated focus time */}
+              <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+                <TouchableOpacity disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes <= 0 ? 0.4 : 1 }}>
                   <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
                 </TouchableOpacity>
-                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700', width: 88, textAlign: 'center' }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
-                <TouchableOpacity style={[styles.stepper, { opacity: estimatedMinutes >= 480 ? 0.3 : 1 }]} disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))}>
+                <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '600', minWidth: 84, textAlign: 'center', fontFamily: MONO }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
+                <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
                   <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
                 </TouchableOpacity>
-                {estimatedMinutes > 0 && <Text style={{ color: Colors.subtext, fontSize: 11, marginLeft: 12 }}>≈ {formatFocusTime(estimatedMinutes)}</Text>}
+                {estSessions > 0 && <Text style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}>≈ {estSessions} session{estSessions !== 1 ? 's' : ''}</Text>}
               </View>
-              <Text style={styles.fieldLabel}>Due date</Text>
-              {dueDate ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: Colors.primaryDim, marginRight: 8 }}>
-                    <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} style={{ marginRight: 6 }} />
-                    <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '600' }}>Due {new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setDueDate('')}><Ionicons name="close-circle" size={18} color={Colors.subtext} /></TouchableOpacity>
+
+              {/* due date + subject */}
+              <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={monoLabel}>DUE DATE</Text>
+                  {dueDate ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+                        <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
+                        <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setDueDate('')}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+                      <Ionicons name="calendar-outline" size={14} color={Colors.subtext} />
+                      <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>Set date</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-              ) : (
-                <TouchableOpacity style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: 16 }]} onPress={() => setShowDatePicker(true)}>
-                  <Ionicons name="calendar-outline" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
-                  <Text style={{ color: Colors.subtext, fontSize: 14 }}>Set due date</Text>
-                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={monoLabel}>SUBJECT</Text>
+                  <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap' }}>
+                    {tags.map((t) => (
+                      <TouchableOpacity key={t} onPress={() => toggleTag(t)} style={{ backgroundColor: Colors.primaryDim, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.primarySoft }}>{t}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity onPress={() => setTagEditorOpen((v) => !v)} style={{ backgroundColor: Colors.raised, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.subtext }}>+ Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+
+              {/* subject editor (revealed by "+ Add") */}
+              {tagEditorOpen && (
+                <View style={{ marginBottom: 18 }}>
+                  {allTagChips.length > 0 && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                      {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
+                        <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
+                          <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
+                        </TouchableOpacity>
+                      ); })}
+                    </View>
+                  )}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New subject…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
+                    <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="add" size={18} color={Colors.primarySoft} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
               )}
+
               {showDatePicker && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={new Date()} />}
-              {goals.length > 0 && (<>
-                <Text style={styles.fieldLabel}>Link to goal</Text>
-                <TouchableOpacity onPress={() => setShowGoalPicker(true)} style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: 16 }]}>
-                  <Ionicons name="flag-outline" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
-                  <Text style={{ color: selectedGoal ? Colors.primarySoft : Colors.subtext, fontSize: 14, flex: 1 }} numberOfLines={1}>{selectedGoal ? selectedGoal.title : 'None'}</Text>
-                  <Ionicons name="chevron-forward" size={14} color={Colors.subtext} />
-                </TouchableOpacity>
-              </>)}
-              <Text style={styles.fieldLabel}>Notes</Text>
-              <TextInput style={[styles.input, { minHeight: 72, textAlignVertical: 'top' }]} placeholder="Any notes for this task…" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline numberOfLines={3} />
+
+              {/* link to goal — no slot in the design; kept here when goals exist */}
+              {goals.length > 0 && (
+                <View style={{ marginBottom: 18 }}>
+                  <Text style={monoLabel}>GOAL</Text>
+                  <TouchableOpacity onPress={() => setShowGoalPicker(true)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13 }}>
+                    <Ionicons name="flag-outline" size={15} color={Colors.subtext} style={{ marginRight: 8 }} />
+                    <Text style={{ flex: 1, color: selectedGoal ? Colors.primarySoft : Colors.subtext, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{selectedGoal ? selectedGoal.title : 'Link to a goal (optional)'}</Text>
+                    <Ionicons name="chevron-forward" size={14} color={Colors.subtext} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* notes */}
+              <Text style={monoLabel}>NOTES</Text>
+              <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="Any notes for this task…" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
+
+              {/* create / save */}
+              <TouchableOpacity onPress={handleSave} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15 }}>
+                <Ionicons name={task ? 'checkmark' : 'add'} size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{task ? 'Save changes' : 'Create task'}</Text>
+              </TouchableOpacity>
+
               {task && onDelete && (
-                <TouchableOpacity style={{ marginTop: 8, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: ROSE_DIM, borderWidth: 0.5, borderColor: ROSE + '40' }} onPress={onDelete}>
+                <TouchableOpacity onPress={onDelete} style={{ marginTop: 12, paddingVertical: 13, borderRadius: 12, alignItems: 'center', backgroundColor: ROSE_DIM, borderWidth: 0.5, borderColor: ROSE + '40' }}>
                   <Text style={{ color: ROSE, fontWeight: '700', fontSize: 14 }}>Delete Task</Text>
                 </TouchableOpacity>
               )}
             </ScrollView>
           </View>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </View>
       <GoalPickerModal visible={showGoalPicker} goals={goals.filter((g) => !g.isCompleted)} selectedGoalId={taskGoalId} onSelect={setTaskGoalId} onClose={() => setShowGoalPicker(false)} />
     </Modal>
   );
@@ -658,6 +834,11 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
               {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
             </View>
             <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
+            {task.parentTaskId && (
+              <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, marginLeft: 6 }}>
+                <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
+              </View>
+            )}
             {subjectTag && (
               <TouchableOpacity
                 onLongPress={() => onLongPressTag?.(subjectTag)} delayLongPress={400}
@@ -1430,7 +1611,14 @@ export default function TasksScreen() {
     if (useTaskStore.getState().tasks.length === 0) {
       useTaskStore.getState().hydrateTasks(userId).then(() => useTaskStore.getState().fetchTasks(true));
     }
+    // Safety net — spawn today's recurring instances if boot missed it.
+    useTaskStore.getState().spawnRecurringTasks();
   }, []);
+
+  // When the app returns to foreground, spawn for a potentially new day.
+  useAppForeground(() => {
+    useTaskStore.getState().spawnRecurringTasks();
+  });
 
   const loadSessionHistory = useCallback(async () => {
     try {
@@ -1549,8 +1737,28 @@ export default function TasksScreen() {
 
   const handleFormSave = useCallback(async (data: FormSaveData) => {
     setShowFormModal(false);
-    if (formTask) await taskActions.updateTask(formTask.id, data as any);
-    else await taskActions.createTask(data as any);
+    const { isRecurring, recurringDays, ...rest } = data;
+    if (formTask) {
+      if (formTask.parentTaskId) {
+        // Editing a recurring instance: recurring settings live on the template.
+        await api.patch(`/tasks/${formTask.parentTaskId}`, {
+          isRecurring,
+          recurringDays,
+          title: rest.title,
+          estimatedMinutes: rest.estimatedMinutes,
+          priority: rest.priority,
+          tags: rest.tags,
+        });
+        await useTaskStore.getState().fetchRecurringTemplates();
+        // Still apply edits to the visible instance itself.
+        await taskActions.updateTask(formTask.id, rest as any);
+      } else {
+        // Regular task — pass recurring through so it can be promoted to recurring.
+        await taskActions.updateTask(formTask.id, data as any);
+      }
+    } else {
+      await taskActions.createTask(data as any);
+    }
     setFormTask(null);
   }, [formTask, taskActions]);
 
@@ -1742,7 +1950,7 @@ export default function TasksScreen() {
             <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
           ))}
         </ScrollView>
-        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} />}
+        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
         <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
         <Toast message={toast} />
@@ -1957,7 +2165,7 @@ export default function TasksScreen() {
       </ScrollView>
 
       {/* Modals */}
-      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} />}
+      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
       <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
       <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} />
       <DayDetailSheet dateStr={calDay} tasks={nonArchived} onClose={() => setCalDay(null)} />

@@ -102,6 +102,7 @@ export default function RootLayout() {
         // Non-blocking background refresh after Stack mounts.
         if (useAuthStore.getState().user) {
           useTaskStore.getState().fetchTasks(true);
+          useTaskStore.getState().spawnRecurringTasks();
           useGoalStore.getState().fetchGoals(true);
           useGamificationStore.getState().fetchProfile();
           useGamificationStore.getState().fetchAchievements();

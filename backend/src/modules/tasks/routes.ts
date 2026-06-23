@@ -5,6 +5,20 @@ import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 
 const PRIORITY_VALUES = ['low', 'medium', 'high', 'urgent'] as const;
+const DAY_VALUES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+// Maps a Date to its lowercase 3-letter weekday name (matches recurringDays values).
+function getDayName(date: Date): string {
+  return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][date.getDay()];
+}
+
+// Returns the [start, end) UTC-day bounds for an ISO date string 'YYYY-MM-DD'.
+function dayBounds(isoDate: string): { start: Date; end: Date } {
+  const start = new Date(`${isoDate}T00:00:00.000Z`);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start, end };
+}
 
 const createTaskSchema = z.object({
   title: z.string().min(1).max(100),
@@ -13,6 +27,8 @@ const createTaskSchema = z.object({
   tags: z.array(z.string().max(30)).max(10).optional().default([]),
   estimatedMinutes: z.number().int().min(1).optional().nullable(),
   priority: z.enum(PRIORITY_VALUES).optional().default('medium'),
+  isRecurring: z.boolean().optional().default(false),
+  recurringDays: z.array(z.enum(DAY_VALUES)).max(7).optional().default([]),
 });
 
 const updateTaskSchema = z.object({
@@ -26,6 +42,8 @@ const updateTaskSchema = z.object({
   completedAt: z.string().optional().nullable(),
   taskGoalId: z.string().optional().nullable(),
   order: z.number().int().optional().nullable(),
+  isRecurring: z.boolean().optional(),
+  recurringDays: z.array(z.enum(DAY_VALUES)).max(7).optional(),
 });
 
 export function setupTaskRoutes(router: Router): void {
@@ -44,8 +62,40 @@ export function setupTaskRoutes(router: Router): void {
           tags: data.tags,
           estimatedMinutes: data.estimatedMinutes || null,
           priority: data.priority,
+          isRecurring: data.isRecurring,
+          recurringDays: data.recurringDays,
         },
       });
+
+      // If recurring, spawn today's instance immediately so it shows up right away.
+      if (data.isRecurring) {
+        const today = new Date().toISOString().split('T')[0];
+        const todayDayName = getDayName(new Date());
+        const shouldSpawnToday =
+          data.recurringDays.length === 0 || data.recurringDays.includes(todayDayName as typeof DAY_VALUES[number]);
+
+        if (shouldSpawnToday) {
+          await prisma.task.create({
+            data: {
+              userId,
+              title: data.title,
+              description: data.description || null,
+              tags: data.tags,
+              estimatedMinutes: data.estimatedMinutes || null,
+              priority: data.priority,
+              dueDate: new Date(today),
+              parentTaskId: task.id,
+              isRecurring: false, // instances are not themselves recurring
+              recurringDays: [],
+            },
+          });
+
+          await prisma.task.update({
+            where: { id: task.id },
+            data: { lastSpawnedDate: today },
+          });
+        }
+      }
 
       res.json({ success: true, data: task });
     } catch (err) {
@@ -64,7 +114,8 @@ export function setupTaskRoutes(router: Router): void {
       const userId = authenticate(req);
 
       const tasks = await prisma.task.findMany({
-        where: { userId, isArchived: false },
+        // Exclude recurring templates — they are definitions, not actionable tasks.
+        where: { userId, isArchived: false, isRecurring: false },
         orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
       });
 
@@ -72,6 +123,97 @@ export function setupTaskRoutes(router: Router): void {
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('List tasks error:', err);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Returns all recurring templates for the current user (manage/edit screen).
+  // Registered before '/tasks/:id' so 'recurring' is not captured as an id.
+  router.get('/tasks/recurring', async (req: Request, res: Response) => {
+    try {
+      const userId = authenticate(req);
+      const templates = await prisma.task.findMany({
+        where: { userId, isRecurring: true, isArchived: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      res.json({ success: true, data: templates });
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      console.error('List recurring templates error:', err);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Spawns today's instances for all recurring templates not yet spawned today.
+  // Called on app boot, task screen mount, and foreground. Idempotent.
+  router.post('/tasks/spawn-recurring', async (req: Request, res: Response) => {
+    try {
+      const userId = authenticate(req);
+      const today = new Date().toISOString().split('T')[0];
+      const todayDayName = getDayName(new Date());
+
+      const templates = await prisma.task.findMany({
+        where: {
+          userId,
+          isRecurring: true,
+          isArchived: false,
+          isCompleted: false,
+          NOT: { lastSpawnedDate: today },
+        },
+      });
+
+      const { start, end } = dayBounds(today);
+      const spawned: string[] = [];
+
+      for (const template of templates) {
+        const shouldSpawn =
+          template.recurringDays.length === 0 ||
+          template.recurringDays.includes(todayDayName);
+        if (!shouldSpawn) continue;
+
+        // Safety check — never create a duplicate instance for today.
+        const existing = await prisma.task.findFirst({
+          where: {
+            userId,
+            parentTaskId: template.id,
+            dueDate: { gte: start, lt: end },
+          },
+        });
+        if (existing) {
+          await prisma.task.update({
+            where: { id: template.id },
+            data: { lastSpawnedDate: today },
+          });
+          continue;
+        }
+
+        await prisma.task.create({
+          data: {
+            userId,
+            title: template.title,
+            description: template.description,
+            tags: template.tags,
+            estimatedMinutes: template.estimatedMinutes,
+            priority: template.priority,
+            dueDate: new Date(today),
+            parentTaskId: template.id,
+            isRecurring: false,
+            recurringDays: [],
+          },
+        });
+
+        await prisma.task.update({
+          where: { id: template.id },
+          data: { lastSpawnedDate: today },
+        });
+
+        spawned.push(template.id);
+      }
+
+      res.json({ success: true, data: { spawned: spawned.length, templateIds: spawned } });
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      console.error('Spawn recurring error:', err);
       res.status(500).json({ success: false, error: 'Internal server error' });
     }
   });
@@ -237,11 +379,44 @@ export function setupTaskRoutes(router: Router): void {
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
       if (data.taskGoalId  !== undefined) updateData.taskGoalId  = data.taskGoalId ?? null;
       if (data.order       !== undefined) updateData.order       = data.order ?? null;
+      if (data.isRecurring   !== undefined) updateData.isRecurring   = data.isRecurring;
+      if (data.recurringDays !== undefined) updateData.recurringDays = data.recurringDays;
 
       const task = await prisma.task.update({
         where: { id },
         data: updateData,
       });
+
+      // Recurring streak: lives on the template, driven by instance completion.
+      if (task.parentTaskId && data.isCompleted === true) {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+        const { start, end } = dayBounds(yesterdayStr);
+
+        const template = await prisma.task.findUnique({ where: { id: task.parentTaskId } });
+        if (template) {
+          // Did yesterday's instance get completed? If so the streak continues.
+          const yesterdayInstance = await prisma.task.findFirst({
+            where: {
+              parentTaskId: template.id,
+              isCompleted: true,
+              dueDate: { gte: start, lt: end },
+            },
+          });
+          const newStreak = yesterdayInstance ? template.recurringStreak + 1 : 1;
+          await prisma.task.update({
+            where: { id: template.id },
+            data: { recurringStreak: newStreak },
+          });
+        }
+      } else if (task.parentTaskId && data.isCompleted === false) {
+        // Uncompleting breaks the streak — reset the template to 0.
+        await prisma.task.update({
+          where: { id: task.parentTaskId },
+          data: { recurringStreak: 0 },
+        });
+      }
 
       res.json({ success: true, data: task });
     } catch (err) {

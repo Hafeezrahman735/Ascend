@@ -119,6 +119,28 @@ export interface AnalyticsSummary {
   longestStreak: number;
 }
 
+export type DayOfWeek = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
+
+export const DAY_LABELS: Record<DayOfWeek, string> = {
+  sun: 'S',
+  mon: 'M',
+  tue: 'T',
+  wed: 'W',
+  thu: 'T',
+  fri: 'F',
+  sat: 'S',
+};
+
+export const DAY_FULL_LABELS: Record<DayOfWeek, string> = {
+  sun: 'Sun',
+  mon: 'Mon',
+  tue: 'Tue',
+  wed: 'Wed',
+  thu: 'Thu',
+  fri: 'Fri',
+  sat: 'Sat',
+};
+
 export interface Task {
   id: string;
   title: string;
@@ -137,6 +159,13 @@ export interface Task {
   estimationAccuracy?: number | null;
   taskGoalId?: string | null;
   order?: number | null;
+
+  // Recurring task fields
+  isRecurring: boolean;
+  recurringDays: DayOfWeek[]; // empty array = every day
+  lastSpawnedDate: string | null;
+  parentTaskId: string | null;
+  recurringStreak: number; // on templates: consecutive days completed
 }
 
 export interface TaskGoal {

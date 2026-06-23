@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
-import { Task } from '../types';
+import { Task, DayOfWeek } from '../types';
 import { useAuthStore } from './authStore';
 
 const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
@@ -35,7 +35,12 @@ function normalizeTask(t: Task): Task {
     priority: t.priority ?? 'medium',
     sessionsOnTask: t.sessionsOnTask ?? 0,
     totalTimeOnTask: t.totalTimeOnTask ?? 0,
-    sessionDates: t.sessionDates ?? [],
+    sessionDates: Array.isArray(t.sessionDates) ? t.sessionDates : [],
+    isRecurring: t.isRecurring ?? false,
+    recurringDays: t.recurringDays ?? [],
+    lastSpawnedDate: t.lastSpawnedDate ?? null,
+    parentTaskId: t.parentTaskId ?? null,
+    recurringStreak: t.recurringStreak ?? 0,
   };
 }
 
@@ -49,6 +54,7 @@ function isTempId(id: string): boolean {
 
 interface TaskStoreState {
   tasks: Task[];
+  recurringTemplates: Task[];
   selectedTaskId: string | null;
   isLoading: boolean;
   error: string | null;
@@ -61,6 +67,9 @@ interface TaskStoreState {
     dueDate?: string;
     tags?: string[];
     estimatedMinutes?: number;
+    priority?: 'low' | 'medium' | 'high' | 'urgent';
+    isRecurring?: boolean;
+    recurringDays?: DayOfWeek[];
   }) => Promise<Task | null>;
   updateTask: (id: string, data: Partial<{
     title: string;
@@ -74,10 +83,14 @@ interface TaskStoreState {
   incrementTaskSession: (id: string, duration: number) => void;
   toggleComplete: (id: string) => Promise<void>;
   clearTasks: (userId?: string) => Promise<void>;
+  spawnRecurringTasks: () => Promise<void>;
+  fetchRecurringTemplates: () => Promise<void>;
+  fetchTemplateStreak: (parentTaskId: string) => Promise<number>;
 }
 
 export const useTaskStore = create<TaskStoreState>((set, get) => ({
   tasks: [],
+  recurringTemplates: [],
   selectedTaskId: null,
   isLoading: false,
   error: null,
@@ -141,13 +154,18 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       dueDate: data.dueDate || undefined,
       tags: data.tags || [],
       estimatedMinutes: data.estimatedMinutes || undefined,
-      priority: 'medium',
+      priority: data.priority ?? 'medium',
       isArchived: false,
       isCompleted: false,
       createdAt: new Date().toISOString(),
       sessionsOnTask: 0,
       totalTimeOnTask: 0,
       sessionDates: [],
+      isRecurring: data.isRecurring ?? false,
+      recurringDays: data.recurringDays ?? [],
+      lastSpawnedDate: null,
+      parentTaskId: null,
+      recurringStreak: 0,
     };
     const withTemp = [tempTask, ...get().tasks];
     set({ tasks: withTemp });
@@ -157,6 +175,16 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       const res = await api.post<Task>('/tasks', data);
       if (res.success && res.data) {
         const confirmed = normalizeTask(res.data);
+        // Recurring tasks: the POST returns the TEMPLATE, which must never appear in
+        // the list. Drop the temp task and refetch — the backend already spawned
+        // today's instance, so fetchTasks pulls it in (templates are filtered out).
+        if (confirmed.isRecurring) {
+          const withoutTemp = get().tasks.filter((t) => t.id !== tempId);
+          set({ tasks: withoutTemp });
+          persistTasks(withoutTemp, userId);
+          await get().fetchTasks(true);
+          return confirmed;
+        }
         // fetchTasks may have run while the POST was in flight, evicting the temp task.
         const current = get().tasks;
         const hasTemp = current.some((t) => t.id === tempId);
@@ -275,9 +303,44 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
 
   clearTasks: async (userId?: string) => {
     const resolvedUserId = userId ?? useAuthStore.getState().user?.id;
-    set({ tasks: [], selectedTaskId: null, isLoading: false, error: null });
+    set({ tasks: [], recurringTemplates: [], selectedTaskId: null, isLoading: false, error: null });
     if (resolvedUserId) {
       AsyncStorage.removeItem(TASKS_CACHE_KEY(resolvedUserId)).catch(() => {});
+    }
+  },
+
+  // Asks the backend to spawn today's instances for any recurring templates that
+  // haven't spawned yet today. Non-critical and never throws.
+  spawnRecurringTasks: async () => {
+    try {
+      const res = await api.post<{ spawned: number; templateIds: string[] }>('/tasks/spawn-recurring', {});
+      if (res.success && res.data && res.data.spawned > 0) {
+        await get().fetchTasks(true);
+        console.log('[taskStore] spawned', res.data.spawned, 'recurring instances');
+      }
+    } catch (err) {
+      console.warn('[taskStore] spawnRecurringTasks failed:', err);
+    }
+  },
+
+  fetchRecurringTemplates: async () => {
+    try {
+      const res = await api.get<Task[]>('/tasks/recurring');
+      if (res.success && res.data) {
+        set({ recurringTemplates: normalizeTasks(res.data) });
+      }
+    } catch (err) {
+      console.warn('[taskStore] fetchRecurringTemplates failed:', err);
+    }
+  },
+
+  // Reads the recurring streak off the parent template. Returns 0 on any failure.
+  fetchTemplateStreak: async (parentTaskId: string): Promise<number> => {
+    try {
+      const res = await api.get<Task>(`/tasks/${parentTaskId}`);
+      return (res.success && res.data?.recurringStreak) || 0;
+    } catch {
+      return 0;
     }
   },
 }));

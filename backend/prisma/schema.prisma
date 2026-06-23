@@ -200,11 +200,24 @@ model Task {
   updatedAt        DateTime  @updatedAt @map("updated_at")
   order            Int?
   taskGoalId       String?   @map("task_goal_id")
+
+  // Recurring task fields
+  isRecurring      Boolean   @default(false) @map("is_recurring")
+  recurringDays    String[]  @default([]) @map("recurring_days")
+  // Valid values: 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'. Empty array means every day.
+  lastSpawnedDate  String?   @map("last_spawned_date")
+  // ISO date string 'YYYY-MM-DD' — the last date an instance was spawned (lives on the template)
+  parentTaskId     String?   @map("parent_task_id")
+  // If set, this task is an instance spawned from the template with this ID
+  recurringStreak  Int       @default(0) @map("recurring_streak")
+  // Consecutive days the recurring task was completed — lives on the TEMPLATE
+
   sessions         Session[] @relation("TaskSessions")
   taskGoal         TaskGoal? @relation(fields: [taskGoalId], references: [id])
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([parentTaskId])
   @@map("tasks")
 }
 
