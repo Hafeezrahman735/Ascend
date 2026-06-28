@@ -9,6 +9,7 @@ export const EventTypes = {
   FEED_CREATE: 'feed.create',
   FRIEND_REQUEST_SENT: 'friend_request.sent',
   FRIEND_REQUEST_ACCEPTED: 'friend_request.accepted',
+  POST_CREATED: 'post.created',
 } as const;
 
 export interface SessionCompletedEvent {
@@ -73,6 +74,14 @@ export interface FriendRequestAcceptedEvent {
   addresseeId: string;
   requesterUsername: string;
   addresseeUsername: string;
+}
+
+export interface PostCreatedEvent {
+  postId: string;
+  authorId: string;
+  authorUsername: string;
+  type: string;
+  caption: string | null;
 }
 
 export const eventBus = new EventEmitter();

@@ -5,6 +5,7 @@ import {
   AchievementUnlockedEvent,
   FriendSessionStartedEvent,
   FriendGoalCompletedEvent,
+  PostCreatedEvent,
 } from '../../middleware/eventBus';
 import { prisma } from '../../lib/prisma';
 import { shouldNotify } from './service';
@@ -136,6 +137,30 @@ export async function handleAllNotifications(
         'Friend Hit Their Goal!',
         `A friend just completed their ${p.goalType} goal!`,
         'friend.goal_completed',
+      );
+      break;
+    }
+    case 'post.created': {
+      const p = payload as PostCreatedEvent;
+      // Notify everyone who follows the author. Gated by the 'friends' pref
+      // (Friend Activity toggle) per follower inside storeAndNotify.
+      const followers = await prisma.follow.findMany({
+        where: { followingId: p.authorId },
+        select: { followerId: true },
+      });
+      const preview = p.caption?.trim()
+        ? `"${p.caption.trim().slice(0, 80)}"`
+        : 'Tap to see what they shared.';
+      await Promise.all(
+        followers.map((f) =>
+          storeAndNotify(
+            f.followerId,
+            'friend_post',
+            `${p.authorUsername} shared a post`,
+            preview,
+            'post.created',
+          ),
+        ),
       );
       break;
     }

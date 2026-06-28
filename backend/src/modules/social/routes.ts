@@ -15,6 +15,13 @@ function getAvatarEmoji(seed: string): string {
   return AVATAR_EMOJIS[h % AVATAR_EMOJIS.length];
 }
 
+// The user's chosen avatar (User.avatarEmoji) is the source of truth everywhere.
+// Falls back to a deterministic emoji derived from the user id — the SAME seed
+// and table the mobile client uses for un-picked users, so they always match.
+function resolveAvatar(stored: string | null | undefined, userId: string): string {
+  return stored && stored.trim() ? stored : getAvatarEmoji(userId);
+}
+
 function getRankTitle(xp: number): string {
   if (xp >= 10000) return 'Champion';
   if (xp >= 5000) return 'Legend';
@@ -429,29 +436,40 @@ socialRouter.get('/social/friends/:id/profile', async (req: Request, res: Respon
 
     const isSelf = requestingUserId === targetUserId;
 
-    if (!isSelf) {
-      const targetUser = await prisma.user.findUnique({
-        where: { id: targetUserId },
-        select: { privacySetting: true },
-      });
-      if (!targetUser) {
-        res.status(404).json({ success: false, error: 'User not found' });
-        return;
-      }
+    // Privacy flags drive access (publicProfile / privacySetting), stat
+    // visibility (shareFocusStats) and activity visibility (friendsCanSeeActivity).
+    const privacy = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        privacySetting: true,
+        publicProfile: true,
+        shareFocusStats: true,
+        friendsCanSeeActivity: true,
+      },
+    });
+    if (!privacy) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
 
-      if (targetUser.privacySetting === 'private') {
+    const friendIds = isSelf ? [] : await getFriendIds(requestingUserId);
+    const isFriend = isSelf || friendIds.includes(targetUserId);
+
+    if (!isSelf) {
+      if (privacy.privacySetting === 'private') {
         res.status(403).json({ success: false, error: 'This profile is private' });
         return;
       }
-
-      if (targetUser.privacySetting === 'friends_only') {
-        const friendIds = await getFriendIds(requestingUserId);
-        if (!friendIds.includes(targetUserId)) {
-          res.status(403).json({ success: false, error: 'This profile is friends only' });
-          return;
-        }
+      // Profile hidden from non-friends when privacy is friends-only or the
+      // Public Profile toggle is off.
+      if ((privacy.privacySetting === 'friends_only' || !privacy.publicProfile) && !isFriend) {
+        res.status(403).json({ success: false, error: 'This profile is friends only' });
+        return;
       }
     }
+
+    const hideStats = !isSelf && !privacy.shareFocusStats;
+    const hideActivity = !isSelf && !privacy.friendsCanSeeActivity;
 
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
@@ -480,7 +498,7 @@ socialRouter.get('/social/friends/:id/profile', async (req: Request, res: Respon
       },
     });
 
-    const recentFeedEvents = await prisma.feedEvent.findMany({
+    const recentFeedEvents = hideActivity ? [] : await prisma.feedEvent.findMany({
       where: { userId: targetUserId },
       orderBy: { createdAt: 'desc' },
       take: 3,
@@ -490,7 +508,8 @@ socialRouter.get('/social/friends/:id/profile', async (req: Request, res: Respon
       success: true,
       data: {
         ...user,
-        totalFocusTime: user.totalFocusTime,
+        totalSessions: hideStats ? 0 : user.totalSessions,
+        totalFocusTime: hideStats ? 0 : user.totalFocusTime,
         recentAchievements: recentAchievements.map((ua) => ({
           ...ua.achievement,
           isUnlocked: true,
@@ -513,6 +532,21 @@ socialRouter.get('/social/friends/:id/profile', async (req: Request, res: Respon
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+// Returns the subset of `userIds` whose owners allow leaderboard visibility.
+// The requesting user is always kept so they can see their own rank.
+async function visibleLeaderboardIds(userIds: string[], requesterId: string): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, showOnLeaderboard: true },
+  });
+  const visible = new Set<string>();
+  for (const u of users) {
+    if (u.showOnLeaderboard || u.id === requesterId) visible.add(u.id);
+  }
+  return visible;
+}
 
 socialRouter.get('/social/leaderboard', async (req: Request, res: Response) => {
   try {
@@ -541,8 +575,12 @@ socialRouter.get('/social/leaderboard', async (req: Request, res: Response) => {
         filtered = streaks.filter((s) => friendSet.has(s.userId));
       }
 
-      const userRank = streaks.findIndex((s) => s.userId === userId) + 1;
-      const myEntry = streaks.find((s) => s.userId === userId);
+      // Drop users who opted out of the leaderboard (self always kept).
+      const visible = await visibleLeaderboardIds(filtered.map((s) => s.userId), userId);
+      filtered = filtered.filter((s) => visible.has(s.userId));
+
+      const userRank = filtered.findIndex((s) => s.userId === userId) + 1;
+      const myEntry = filtered.find((s) => s.userId === userId);
 
       const entries = filtered.map((s, index) => ({
         rank: index + 1,
@@ -586,13 +624,17 @@ socialRouter.get('/social/leaderboard', async (req: Request, res: Response) => {
       sessionWhere.userId = { in: friendIds };
     }
 
-    const results = await prisma.session.groupBy({
+    const rawResults = await prisma.session.groupBy({
       by: ['userId'],
       where: sessionWhere as never,
       _sum: { durationSeconds: true },
       orderBy: { _sum: { durationSeconds: 'desc' } },
       take: 100,
     });
+
+    // Drop users who opted out of the leaderboard (self always kept).
+    const visibleXp = await visibleLeaderboardIds(rawResults.map((r) => r.userId), userId);
+    const results = rawResults.filter((r) => visibleXp.has(r.userId));
 
     const userIdsInResults = results.map((r) => r.userId);
     const users = await prisma.user.findMany({
@@ -644,7 +686,7 @@ socialRouter.get('/social/leaderboard/weekly', async (req: Request, res: Respons
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     weekStart.setHours(0, 0, 0, 0);
 
-    const results = await prisma.session.groupBy({
+    const rawResults = await prisma.session.groupBy({
       by: ['userId'],
       where: {
         type: 'focus',
@@ -655,6 +697,9 @@ socialRouter.get('/social/leaderboard/weekly', async (req: Request, res: Respons
       orderBy: { _count: { id: 'desc' } },
       take: 100,
     });
+
+    const visibleWeekly = await visibleLeaderboardIds(rawResults.map((r) => r.userId), userId);
+    const results = rawResults.filter((r) => visibleWeekly.has(r.userId));
 
     const userIds = results.map((r) => r.userId);
     const users = await prisma.user.findMany({
@@ -690,13 +735,15 @@ socialRouter.get('/social/leaderboard/streak', async (req: Request, res: Respons
   try {
     const userId = authenticate(req);
 
-    const streaks = await prisma.streak.findMany({
+    const rawStreaks = await prisma.streak.findMany({
       orderBy: { currentStreak: 'desc' },
       take: 100,
       include: {
-        user: { select: { id: true, username: true, avatarUrl: true } },
+        user: { select: { id: true, username: true, avatarUrl: true, showOnLeaderboard: true } },
       },
     });
+
+    const streaks = rawStreaks.filter((s) => s.user.showOnLeaderboard || s.userId === userId);
 
     const userRank = streaks.findIndex((s) => s.userId === userId) + 1;
 
@@ -802,7 +849,7 @@ socialRouter.get('/social/posts/mine', async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true, xp: true, currentStreak: true },
+      select: { id: true, username: true, xp: true, currentStreak: true, avatarEmoji: true },
     });
 
     const where: Record<string, unknown> = { authorId: userId };
@@ -821,7 +868,7 @@ socialRouter.get('/social/posts/mine', async (req: Request, res: Response) => {
       id: p.id,
       authorId: p.authorId,
       authorName: user?.username ?? 'Unknown',
-      authorEmoji: getAvatarEmoji(p.authorId),
+      authorEmoji: resolveAvatar(user?.avatarEmoji, p.authorId),
       authorRank: getRankTitle(user?.xp ?? 0),
       type: p.type,
       caption: p.caption,
@@ -882,7 +929,7 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       include: {
-        author: { select: { id: true, username: true, xp: true } },
+        author: { select: { id: true, username: true, xp: true, avatarEmoji: true } },
       },
     });
 
@@ -901,7 +948,7 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
       id: p.id,
       authorId: p.authorId,
       authorName: p.author.username,
-      authorEmoji: getAvatarEmoji(p.authorId),
+      authorEmoji: resolveAvatar(p.author.avatarEmoji, p.authorId),
       authorRank: getRankTitle(p.author.xp),
       type: p.type,
       caption: p.caption,
@@ -950,7 +997,7 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { username: true, xp: true, currentStreak: true },
+      select: { username: true, xp: true, currentStreak: true, avatarEmoji: true },
     });
 
     const post = await prisma.socialPost.create({
@@ -971,13 +1018,25 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
       groupName = g?.name;
     }
 
+    // Notify the author's followers about a new public post. Group-only posts
+    // stay within the group and don't fan out to followers.
+    if (post.visibility === 'public') {
+      eventBus.emit(EventTypes.POST_CREATED, {
+        postId: post.id,
+        authorId: userId,
+        authorUsername: user?.username ?? 'Someone',
+        type: post.type,
+        caption: post.caption,
+      });
+    }
+
     res.status(201).json({
       success: true,
       data: {
         id: post.id,
         authorId: post.authorId,
         authorName: user?.username ?? 'Unknown',
-        authorEmoji: getAvatarEmoji(post.authorId),
+        authorEmoji: resolveAvatar(user?.avatarEmoji, post.authorId),
         authorRank: getRankTitle(user?.xp ?? 0),
         type: post.type,
         caption: post.caption,
@@ -1112,7 +1171,7 @@ socialRouter.get('/social/search', async (req: Request, res: Response) => {
           { username: { contains: query, mode: 'insensitive' } },
         ],
       },
-      select: { id: true, username: true, avatarUrl: true, level: true },
+      select: { id: true, username: true, avatarUrl: true, level: true, avatarEmoji: true },
       take: 20,
     });
 
@@ -1126,7 +1185,7 @@ socialRouter.get('/social/search', async (req: Request, res: Response) => {
       id: u.id,
       username: u.username,
       avatarUrl: u.avatarUrl,
-      avatarEmoji: getAvatarEmoji(u.id),
+      avatarEmoji: resolveAvatar(u.avatarEmoji, u.id),
       level: u.level,
       isFollowing: followingSet.has(u.id),
     }));
@@ -1188,14 +1247,14 @@ socialRouter.get('/social/followers', async (req: Request, res: Response) => {
     const userId = authenticate(req);
     const follows = await prisma.follow.findMany({
       where: { followingId: userId },
-      include: { follower: { select: { id: true, username: true, xp: true } } },
+      include: { follower: { select: { id: true, username: true, xp: true, avatarEmoji: true } } },
       orderBy: { createdAt: 'desc' },
     });
     const data = follows.map((f) => ({
       userId: f.follower.id,
       displayName: f.follower.username,
       handle: f.follower.username,
-      avatarEmoji: getAvatarEmoji(f.follower.id),
+      avatarEmoji: resolveAvatar(f.follower.avatarEmoji, f.follower.id),
       rank: getRankTitle(f.follower.xp),
     }));
     res.json({ success: true, data });
@@ -1210,14 +1269,14 @@ socialRouter.get('/social/following', async (req: Request, res: Response) => {
     const userId = authenticate(req);
     const follows = await prisma.follow.findMany({
       where: { followerId: userId },
-      include: { following: { select: { id: true, username: true, xp: true } } },
+      include: { following: { select: { id: true, username: true, xp: true, avatarEmoji: true } } },
       orderBy: { createdAt: 'desc' },
     });
     const data = follows.map((f) => ({
       userId: f.following.id,
       displayName: f.following.username,
       handle: f.following.username,
-      avatarEmoji: getAvatarEmoji(f.following.id),
+      avatarEmoji: resolveAvatar(f.following.avatarEmoji, f.following.id),
       rank: getRankTitle(f.following.xp),
     }));
     res.json({ success: true, data });
@@ -1240,7 +1299,7 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
         id: true, username: true, avatarUrl: true, level: true, xp: true,
         currentStreak: true, longestStreak: true,
         totalSessions: true, totalFocusTime: true,
-        privacySetting: true,
+        privacySetting: true, shareFocusStats: true, avatarEmoji: true,
       },
     });
     if (!user) {
@@ -1253,6 +1312,9 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
           where: { followerId_followingId: { followerId: requestingUserId, followingId: targetId } },
         }))
       : false;
+
+    // Hide focus stats from non-followers when the user keeps them private.
+    const hideStats = requestingUserId !== targetId && !user.shareFocusStats && !isFollowing;
 
     const isBlocked = requestingUserId !== targetId
       ? !!(await prisma.userBlock.findUnique({
@@ -1278,13 +1340,13 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
         id: user.id,
         username: user.username,
         avatarUrl: user.avatarUrl,
-        avatarEmoji: getAvatarEmoji(user.id),
+        avatarEmoji: resolveAvatar(user.avatarEmoji, user.id),
         level: user.level,
         rank: getRankTitle(user.xp),
         currentStreak: user.currentStreak,
         longestStreak: user.longestStreak,
-        totalSessions: user.totalSessions,
-        totalFocusTime: user.totalFocusTime,
+        totalSessions: hideStats ? 0 : user.totalSessions,
+        totalFocusTime: hideStats ? 0 : user.totalFocusTime,
         followerCount,
         followingCount,
         isFollowing,
@@ -1493,7 +1555,7 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
       const sessionWhere: Record<string, unknown> = { type: 'focus', completedAt: { gte: sinceDate } };
       if (scopeUserIds) sessionWhere.userId = { in: scopeUserIds };
 
-      const results = await prisma.session.groupBy({
+      const rawResults = await prisma.session.groupBy({
         by: ['userId'],
         where: sessionWhere as never,
         _sum: { durationSeconds: true },
@@ -1501,10 +1563,13 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
         take: 100,
       });
 
+      const visibleMonth = await visibleLeaderboardIds(rawResults.map((r) => r.userId), userId);
+      const results = rawResults.filter((r) => visibleMonth.has(r.userId));
+
       const userIds = results.map((r) => r.userId);
       const users = await prisma.user.findMany({
         where: { id: { in: userIds } },
-        select: { id: true, username: true, xp: true, currentStreak: true },
+        select: { id: true, username: true, xp: true, currentStreak: true, avatarEmoji: true },
       });
       const userMap = new Map(users.map((u) => [u.id, u]));
 
@@ -1513,7 +1578,7 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
         return {
           userId: r.userId,
           displayName: u?.username ?? 'Unknown',
-          avatarEmoji: getAvatarEmoji(r.userId),
+          avatarEmoji: resolveAvatar(u?.avatarEmoji, r.userId),
           rank: getRankTitle(u?.xp ?? 0),
           currentStreak: u?.currentStreak ?? 0,
           focusMinutes: Math.floor((r._sum.durationSeconds ?? 0) / 60),
@@ -1525,9 +1590,13 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
     } else {
       // All-time board: rank straight from User.totalFocusTime so EVERY user appears,
       // no dependence on session rows in a time window.
+      // Hide users who opted out of the leaderboard, but always include self.
+      const visibilityWhere = { OR: [{ showOnLeaderboard: true }, { id: userId }] };
       const users = await prisma.user.findMany({
-        where: scopeUserIds ? { id: { in: scopeUserIds } } : undefined,
-        select: { id: true, username: true, xp: true, currentStreak: true, totalFocusTime: true },
+        where: scopeUserIds
+          ? { AND: [{ id: { in: scopeUserIds } }, visibilityWhere] }
+          : visibilityWhere,
+        select: { id: true, username: true, xp: true, currentStreak: true, totalFocusTime: true, avatarEmoji: true },
         orderBy: { totalFocusTime: 'desc' },
         take: 100,
       });
@@ -1535,7 +1604,7 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
       entries = users.map((u, idx) => ({
         userId: u.id,
         displayName: u.username,
-        avatarEmoji: getAvatarEmoji(u.id),
+        avatarEmoji: resolveAvatar(u.avatarEmoji, u.id),
         rank: getRankTitle(u.xp ?? 0),
         currentStreak: u.currentStreak ?? 0,
         focusMinutes: Math.floor((u.totalFocusTime ?? 0) / 60),

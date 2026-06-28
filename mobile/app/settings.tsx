@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, Switch, Alert, ActivityIndicator,
-  ScrollView, TextInput, Modal, Pressable, Linking,
+  ScrollView, TextInput, Modal, Pressable, Linking, Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 // TODO: replace with your real published values before App Store submission.
 const SUPPORT_EMAIL = 'support@ascend-app.com';
@@ -24,6 +25,12 @@ const AVATAR_EMOJIS = [
   '🐼', '🦄', '🐧', '🦭', '🐯', '🦦',
   '🐨', '🦩', '🐝', '🐲', '🦕', '🐬',
 ];
+
+function formatReminderTime(hour: number, minute: number): string {
+  const period = hour >= 12 ? 'PM' : 'AM';
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}:${String(minute).padStart(2, '0')} ${period}`;
+}
 
 function Divider() {
   const Colors = useTheme();
@@ -113,6 +120,7 @@ export default function SettingsScreen() {
   const [deleteText, setDeleteText] = useState('');
   const [editDisplayName, setEditDisplayName] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState('');
+  const [showReminderPicker, setShowReminderPicker] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -282,7 +290,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.publicProfile}
-                onValueChange={(v) => user && settings.update(user.id, { publicProfile: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { publicProfile: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -294,7 +302,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.showOnLeaderboard}
-                onValueChange={(v) => user && settings.update(user.id, { showOnLeaderboard: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { showOnLeaderboard: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -306,7 +314,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.shareFocusStats}
-                onValueChange={(v) => user && settings.update(user.id, { shareFocusStats: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { shareFocusStats: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -318,7 +326,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.friendsCanSeeActivity}
-                onValueChange={(v) => user && settings.update(user.id, { friendsCanSeeActivity: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { friendsCanSeeActivity: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -334,7 +342,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.notifySessionComplete}
-                onValueChange={(v) => user && settings.update(user.id, { notifySessionComplete: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { notifySessionComplete: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -343,22 +351,34 @@ export default function SettingsScreen() {
           <Divider />
           <SettingsRow
             label="Daily Reminder"
+            subtitle="A nudge to focus every day"
             rightComponent={
               <Switch
                 value={settings.notifyDailyReminder}
-                onValueChange={(v) => user && settings.update(user.id, { notifyDailyReminder: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { notifyDailyReminder: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
             }
           />
+          {settings.notifyDailyReminder ? (
+            <>
+              <Divider />
+              <SettingsRow
+                label="Reminder Time"
+                value={formatReminderTime(settings.dailyReminderHour, settings.dailyReminderMinute)}
+                onPress={() => setShowReminderPicker(true)}
+              />
+            </>
+          ) : null}
           <Divider />
           <SettingsRow
             label="Friend Activity"
+            subtitle="Friends focusing, hitting goals & new posts"
             rightComponent={
               <Switch
                 value={settings.notifyFriendActivity}
-                onValueChange={(v) => user && settings.update(user.id, { notifyFriendActivity: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { notifyFriendActivity: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -370,7 +390,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.notifyAchievements}
-                onValueChange={(v) => user && settings.update(user.id, { notifyAchievements: v })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { notifyAchievements: v }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -387,7 +407,7 @@ export default function SettingsScreen() {
             rightComponent={
               <Switch
                 value={settings.theme === 'light'}
-                onValueChange={(v) => user && settings.update(user.id, { theme: v ? 'light' : 'dark' })}
+                onValueChange={(v) => { if (user) settings.update(user.id, { theme: v ? 'light' : 'dark' }); }}
                 trackColor={{ false: Colors.inactive, true: Colors.primary }}
                 thumbColor="white"
               />
@@ -439,6 +459,72 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </SettingsCard>
       </ScrollView>
+
+      {/* Daily Reminder Time Picker */}
+      {showReminderPicker && Platform.OS === 'android' && (
+        <DateTimePicker
+          value={(() => {
+            const d = new Date();
+            d.setHours(settings.dailyReminderHour, settings.dailyReminderMinute, 0, 0);
+            return d;
+          })()}
+          mode="time"
+          is24Hour={false}
+          onChange={(event, date) => {
+            setShowReminderPicker(false);
+            if (event.type === 'set' && date && user) {
+              settings.update(user.id, {
+                dailyReminderHour: date.getHours(),
+                dailyReminderMinute: date.getMinutes(),
+              });
+            }
+          }}
+        />
+      )}
+
+      {Platform.OS === 'ios' && (
+        <Modal
+          visible={showReminderPicker}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowReminderPicker(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: '#00000080', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: Colors.surface,
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              padding: 20, paddingBottom: 40,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>
+                  Reminder Time
+                </Text>
+                <Pressable onPress={() => setShowReminderPicker(false)}>
+                  <Text style={{ color: Colors.primary, fontSize: 16, fontWeight: '600' }}>Done</Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                value={(() => {
+                  const d = new Date();
+                  d.setHours(settings.dailyReminderHour, settings.dailyReminderMinute, 0, 0);
+                  return d;
+                })()}
+                mode="time"
+                is24Hour={false}
+                display="spinner"
+                onChange={(_event, date) => {
+                  if (date && user) {
+                    settings.update(user.id, {
+                      dailyReminderHour: date.getHours(),
+                      dailyReminderMinute: date.getMinutes(),
+                    });
+                  }
+                }}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* Avatar Picker Modal */}
       <Modal

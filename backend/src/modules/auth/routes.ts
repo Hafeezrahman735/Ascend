@@ -218,6 +218,7 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
           username: user.username,
           email: user.email,
           avatarUrl: user.avatarUrl,
+          avatarEmoji: user.avatarEmoji,
           privacySetting: user.privacySetting,
           createdAt: user.createdAt,
           xp: user.xp,
@@ -226,6 +227,10 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
           longestStreak: user.longestStreak,
           totalSessions: user.totalSessions,
           totalFocusTime: user.totalFocusTime,
+          publicProfile: user.publicProfile,
+          showOnLeaderboard: user.showOnLeaderboard,
+          shareFocusStats: user.shareFocusStats,
+          friendsCanSeeActivity: user.friendsCanSeeActivity,
         },
       });
     } catch (error) {
@@ -247,22 +252,59 @@ authRouter.delete('/auth/account', async (req: Request, res: Response) => {
   }
 });
 
+authRouter.patch('/auth/me/profile', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const schema = z.object({
+      avatarEmoji: z.string().min(1).max(16),
+    });
+    const { avatarEmoji } = schema.parse(req.body);
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { avatarEmoji },
+    });
+
+    res.json({ success: true, data: { avatarEmoji: user.avatarEmoji } });
+  } catch (error) {
+    if (handleZodError(res, error)) return;
+    if (handleAuthError(res, error)) return;
+    console.error('Profile update error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 authRouter.patch('/auth/me/privacy', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
     const schema = z.object({
-      privacySetting: z.enum(['public', 'friends_only', 'private']),
+      privacySetting: z.enum(['public', 'friends_only', 'private']).optional(),
+      publicProfile: z.boolean().optional(),
+      showOnLeaderboard: z.boolean().optional(),
+      shareFocusStats: z.boolean().optional(),
+      friendsCanSeeActivity: z.boolean().optional(),
     });
-    const { privacySetting } = schema.parse(req.body);
+    const data = schema.parse(req.body);
+
+    if (Object.keys(data).length === 0) {
+      res.status(400).json({ success: false, error: 'No privacy fields provided' });
+      return;
+    }
 
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { privacySetting },
+      data,
     });
 
     res.json({
       success: true,
-      data: { privacySetting: user.privacySetting },
+      data: {
+        privacySetting: user.privacySetting,
+        publicProfile: user.publicProfile,
+        showOnLeaderboard: user.showOnLeaderboard,
+        shareFocusStats: user.shareFocusStats,
+        friendsCanSeeActivity: user.friendsCanSeeActivity,
+      },
     });
   } catch (error) {
     if (handleZodError(res, error)) return;

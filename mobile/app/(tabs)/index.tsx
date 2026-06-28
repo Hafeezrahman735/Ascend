@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
+import { cancelAllTimerNotifications } from '../../services/notifications';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useAppForeground } from '../../hooks/useAppState';
@@ -818,6 +819,11 @@ export default function TimerScreen() {
                     setWorkDuration(draftFocus);
                     setShortBreakDuration(draftShort);
                     setLongBreakDuration(draftLong);
+                    // New durations make any pending notification stale. Cancel it
+                    // when not mid-session; a running timer keeps its original alarm.
+                    if (useTimerStore.getState().status !== 'running') {
+                      cancelAllTimerNotifications();
+                    }
                     setShowDurationModal(false);
                   }}
                   style={{

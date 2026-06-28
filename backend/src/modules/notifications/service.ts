@@ -57,6 +57,7 @@ export async function shouldNotify(
       return prefs.achievements;
     case 'friend.session_started':
     case 'friend.goal_completed':
+    case 'post.created':
       return prefs.friends;
     default:
       return true;

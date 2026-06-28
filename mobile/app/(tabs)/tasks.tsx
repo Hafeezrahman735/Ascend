@@ -328,6 +328,17 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
         {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: 12 }} />}
         {analyticsError && <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>Analytics unavailable — try again later.</Text>}
 
+        {/* notes — the description captured when the task was created */}
+        {task.description?.trim() ? (
+          <View style={{ backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+              <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
+              <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>Notes</Text>
+            </View>
+            <Text style={{ color: Colors.textBright, fontSize: 14, lineHeight: 20 }}>{task.description.trim()}</Text>
+          </View>
+        ) : null}
+
         {/* recurring streak — only on recurring instances */}
         {task.parentTaskId && (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>

@@ -141,6 +141,10 @@ eventBus.on(EventTypes.FRIEND_REQUEST_ACCEPTED, (payload) => {
   emitFriendRequestAccepted(io, payload as never);
 });
 
+eventBus.on(EventTypes.POST_CREATED, (payload) => {
+  handleAllNotifications(EventTypes.POST_CREATED, payload).catch((err) => console.error('Notifications handler error:', err));
+});
+
 // Centralised error handler — must be registered after all routes. Catches
 // errors thrown from any route so a single failure returns 500 instead of
 // hanging the connection.

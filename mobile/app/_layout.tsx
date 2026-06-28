@@ -14,8 +14,9 @@ import { useSocialStore } from '../stores/socialStore';
 import { useGoalStore } from '../stores/goalStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { useTheme, useIsDark } from '../hooks/useTheme';
-import * as Notifications from 'expo-notifications';
-import { setupNotifications, subscribeTimerNotifications } from '../services/notifications';
+import { setupNotifications, configureNotificationHandler } from '../services/notifications';
+import { useNotificationListener } from '../hooks/useNotificationListener';
+import { useTimerNotifications } from '../hooks/useTimerNotifications';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
@@ -29,6 +30,18 @@ export default function RootLayout() {
   const user = useAuthStore((s) => s.user);
   const isNewUser = useAuthStore((s) => s.isNewUser);
   const isNavigating = useRef(false);
+
+  // Subscribes to the timer store and schedules/cancels timer notifications, and
+  // routes the user to the timer tab when they tap one. Mounted at the root so
+  // they stay alive across tab navigation — never inside the timer screen.
+  useTimerNotifications();
+  useNotificationListener();
+
+  // Configure how notifications render — must run before any can fire, no
+  // permission needed, every launch.
+  useEffect(() => {
+    configureNotificationHandler();
+  }, []);
 
   // Auth guard — fires only after Stack is mounted (isReady === true).
   // The isNavigating ref stops the guard from re-firing on intermediate segment changes.
@@ -127,20 +140,6 @@ export default function RootLayout() {
       setupNotifications();
     }
   }, [user]);
-
-  // Local timer notifications: a store observer schedules/cancels them (no timer
-  // logic is modified), plus a listener that routes the user to the timer when
-  // they tap a delivered notification.
-  useEffect(() => {
-    const unsubscribe = subscribeTimerNotifications();
-    const responseSub = Notifications.addNotificationResponseReceivedListener(() => {
-      router.push('/(tabs)');
-    });
-    return () => {
-      unsubscribe();
-      responseSub.remove();
-    };
-  }, []);
 
   if (!isReady) {
     return (

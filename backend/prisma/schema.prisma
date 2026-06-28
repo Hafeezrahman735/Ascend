@@ -3,9 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -14,11 +13,16 @@ model User {
   email             String             @unique @db.VarChar(255)
   passwordHash      String             @map("password_hash") @db.VarChar(255)
   avatarUrl         String?            @map("avatar_url")
+  avatarEmoji       String?            @map("avatar_emoji")
   privacySetting    PrivacySetting     @default(public) @map("privacy_setting")
   pushToken         String?            @map("push_token")
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
   notificationPrefs String?            @map("notification_prefs")
+  publicProfile         Boolean        @default(true) @map("public_profile")
+  showOnLeaderboard     Boolean        @default(true) @map("show_on_leaderboard")
+  shareFocusStats       Boolean        @default(true) @map("share_focus_stats")
+  friendsCanSeeActivity Boolean        @default(true) @map("friends_can_see_activity")
   currentStreak     Int                @default(0) @map("current_streak")
   lastActiveDate    DateTime?          @map("last_active_date")
   level             Int                @default(1)

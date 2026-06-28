@@ -2,7 +2,7 @@
   "expo": {
     "name": "Ascend",
     "slug": "ascend",
-    "version": "1.0.0",
+    "version": "1.0.",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ascend",
@@ -14,6 +14,7 @@
       "**/*"
     ],
     "ios": {
+      "buildNumber": "2",
       "supportsTablet": true,
       "bundleIdentifier": "com.hafeezrahman.ascend",
       "infoPlist": {
@@ -51,7 +52,10 @@
         "expo-notifications",
         {
           "icon": "./assets/images/notification-icon.png",
-          "color": "#7B6EF6"
+          "color": "#7B6EF6",
+          "sounds": [
+            "./assets/sounds/timer_complete.wav"
+          ]
         }
       ]
     ],
