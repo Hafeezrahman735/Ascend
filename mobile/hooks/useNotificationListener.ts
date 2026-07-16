@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
-import { getNotificationType } from '../services/notifications';
+import { getNotificationType, isExpoGo } from '../services/notifications';
 
 /**
  * Handles what happens when the user taps a timer notification (from the lock
@@ -9,6 +9,10 @@ import { getNotificationType } from '../services/notifications';
  */
 export function useNotificationListener(): void {
   useEffect(() => {
+    // Expo Go emits no notifications (see services/notifications.ts), so skip the
+    // subscriptions — they'd otherwise trigger Expo Go's "not fully supported" warning.
+    if (isExpoGo) return;
+
     // Fired when the user taps a notification — works backgrounded, closed, or
     // on the lock screen.
     const tapSubscription = Notifications.addNotificationResponseReceivedListener((response) => {

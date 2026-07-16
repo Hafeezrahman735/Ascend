@@ -41,7 +41,15 @@ function normalizeTask(t: Task): Task {
     recurringDays: t.recurringDays ?? [],
     lastSpawnedDate: t.lastSpawnedDate ?? null,
     parentTaskId: t.parentTaskId ?? null,
-    recurringStreak: t.recurringStreak ?? 0,
+    // Template lifetime stats:
+    currentStreak: t.currentStreak ?? 0,
+    longestStreak: t.longestStreak ?? 0,
+    totalCompletions: t.totalCompletions ?? 0,
+    totalFocusTimeMs: t.totalFocusTimeMs ?? 0,
+    // Instance display copies:
+    lifetimeStreak: t.lifetimeStreak ?? 0,
+    lifetimeTotalCompletions: t.lifetimeTotalCompletions ?? 0,
+    lifetimeTotalFocusTime: t.lifetimeTotalFocusTime ?? 0,
   };
 }
 
@@ -86,7 +94,6 @@ interface TaskStoreState {
   clearTasks: (userId?: string) => Promise<void>;
   spawnRecurringTasks: () => Promise<void>;
   fetchRecurringTemplates: () => Promise<void>;
-  fetchTemplateStreak: (parentTaskId: string) => Promise<number>;
 }
 
 export const useTaskStore = create<TaskStoreState>((set, get) => ({
@@ -166,7 +173,13 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       recurringDays: data.recurringDays ?? [],
       lastSpawnedDate: null,
       parentTaskId: null,
-      recurringStreak: 0,
+      currentStreak: 0,
+      longestStreak: 0,
+      totalCompletions: 0,
+      totalFocusTimeMs: 0,
+      lifetimeStreak: 0,
+      lifetimeTotalCompletions: 0,
+      lifetimeTotalFocusTime: 0,
     };
     const withTemp = [tempTask, ...get().tasks];
     set({ tasks: withTemp });
@@ -318,10 +331,14 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   // haven't spawned yet today. Non-critical and never throws.
   spawnRecurringTasks: async () => {
     try {
-      const res = await api.post<{ spawned: number; templateIds: string[] }>('/tasks/spawn-recurring', {});
-      if (res.success && res.data && res.data.spawned > 0) {
+      const res = await api.post<{ spawned: number; archived?: number; templateIds: string[] }>('/tasks/spawn-recurring', {});
+      // Refetch when anything changed — not just on spawn. A new day can archive a
+      // missed instance without spawning one (non-scheduled day, or already spawned),
+      // and without a refetch that stale instance lingers locally as "overdue".
+      const changed = res.success && res.data && ((res.data.spawned ?? 0) > 0 || (res.data.archived ?? 0) > 0);
+      if (changed) {
         await get().fetchTasks(true);
-        console.log('[taskStore] spawned', res.data.spawned, 'recurring instances');
+        console.log('[taskStore] recurring: spawned', res.data!.spawned, 'archived', res.data!.archived ?? 0);
       }
     } catch (err) {
       console.warn('[taskStore] spawnRecurringTasks failed:', err);
@@ -336,16 +353,6 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       }
     } catch (err) {
       console.warn('[taskStore] fetchRecurringTemplates failed:', err);
-    }
-  },
-
-  // Reads the recurring streak off the parent template. Returns 0 on any failure.
-  fetchTemplateStreak: async (parentTaskId: string): Promise<number> => {
-    try {
-      const res = await api.get<Task>(`/tasks/${parentTaskId}`);
-      return (res.success && res.data?.recurringStreak) || 0;
-    } catch {
-      return 0;
     }
   },
 }));

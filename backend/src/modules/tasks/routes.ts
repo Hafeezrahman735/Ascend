@@ -87,6 +87,13 @@ export function setupTaskRoutes(router: Router): void {
               parentTaskId: task.id,
               isRecurring: false, // instances are not themselves recurring
               recurringDays: [],
+              sessionsOnTask: 0,
+              totalTimeOnTask: 0,
+              sessionDates: [],
+              // Brand-new habit — no lifetime history yet.
+              lifetimeStreak: 0,
+              lifetimeTotalCompletions: 0,
+              lifetimeTotalFocusTime: 0,
             },
           });
 
@@ -151,21 +158,68 @@ export function setupTaskRoutes(router: Router): void {
       const userId = authenticate(req);
       const today = new Date().toISOString().split('T')[0];
       const todayDayName = getDayName(new Date());
+      const { start: todayStart, end: todayEnd } = dayBounds(today);
 
       const templates = await prisma.task.findMany({
         where: {
           userId,
           isRecurring: true,
           isArchived: false,
-          isCompleted: false,
           NOT: { lastSpawnedDate: today },
         },
       });
 
-      const { start, end } = dayBounds(today);
       const spawned: string[] = [];
+      let archived = 0;
 
       for (const template of templates) {
+        // ── 1. Archive ALL previous instances of this template that aren't today's ──
+        // Covers completed AND uncompleted — only today's instance should ever be
+        // visible in the active list. This is what prevents pileup of missed days
+        // and stops a not-completed instance from lingering as "overdue" the next day.
+        const staleInstances = await prisma.task.findMany({
+          where: {
+            userId,
+            parentTaskId: template.id,
+            isArchived: false,
+            NOT: { dueDate: { gte: todayStart, lt: todayEnd } },
+          },
+          select: { id: true },
+        });
+        if (staleInstances.length > 0) {
+          await prisma.task.updateMany({
+            where: { id: { in: staleInstances.map((t) => t.id) } },
+            data: { isArchived: true },
+          });
+          archived += staleInstances.length;
+        }
+
+        // ── 2. Immediate streak reset if the last spawned instance was missed ──
+        let effectiveStreak = template.currentStreak;
+        if (template.lastSpawnedDate && template.lastSpawnedDate !== today) {
+          const { start: lastStart, end: lastEnd } = dayBounds(template.lastSpawnedDate);
+          // Query includes archived instances on purpose: a prior spawn run (e.g. an
+          // in-between non-scheduled day) may already have archived the last instance,
+          // so we must look it up directly rather than rely on `staleInstances`.
+          const lastInstance = await prisma.task.findFirst({
+            where: {
+              userId,
+              parentTaskId: template.id,
+              dueDate: { gte: lastStart, lt: lastEnd },
+            },
+          });
+          const wasMissed = !lastInstance || !lastInstance.isCompleted;
+
+          if (wasMissed && template.currentStreak !== 0) {
+            await prisma.task.update({
+              where: { id: template.id },
+              data: { currentStreak: 0 },
+            });
+            effectiveStreak = 0;
+          }
+        }
+
+        // ── 3. Spawn today's instance if scheduled ──
         const shouldSpawn =
           template.recurringDays.length === 0 ||
           template.recurringDays.includes(todayDayName);
@@ -176,7 +230,7 @@ export function setupTaskRoutes(router: Router): void {
           where: {
             userId,
             parentTaskId: template.id,
-            dueDate: { gte: start, lt: end },
+            dueDate: { gte: todayStart, lt: todayEnd },
           },
         });
         if (existing) {
@@ -199,6 +253,14 @@ export function setupTaskRoutes(router: Router): void {
             parentTaskId: template.id,
             isRecurring: false,
             recurringDays: [],
+            sessionsOnTask: 0,
+            totalTimeOnTask: 0,
+            sessionDates: [],
+            // Denormalized lifetime stats — copied for instant display in the stats
+            // modal, so it needs no extra network round trip.
+            lifetimeStreak: effectiveStreak,
+            lifetimeTotalCompletions: template.totalCompletions,
+            lifetimeTotalFocusTime: template.totalFocusTimeMs,
           },
         });
 
@@ -210,7 +272,7 @@ export function setupTaskRoutes(router: Router): void {
         spawned.push(template.id);
       }
 
-      res.json({ success: true, data: { spawned: spawned.length, templateIds: spawned } });
+      res.json({ success: true, data: { spawned: spawned.length, archived, templateIds: spawned } });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('Spawn recurring error:', err);
@@ -387,35 +449,38 @@ export function setupTaskRoutes(router: Router): void {
         data: updateData,
       });
 
-      // Recurring streak: lives on the template, driven by instance completion.
-      if (task.parentTaskId && data.isCompleted === true) {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        const { start, end } = dayBounds(yesterdayStr);
-
+      // Recurring habit stats: roll into the parent template on completion toggles.
+      // Streak *resetting* on a missed day now happens entirely in spawn-recurring —
+      // this block only increments on completion or undoes today's increment on
+      // uncomplete, and never looks backward at previous days. Guarded on an actual
+      // completion-state change so repeated/unrelated PATCHes don't double-count.
+      if (
+        task.parentTaskId &&
+        data.isCompleted !== undefined &&
+        existing.isCompleted !== data.isCompleted
+      ) {
         const template = await prisma.task.findUnique({ where: { id: task.parentTaskId } });
         if (template) {
-          // Did yesterday's instance get completed? If so the streak continues.
-          const yesterdayInstance = await prisma.task.findFirst({
-            where: {
-              parentTaskId: template.id,
-              isCompleted: true,
-              dueDate: { gte: start, lt: end },
-            },
-          });
-          const newStreak = yesterdayInstance ? template.recurringStreak + 1 : 1;
-          await prisma.task.update({
-            where: { id: template.id },
-            data: { recurringStreak: newStreak },
-          });
+          if (data.isCompleted === true) {
+            const newStreak = template.currentStreak + 1;
+            await prisma.task.update({
+              where: { id: template.id },
+              data: {
+                currentStreak: newStreak,
+                longestStreak: Math.max(template.longestStreak, newStreak),
+                totalCompletions: template.totalCompletions + 1,
+                totalFocusTimeMs: template.totalFocusTimeMs + (task.totalTimeOnTask ?? 0),
+              },
+            });
+          } else {
+            // Uncompleting today's instance undoes today's increment only —
+            // it does not touch the totalCompletions / totalFocusTimeMs history.
+            await prisma.task.update({
+              where: { id: template.id },
+              data: { currentStreak: Math.max(0, template.currentStreak - 1) },
+            });
+          }
         }
-      } else if (task.parentTaskId && data.isCompleted === false) {
-        // Uncompleting breaks the streak — reset the template to 0.
-        await prisma.task.update({
-          where: { id: task.parentTaskId },
-          data: { recurringStreak: 0 },
-        });
       }
 
       res.json({ success: true, data: task });

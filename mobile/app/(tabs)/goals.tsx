@@ -29,6 +29,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useAuthStore } from '../../stores/authStore';
+import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useGamification } from '../../store/hooks';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTimerStore } from '../../stores/timerStore';
@@ -538,6 +539,7 @@ function AchievementToast({ icon, name, xpReward }: { icon: string; name: string
 
 interface HeroCardProps {
   username: string;
+  avatarEmoji: string;
   xp: number;
   level: number;
   rank: RankTier;
@@ -556,7 +558,7 @@ interface HeroCardProps {
 }
 
 function HeroCard({
-  username, xp, level, rank,
+  username, avatarEmoji, xp, level, rank,
   totalSessions, totalFocusMinutes, longestStreak,
   xpProgress, xpToNextRank, nextRank,
   reduceMotion, onSettings,
@@ -564,7 +566,6 @@ function HeroCard({
 }: HeroCardProps) {
   const Colors = useTheme();
   const { GOLD_DIM, GOLD, BORDER_SOFT } = Colors;
-  const avatarEmoji = getAvatarEmoji(username);
   const isNewUser = xp === 0;
   const focusHours = Math.round(totalFocusMinutes / 60);
 
@@ -1240,6 +1241,8 @@ export default function ProfileScreen() {
   const { BORDER_SOFT } = Colors;
   const router = useRouter();
   const auth = useAuthStore();
+  const profileAvatar = useUserProfileStore((s) => s.avatarEmoji);
+  const loadProfile = useUserProfileStore((s) => s.load);
   const gamification = useGamification();
   const tasks = useTaskStore(s => s.tasks);
   const social = useSocialStore();
@@ -1328,7 +1331,9 @@ export default function ProfileScreen() {
     social.fetchUserPosts();
     social.loadFriends();
     useTimerStore.getState().fetchWeekSessions();
-  }, []);
+    // Load the saved avatar/profile so the hero card matches settings & social.
+    if (auth.user) loadProfile(auth.user.id, auth.user.username);
+  }, [auth.user?.id]);
 
   // Reduced motion
   useEffect(() => {
@@ -1384,6 +1389,7 @@ export default function ProfileScreen() {
       {/* Hero Card — fixed, does not scroll */}
       <HeroCard
         username={auth.user?.username ?? 'User'}
+        avatarEmoji={profileAvatar || getAvatarEmoji(auth.user?.username ?? 'User')}
         xp={xp}
         level={gamification.level}
         rank={currentRank}

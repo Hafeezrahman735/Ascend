@@ -203,6 +203,57 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
   }
 });
 
+  // Proactively resets the overall day-streak the moment a day is missed, instead
+  // of the lazy "recompute on next session" path in lib/streak.ts. Called on app
+  // boot / foreground alongside recurring-task spawning. The streak survives only
+  // if the user was active today or yesterday; any older last-active means at least
+  // one full day was missed, so it resets to 0 immediately. Never increments here.
+  authRouter.post('/auth/me/streak-check', async (req: Request, res: Response) => {
+    try {
+      const userId = authenticate(req);
+      const schema = z.object({ localDate: z.string().optional() });
+      const { localDate } = schema.parse(req.body ?? {});
+      const today = localDate ?? new Date().toISOString().split('T')[0];
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { currentStreak: true, lastActiveDate: true },
+      });
+      if (!user) {
+        res.status(404).json({ success: false, error: 'User not found' });
+        return;
+      }
+
+      let currentStreak = user.currentStreak;
+
+      if (user.lastActiveDate && currentStreak !== 0) {
+        // lastActiveDate is stored as midnight UTC of the user's local date, so UTC
+        // getters return the correct calendar day (matches lib/streak.ts semantics).
+        const la = user.lastActiveDate;
+        const lastActive = `${la.getUTCFullYear()}-${String(la.getUTCMonth() + 1).padStart(2, '0')}-${String(la.getUTCDate()).padStart(2, '0')}`;
+
+        const y = new Date(`${today}T00:00:00.000Z`);
+        y.setUTCDate(y.getUTCDate() - 1);
+        const yesterday = `${y.getUTCFullYear()}-${String(y.getUTCMonth() + 1).padStart(2, '0')}-${String(y.getUTCDate()).padStart(2, '0')}`;
+
+        if (lastActive !== today && lastActive !== yesterday) {
+          await prisma.user.update({ where: { id: userId }, data: { currentStreak: 0 } });
+          currentStreak = 0;
+        }
+      }
+
+      res.json({ success: true, data: { currentStreak } });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ success: false, error: error.errors[0].message });
+        return;
+      }
+      if (handleAuthError(res, error)) return;
+      console.error('Streak check error:', error);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  });
+
   authRouter.get('/auth/me', async (req: Request, res: Response) => {
     try {
       const userId = authenticate(req);

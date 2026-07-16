@@ -21,6 +21,13 @@ interface Settings {
 // Device-level key — shared across all accounts (settings only)
 const TIMER_SETTINGS_KEY = 'timer:settings';
 
+// Active running/paused session snapshot. Because JS is frozen when the app is
+// backgrounded/killed, the timer can't literally keep ticking — instead we save the
+// wall-clock anchors (startedAt + elapsedAtPause) so a relaunch reconstructs the exact
+// remaining time from Date.now() rather than resetting to the beginning. Stamped with
+// userId so another account never inherits a leftover session.
+const ACTIVE_SESSION_KEY = 'timer:activeSession';
+
 // User-level key builders — scoped per account
 const timerStatsKeys = (userId: string) => ({
   pomodoroRounds:  `timer:${userId}:pomodoroRounds`,
@@ -37,6 +44,18 @@ const LEGACY_KEYS = {
 };
 
 type TimerMode = 'pomodoro' | 'stopwatch';
+
+// Serialized shape of an in-progress session written to ACTIVE_SESSION_KEY.
+interface PersistedSession {
+  userId: string | null;
+  status: TimerStatus;
+  currentPhase: TimerPhase;
+  mode: TimerMode;
+  startedAt: number | null;
+  elapsedAtPause: number;
+  stopwatchElapsed: number;
+  timeLeft: number;
+}
 
 interface TimerState {
   status: TimerStatus;
@@ -126,6 +145,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       // Break phase: timeLeft already set by complete(), start the clock fresh
       set({ status: 'running', startedAt: now, elapsedAtPause: 0 });
     }
+    persistActiveSession();
   },
 
   pause: () => {
@@ -137,6 +157,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     const timeLeft = Math.max(0, phaseDuration - elapsed);
 
     set({ status: 'paused', elapsedAtPause: elapsed, startedAt: null, timeLeft });
+    persistActiveSession();
     api.post('/timer/pause', { elapsedSeconds: elapsed })
       .catch((err) => console.warn('[timer] pause sync failed:', err));
   },
@@ -145,6 +166,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     if (get().status !== 'paused') return;
     const now = Date.now();
     set({ status: 'running', startedAt: now });
+    persistActiveSession();
     api.post('/timer/resume', { resumedAt: now })
       .catch((err) => console.warn('[timer] resume sync failed:', err));
   },
@@ -202,6 +224,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         startedAt: null,
         elapsedAtPause: 0,
       });
+      persistActiveSession();
 
       // User-scoped stat keys (including pomodoroRounds)
       const userId = useAuthStore.getState().user?.id;
@@ -265,6 +288,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         startedAt: null,
         elapsedAtPause: 0,
       });
+      persistActiveSession();
     }
   },
 
@@ -303,6 +327,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         elapsedAtPause: 0,
       });
     }
+    persistActiveSession();
   },
 
   reset: () => {
@@ -313,6 +338,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       startedAt: null,
       elapsedAtPause: 0,
     });
+    persistActiveSession();
   },
 
   clearUserData: async (userId: string) => {
@@ -329,6 +355,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         keys.globalSessions,
         keys.globalTotalTime,
         keys.lastSessionDate,
+        ACTIVE_SESSION_KEY, // drop any in-progress session so the next account starts clean
       ]);
       console.log('[timerStore] cleared user stats for:', userId);
     } catch (err) {
@@ -393,11 +420,13 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         elapsedAtPause: 0,
       });
     }
+    persistActiveSession();
   },
 
   startStopwatch: () => {
     if (get().status === 'running') return;
     set({ status: 'running', startedAt: Date.now(), elapsedAtPause: 0, stopwatchElapsed: 0 });
+    persistActiveSession();
   },
 
   pauseStopwatch: () => {
@@ -408,6 +437,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     recordFocusSession(elapsed);
     // Reset the stopwatch back to 00:00 / idle.
     set({ status: 'idle', startedAt: null, elapsedAtPause: 0, stopwatchElapsed: 0 });
+    persistActiveSession();
   },
 
   fetchWeekSessions: () => fetchWeekSessionsImpl(),
@@ -495,6 +525,29 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsRaw) }
         : { ...DEFAULT_SETTINGS };
 
+      // Restore an in-progress session so a closed/killed app resumes from the correct
+      // remaining time instead of starting over. Skipped on a new day (a session left
+      // running across midnight is stale) and for a snapshot from a different account.
+      let restored: Partial<TimerState> | null = null;
+      if (!isNewDay) {
+        try {
+          const sessionRaw = await AsyncStorage.getItem(ACTIVE_SESSION_KEY);
+          if (sessionRaw) {
+            const snap = JSON.parse(sessionRaw) as PersistedSession;
+            if (snap.userId === userId && snap.status !== 'idle') {
+              restored = reconstructSession(snap, settings);
+            } else {
+              await AsyncStorage.removeItem(ACTIVE_SESSION_KEY);
+            }
+          }
+        } catch (err) {
+          console.warn('[timerStore] restore active session failed:', err);
+          await AsyncStorage.removeItem(ACTIVE_SESSION_KEY).catch(() => {});
+        }
+      } else {
+        await AsyncStorage.removeItem(ACTIVE_SESSION_KEY).catch(() => {});
+      }
+
       set({
         status: 'idle',
         currentPhase: 'focus',
@@ -506,6 +559,8 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         pomodoroRounds,
         startedAt: null,
         elapsedAtPause: 0,
+        // Spread last so a restored running/paused session overrides the idle defaults.
+        ...(restored ?? {}),
       });
 
       console.log('[timerStore] hydrated for userId:', userId);
@@ -606,6 +661,69 @@ function saveSettings() {
   const { settings } = useTimerStore.getState();
   AsyncStorage.setItem(TIMER_SETTINGS_KEY, JSON.stringify(settings))
     .catch((err) => console.warn('[timer] persist settings failed:', err));
+}
+
+// Writes (or clears) the active-session snapshot. Called after every action that
+// changes the running state — NOT on tick(), since timeLeft is always recomputed
+// from startedAt, so the per-second tick needs nothing persisted. When idle there is
+// no session to restore, so the key is removed for a clean next launch.
+function persistActiveSession(): void {
+  const s = useTimerStore.getState();
+  if (s.status === 'idle') {
+    AsyncStorage.removeItem(ACTIVE_SESSION_KEY).catch(() => {});
+    return;
+  }
+  const snapshot: PersistedSession = {
+    userId: useAuthStore.getState().user?.id ?? null,
+    status: s.status,
+    currentPhase: s.currentPhase,
+    mode: s.mode,
+    startedAt: s.startedAt,
+    elapsedAtPause: s.elapsedAtPause,
+    stopwatchElapsed: s.stopwatchElapsed,
+    timeLeft: s.timeLeft,
+  };
+  AsyncStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(snapshot))
+    .catch((err) => console.warn('[timer] persist active session failed:', err));
+}
+
+// Rebuilds the live timer fields from a saved snapshot. For a running segment the
+// remaining time is recomputed from the wall clock, so it reflects real elapsed time
+// while the app was closed (and hits 0 if the deadline already passed, letting the
+// normal tick() path complete it). Paused/break states carry no clock, so restore verbatim.
+function reconstructSession(snap: PersistedSession, settings: Settings): Partial<TimerState> {
+  if (snap.status === 'running' && snap.startedAt != null) {
+    const elapsed = snap.elapsedAtPause + Math.floor((Date.now() - snap.startedAt) / 1000);
+    if (snap.mode === 'stopwatch') {
+      return {
+        status: 'running',
+        mode: 'stopwatch',
+        currentPhase: snap.currentPhase,
+        startedAt: snap.startedAt,
+        elapsedAtPause: snap.elapsedAtPause,
+        stopwatchElapsed: elapsed,
+      };
+    }
+    const phaseDuration = getPhaseDuration(snap.currentPhase, settings);
+    return {
+      status: 'running',
+      mode: 'pomodoro',
+      currentPhase: snap.currentPhase,
+      startedAt: snap.startedAt,
+      elapsedAtPause: snap.elapsedAtPause,
+      timeLeft: Math.max(0, phaseDuration - elapsed),
+    };
+  }
+  // paused, or 'break' waiting to be started (startedAt null) — no clock advances.
+  return {
+    status: snap.status,
+    mode: snap.mode,
+    currentPhase: snap.currentPhase,
+    startedAt: snap.startedAt,
+    elapsedAtPause: snap.elapsedAtPause,
+    stopwatchElapsed: snap.stopwatchElapsed,
+    timeLeft: snap.timeLeft,
+  };
 }
 
 // Called from _layout.tsx bootstrap after all modules are loaded.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Dimensions, Modal, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Dimensions, Modal, ScrollView, Alert, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
@@ -128,6 +128,13 @@ export default function TimerScreen() {
   }, []);
 
   useAppForeground(() => {
+    // Snappy catch-up: a running segment's clock is wall-clock based, so on return
+    // recompute timeLeft immediately (and auto-complete if it already hit 0 while
+    // backgrounded) instead of waiting up to 1s for the next interval tick.
+    if (useTimerStore.getState().status === 'running') {
+      useTimerStore.getState().tick();
+    }
+
     const today = new Date().toISOString().split('T')[0];
     const lastDate = useTimerStore.getState().lastSessionDate;
     if (lastDate && lastDate !== today) {
@@ -135,6 +142,19 @@ export default function TimerScreen() {
       if (userId) useTimerStore.getState().hydrate(userId);
     }
   });
+
+  // Tracks whether the app was backgrounded at any point during the current
+  // running segment. If so, the OS notification is the completion surface and we
+  // suppress the on-screen Alert — the Alert is only for fully-foreground runs.
+  const backgroundedDuringRunRef = useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active' && useTimerStore.getState().status === 'running') {
+        backgroundedDuringRunRef.current = true;
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (status === 'running') {
@@ -165,16 +185,28 @@ export default function TimerScreen() {
     const prevStatus = prevStatusRef.current;
     const prevPhase = prevPhaseRef.current;
 
+    // A new running segment began — reset the backgrounded tracker so this run
+    // starts fresh.
+    if (prevStatus !== 'running' && status === 'running') {
+      backgroundedDuringRunRef.current = false;
+    }
+
     // Focus session just completed: was running focus, now break idle
     if (prevStatus === 'running' && prevPhase === 'focus' && status === 'break') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Focus Complete! 🎯', 'Great work. Start your break when ready.');
+      if (!backgroundedDuringRunRef.current) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Focus Complete! 🎯', 'Great work. Start your break when ready.');
+      }
+      backgroundedDuringRunRef.current = false;
     }
 
     // Break just completed: was running a break, now focus idle
     if (prevStatus === 'running' && prevPhase !== 'focus' && status === 'idle' && currentPhase === 'focus') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      Alert.alert('Break Over', 'Ready for another focus session?');
+      if (!backgroundedDuringRunRef.current) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Alert.alert('Break Over', 'Ready for another focus session?');
+      }
+      backgroundedDuringRunRef.current = false;
     }
 
     prevStatusRef.current = status;

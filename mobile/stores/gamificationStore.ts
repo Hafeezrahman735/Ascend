@@ -14,6 +14,7 @@ interface GamificationStoreState {
   isLoading: boolean;
 
   fetchProfile: () => Promise<void>;
+  checkAndResetDayStreak: () => Promise<void>;
   fetchAchievements: () => Promise<void>;
   applySessionReward: (reward: SessionReward, durationSeconds?: number) => void;
   clearPendingRewards: () => void;
@@ -43,6 +44,21 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
           totalSessions: res.data.totalSessions ?? 0,
           totalFocusMinutes: Math.floor((res.data.totalFocusTime ?? 0) / 60),
         });
+      }
+    } catch {
+    }
+  },
+
+  // Proactively resets the overall day-streak if a day was missed — the backend
+  // zeroes currentStreak when last-active is older than yesterday. Fire-and-forget
+  // on boot/foreground alongside spawnRecurringTasks; never throws.
+  checkAndResetDayStreak: async () => {
+    try {
+      const d = new Date();
+      const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const res = await api.post<{ currentStreak: number }>('/auth/me/streak-check', { localDate });
+      if (res.success && res.data) {
+        set({ currentStreak: res.data.currentStreak });
       }
     } catch {
     }

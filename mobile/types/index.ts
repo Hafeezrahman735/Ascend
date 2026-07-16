@@ -165,7 +165,17 @@ export interface Task {
   recurringDays: DayOfWeek[]; // empty array = every day
   lastSpawnedDate: string | null;
   parentTaskId: string | null;
-  recurringStreak: number; // on templates: consecutive days completed
+
+  // On TEMPLATES — lifetime habit stats:
+  currentStreak: number;    // consecutive days completed (resets immediately on a miss)
+  longestStreak: number;
+  totalCompletions: number;
+  totalFocusTimeMs: number; // accumulates instance totalTimeOnTask (seconds), see backend
+
+  // On INSTANCES — read-only copies denormalized from the template at spawn time:
+  lifetimeStreak: number;
+  lifetimeTotalCompletions: number;
+  lifetimeTotalFocusTime: number;
 }
 
 export interface TaskGoal {

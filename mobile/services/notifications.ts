@@ -1,6 +1,12 @@
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import { Platform, AppState } from 'react-native';
 import { api } from './api';
+
+// Expo Go (SDK 53+) no longer supports push notifications and warns on local
+// ones, so we disable all notification behavior there. Dev builds (expo-dev-client)
+// and production report a non-storeClient environment and keep full behavior.
+export const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 // The sound file bundled in assets/sounds/ via the expo-notifications plugin.
 // Must match the filename exactly — no path prefix (iOS plays bundled sounds by name).
@@ -26,14 +32,22 @@ const NOTIFICATION_IDS = {
  * Call once at app startup — before any notification can fire. No permission needed.
  */
 export function configureNotificationHandler(): void {
+  if (isExpoGo) return;
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
+    handleNotification: async () => {
+      // Foreground-aware: when the app is active, the timer screen already shows
+      // an on-screen Alert, so suppress the banner/sound/list entry to avoid a
+      // duplicate. When backgrounded/closed the OS presents the notification
+      // directly (this handler isn't consulted), so the alarm still fires.
+      const isForeground = AppState.currentState === 'active';
+      return {
+        shouldShowAlert: !isForeground,
+        shouldPlaySound: !isForeground,
+        shouldSetBadge: false,
+        shouldShowBanner: !isForeground,
+        shouldShowList: !isForeground,
+      };
+    },
   });
 }
 
@@ -42,6 +56,7 @@ export function configureNotificationHandler(): void {
  * session (or just after login) — iOS only shows the system dialog once.
  */
 export async function requestNotificationPermission(): Promise<boolean> {
+  if (isExpoGo) return false;
   const { status: existing } = await Notifications.getPermissionsAsync();
   if (existing === 'granted') return true;
 
@@ -61,6 +76,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
  * Create the Android notification channel. No-op on iOS.
  */
 export async function setupAndroidChannels(): Promise<void> {
+  if (isExpoGo) return;
   if (Platform.OS !== 'android') return;
 
   await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL, {
@@ -80,6 +96,7 @@ export async function setupAndroidChannels(): Promise<void> {
  * Requires permission to have been granted. No-op on failure.
  */
 export async function registerPushToken(): Promise<void> {
+  if (isExpoGo) return;
   try {
     const { data: token } = await Notifications.getExpoPushTokenAsync({
       projectId: EAS_PROJECT_ID,
@@ -110,6 +127,7 @@ export async function setupNotifications(): Promise<boolean> {
  * Uses a DAILY trigger so it fires every day until cancelled.
  */
 export async function scheduleDailyReminder(hour: number, minute: number): Promise<void> {
+  if (isExpoGo) return;
   try {
     await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_IDS.DAILY_REMINDER).catch(() => {});
     await Notifications.scheduleNotificationAsync({
@@ -168,6 +186,7 @@ function timeIntervalTrigger(seconds: number): Notifications.NotificationTrigger
  *   `timeLeft`, which is accurate after pauses/resumes). NOT the total duration.
  */
 export async function scheduleFocusDoneNotification(remainingSeconds: number): Promise<void> {
+  if (isExpoGo) return;
   const seconds = Math.max(1, Math.round(remainingSeconds));
   try {
     await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_IDS.FOCUS_DONE).catch(() => {});
@@ -198,6 +217,7 @@ export async function scheduleBreakEndNotification(
   remainingSeconds: number,
   isLongBreak: boolean,
 ): Promise<void> {
+  if (isExpoGo) return;
   const seconds = Math.max(1, Math.round(remainingSeconds));
   try {
     await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_IDS.BREAK_DONE).catch(() => {});

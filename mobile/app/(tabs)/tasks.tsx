@@ -88,6 +88,9 @@ function getDueChip(task: Task, c: ThemeColors): { label: string; bg: string; fg
   if (task.isCompleted) return { label: '✓ Done', bg: c.tealDim, fg: c.accent };
   const daysLeft = calcDaysUntilDue(task);
   if (daysLeft === null) return null;
+  // Recurring instances are day-of habits, not deadlines — a past-due one is just a
+  // stale instance awaiting cleanup on the next spawn, so never flag it "overdue".
+  if (task.parentTaskId && daysLeft < 0) return null;
   const dueDateOnly = task.dueDate.substring(0, 10);
   const dayName = new Date(dueDateOnly + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
   if (daysLeft < 0) return { label: '⚠ Overdue', bg: c.ROSE_DIM, fg: c.ROSE };
@@ -263,7 +266,6 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
   const Colors = useTheme();
   const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
   const [analyticsError, setAnalyticsError] = useState(false);
-  const [recurringStreak, setRecurringStreak] = useState(0);
 
   useEffect(() => {
     if (!task) return;
@@ -272,14 +274,6 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
       .then((res) => { if (res.success && res.data) setAnalytics((res.data as any).analytics); else setAnalyticsError(true); })
       .catch(() => setAnalyticsError(true));
   }, [task?.id]);
-
-  // Recurring instances carry their streak on the parent template.
-  useEffect(() => {
-    setRecurringStreak(0);
-    if (task?.parentTaskId) {
-      useTaskStore.getState().fetchTemplateStreak(task.parentTaskId).then(setRecurringStreak);
-    }
-  }, [task?.parentTaskId]);
 
   const subjectTag = task?.tags[0] ?? null;
   const tagStyle = useTagStyle(subjectTag ?? '');
@@ -339,17 +333,32 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
           </View>
         ) : null}
 
-        {/* recurring streak — only on recurring instances */}
+        {/* current streak — only on recurring instances; read straight off the
+            instance (denormalized at spawn), no extra fetch. */}
         {task.parentTaskId && (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <Text style={{ fontSize: 28 }}>🔥</Text>
               <View>
-                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring Streak</Text>
+                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Current Streak</Text>
                 <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Consecutive days completed</Text>
               </View>
             </View>
-            <Text style={{ color: Colors.primarySoft, fontSize: 32, fontWeight: '800' }}>{recurringStreak}</Text>
+            <Text style={{ color: Colors.primarySoft, fontSize: 32, fontWeight: '800' }}>{task.lifetimeStreak}</Text>
+          </View>
+        )}
+
+        {/* lifetime focus time — recurring instances only */}
+        {task.parentTaskId && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 28 }}>⏱️</Text>
+              <View>
+                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Lifetime Focus Time</Text>
+                <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>{task.lifetimeTotalCompletions} completions total</Text>
+              </View>
+            </View>
+            <Text style={{ color: Colors.primarySoft, fontSize: 22, fontWeight: '800' }}>{formatSeconds(task.lifetimeTotalFocusTime)}</Text>
           </View>
         )}
 
@@ -1647,11 +1656,14 @@ export default function TasksScreen() {
     }
     // Safety net — spawn today's recurring instances if boot missed it.
     useTaskStore.getState().spawnRecurringTasks();
+    // Sibling: proactively reset the overall day-streak on a missed day.
+    useGamificationStore.getState().checkAndResetDayStreak();
   }, []);
 
   // When the app returns to foreground, spawn for a potentially new day.
   useAppForeground(() => {
     useTaskStore.getState().spawnRecurringTasks();
+    useGamificationStore.getState().checkAndResetDayStreak();
   });
 
   const loadSessionHistory = useCallback(async () => {

@@ -116,6 +116,9 @@ export default function RootLayout() {
         if (useAuthStore.getState().user) {
           useTaskStore.getState().fetchTasks(true);
           useTaskStore.getState().spawnRecurringTasks();
+          // Reset the overall day-streak immediately if a day was missed (mirrors
+          // the immediate recurring-streak reset), before fetchProfile reads it.
+          useGamificationStore.getState().checkAndResetDayStreak();
           useGoalStore.getState().fetchGoals(true);
           useGamificationStore.getState().fetchProfile();
           useGamificationStore.getState().fetchAchievements();

@@ -213,8 +213,20 @@ model Task {
   // ISO date string 'YYYY-MM-DD' — the last date an instance was spawned (lives on the template)
   parentTaskId     String?   @map("parent_task_id")
   // If set, this task is an instance spawned from the template with this ID
-  recurringStreak  Int       @default(0) @map("recurring_streak")
-  // Consecutive days the recurring task was completed — lives on the TEMPLATE
+
+  // ── Habit-tracker lifetime stats — live on the TEMPLATE ──
+  // currentStreak keeps the existing `recurring_streak` column (renamed field only)
+  // so production data is preserved with a purely additive db push. It resets to 0
+  // immediately at spawn time when a day is missed (see spawn-recurring route).
+  currentStreak    Int       @default(0) @map("recurring_streak")
+  longestStreak            Int @default(0) @map("longest_streak")
+  totalCompletions         Int @default(0) @map("total_completions")
+  totalFocusTimeMs         Int @default(0) @map("total_focus_time_ms")
+
+  // ── Denormalized onto INSTANCES at spawn time — read-only display copies ──
+  lifetimeStreak           Int @default(0) @map("lifetime_streak")
+  lifetimeTotalCompletions Int @default(0) @map("lifetime_total_completions")
+  lifetimeTotalFocusTime   Int @default(0) @map("lifetime_total_focus_time")
 
   sessions         Session[] @relation("TaskSessions")
   taskGoal         TaskGoal? @relation(fields: [taskGoalId], references: [id])

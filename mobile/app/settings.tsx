@@ -6,8 +6,8 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 // TODO: replace with your real published values before App Store submission.
-const SUPPORT_EMAIL = 'support@ascend-app.com';
-const PRIVACY_POLICY_URL = 'https://ascend-app.com/privacy';
+const SUPPORT_EMAIL = 'hafeezrahman735@gmail.com'
+const PRIVACY_POLICY_URL = 'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';

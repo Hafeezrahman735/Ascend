@@ -1,6 +1,5 @@
 import { Expo, ExpoPushMessage } from 'expo-server-sdk';
 import {
-  SessionCompletedEvent,
   GoalCompletedEvent,
   AchievementUnlockedEvent,
   FriendSessionStartedEvent,
@@ -75,27 +74,10 @@ export async function handleAllNotifications(
   payload: unknown,
 ): Promise<void> {
   switch (eventType) {
-    case 'session.completed': {
-      const p = payload as SessionCompletedEvent;
-      if (p.type === 'focus') {
-        await storeAndNotify(
-          p.userId,
-          'session_completed',
-          'Focus Session Complete!',
-          `You completed a ${Math.round(p.durationSeconds / 60)}-minute focus session. Time for a break!`,
-          'session.completed',
-        );
-      } else {
-        await storeAndNotify(
-          p.userId,
-          'break_completed',
-          'Break Over!',
-          'Ready to focus again? Start your next Pomodoro!',
-          'break_completed',
-        );
-      }
-      break;
-    }
+    // NOTE: session/break completion intentionally sends NO notification here.
+    // The mobile app schedules a local OS notification for the timer alarm
+    // (services/notifications.ts) and shows an on-screen Alert in the foreground,
+    // so a server push — and a stored notification record — would be redundant.
     case 'goal.completed': {
       const p = payload as GoalCompletedEvent;
       await storeAndNotify(
