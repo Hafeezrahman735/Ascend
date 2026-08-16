@@ -3,39 +3,80 @@ import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
 import { handleAuthError } from '../../lib/errors';
+import { achievementProgress, type AchievementStats } from './handler';
 
 export const achievementsRouter = Router();
+
+/** The counters achievement thresholds are measured against, for one user. */
+async function loadAchievementStats(userId: string): Promise<AchievementStats | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      currentStreak: true,
+      totalSessions: true,
+      totalFocusTime: true,
+      level: true,
+      tasksCompleted: true,
+    },
+  });
+  return user ?? null;
+}
+
+/**
+ * Shape one achievement for the client, including how far along the user is.
+ *
+ * Returning `currentValue` alongside `threshold` is what lets the client render
+ * "7 / 10 sessions" progress instead of a bare locked icon — the numbers already
+ * existed server-side, they just were not being sent.
+ */
+function serializeAchievement(
+  achievement: {
+    id: string; key: string; title: string; description: string;
+    icon: string; xpReward: number; category: string; threshold: number;
+  },
+  unlocked: { unlockedAt: Date; isShared: boolean } | undefined,
+  stats: AchievementStats | null,
+) {
+  const currentValue = stats ? achievementProgress(achievement.category, stats) : 0;
+  // Unlocked achievements always read as full, even if the underlying counter
+  // later fell (a streak resets, a task is un-completed) — the achievement was
+  // genuinely earned and is never revoked.
+  const cappedValue = unlocked ? achievement.threshold : Math.min(currentValue, achievement.threshold);
+
+  return {
+    id: achievement.id,
+    key: achievement.key,
+    title: achievement.title,
+    description: achievement.description,
+    icon: achievement.icon,
+    xpReward: achievement.xpReward,
+    category: achievement.category,
+    threshold: achievement.threshold,
+    isUnlocked: !!unlocked,
+    unlockedAt: unlocked?.unlockedAt || null,
+    isShared: unlocked?.isShared || false,
+    currentValue: cappedValue,
+    progress: achievement.threshold > 0 ? cappedValue / achievement.threshold : 0,
+  };
+}
 
 achievementsRouter.get('/achievements', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
 
-    const allAchievements = await ensureAchievementCatalogue();
-
-    const userAchievements = await prisma.userAchievement.findMany({
-      where: { userId },
-    });
+    const [allAchievements, userAchievements, stats] = await Promise.all([
+      ensureAchievementCatalogue(),
+      prisma.userAchievement.findMany({ where: { userId } }),
+      loadAchievementStats(userId),
+    ]);
 
     const unlockedMap = new Map(
       userAchievements.map((ua) => [ua.achievementId, ua]),
     );
 
-    const result = allAchievements.map((achievement) => {
-      const unlocked = unlockedMap.get(achievement.id);
-      return {
-        id: achievement.id,
-        key: achievement.key,
-        title: achievement.title,
-        description: achievement.description,
-        icon: achievement.icon,
-        xpReward: achievement.xpReward,
-        category: achievement.category,
-        threshold: achievement.threshold,
-        isUnlocked: !!unlocked,
-        unlockedAt: unlocked?.unlockedAt || null,
-        isShared: unlocked?.isShared || false,
-      };
-    });
+    const result = allAchievements.map((achievement) =>
+      serializeAchievement(achievement, unlockedMap.get(achievement.id), stats),
+    );
 
     res.json({ success: true, data: result });
   } catch (error) {
@@ -65,32 +106,19 @@ achievementsRouter.get('/achievements/:userId', async (req: Request, res: Respon
       }
     }
 
-    const allAchievements = await ensureAchievementCatalogue();
-
-    const userAchievements = await prisma.userAchievement.findMany({
-      where: { userId },
-    });
+    const [allAchievements, userAchievements, stats] = await Promise.all([
+      ensureAchievementCatalogue(),
+      prisma.userAchievement.findMany({ where: { userId } }),
+      loadAchievementStats(userId),
+    ]);
 
     const unlockedMap = new Map(
       userAchievements.map((ua) => [ua.achievementId, ua]),
     );
 
-    const result = allAchievements.map((achievement) => {
-      const unlocked = unlockedMap.get(achievement.id);
-      return {
-        id: achievement.id,
-        key: achievement.key,
-        title: achievement.title,
-        description: achievement.description,
-        icon: achievement.icon,
-        xpReward: achievement.xpReward,
-        category: achievement.category,
-        threshold: achievement.threshold,
-        isUnlocked: !!unlocked,
-        unlockedAt: unlocked?.unlockedAt || null,
-        isShared: unlocked?.isShared || false,
-      };
-    });
+    const result = allAchievements.map((achievement) =>
+      serializeAchievement(achievement, unlockedMap.get(achievement.id), stats),
+    );
 
     res.json({ success: true, data: result });
   } catch (error) {

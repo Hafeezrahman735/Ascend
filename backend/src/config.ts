@@ -13,6 +13,16 @@ const envSchema = z.object({
   DEFAULT_SHORT_BREAK_MINUTES: z.string().default('5'),
   DEFAULT_LONG_BREAK_MINUTES: z.string().default('15'),
   EXPO_PROJECT_ID: z.string().default('YOUR_EXPO_PROJECT_ID'),
+
+  // Google Calendar sync — entirely optional. Left unset, the server boots
+  // normally and the calendar works on local data only; the connect endpoint
+  // reports 503 rather than failing at startup.
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  // Deep-link scheme the OAuth callback bounces back into. Matches `scheme` in
+  // mobile/app.json.
+  APP_DEEP_LINK_SCHEME: z.string().default('ascend'),
 });
 
 function loadConfig() {

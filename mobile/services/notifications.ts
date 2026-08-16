@@ -133,8 +133,10 @@ export async function scheduleDailyReminder(hour: number, minute: number): Promi
     await Notifications.scheduleNotificationAsync({
       identifier: NOTIFICATION_IDS.DAILY_REMINDER,
       content: {
-        title: 'Time to focus',
-        body: 'Keep your streak alive — start a focus session today.',
+        // The daily nudge is the one place the app states its whole premise:
+        // no one else is scheduling this for you.
+        title: 'No one else is scheduling this',
+        body: 'You decide what matters today. Pick one thing and start it.',
         data: { type: 'daily_reminder' },
         ...(Platform.OS === 'android' && { channelId: ANDROID_CHANNEL }),
       },
@@ -193,8 +195,8 @@ export async function scheduleFocusDoneNotification(remainingSeconds: number): P
     await Notifications.scheduleNotificationAsync({
       identifier: NOTIFICATION_IDS.FOCUS_DONE,
       content: {
-        title: 'Focus session complete',
-        body: 'Great work. Time for a break — you earned it.',
+        title: 'Session done',
+        body: 'Take the break. It is part of the work.',
         sound: ALARM_SOUND,
         data: { type: 'focus_complete' },
         ...(Platform.OS === 'android' && { channelId: ANDROID_CHANNEL }),
@@ -225,7 +227,7 @@ export async function scheduleBreakEndNotification(
       identifier: NOTIFICATION_IDS.BREAK_DONE,
       content: {
         title: isLongBreak ? 'Long break over' : 'Break time is up',
-        body: 'Ready for your next focus session?',
+        body: 'Break is over. What is next?',
         sound: ALARM_SOUND,
         data: { type: 'break_complete' },
         ...(Platform.OS === 'android' && { channelId: ANDROID_CHANNEL }),

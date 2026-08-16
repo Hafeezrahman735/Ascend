@@ -1,7 +1,6 @@
 import '../global.css';
 import { useEffect, useRef, useState } from 'react';
-import { View, ActivityIndicator } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { View, ActivityIndicator, Alert, Linking } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -43,13 +42,38 @@ export default function RootLayout() {
     configureNotificationHandler();
   }, []);
 
+  // Google OAuth returns the browser to ascend://calendar/google-connected (or
+  // -failed). Handle it here rather than letting expo-router try to resolve a
+  // route that doesn't exist and land on +not-found.
+  useEffect(() => {
+    function handleUrl(url: string | null) {
+      if (!url || !url.includes('calendar/google-')) return;
+      const connected = url.includes('google-connected');
+      import('../stores/calendarStore').then(({ useCalendarStore }) => {
+        if (connected) useCalendarStore.getState().fetchGoogleStatus();
+      });
+      if (connected) {
+        router.replace('/(tabs)/calendar');
+      } else {
+        Alert.alert('Google Calendar', "That connection didn't complete. Please try again.");
+      }
+    }
+
+    // Cold start: the app may have been launched by the redirect itself.
+    Linking.getInitialURL().then(handleUrl).catch(() => {});
+    const sub = Linking.addEventListener('url', (e) => handleUrl(e.url));
+    return () => sub.remove();
+  }, []);
+
   // Auth guard — fires only after Stack is mounted (isReady === true).
   // The isNavigating ref stops the guard from re-firing on intermediate segment changes.
   useEffect(() => {
     if (!isReady) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    const currentScreen = segments[1] as string | undefined;
+    // segments is typed as a 1-tuple but is a plain array at runtime; index 1 is
+    // the screen within the group (e.g. '(auth)' / 'onboarding1').
+    const currentScreen = (segments as string[])[1] as string | undefined;
     const onOnboarding = !!user && isNewUser && (currentScreen === 'onboarding1' || currentScreen === 'onboarding2');
     const needsAuth = !user && !inAuthGroup;
     const needsApp = !!user && inAuthGroup && !onOnboarding;

@@ -5,21 +5,27 @@ import {
   signAccessToken,
   signRefreshToken,
   verifyRefreshToken,
-  verifyAccessToken,
   authenticate,
 } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { handleAuthError, handleZodError } from '../../lib/errors';
 export const authRouter = Router();
 
+// Email is stored and matched lowercase. Without this, signing up as
+// "Sam@Gmail.com" and later typing "sam@gmail.com" fails to log in (Postgres
+// compares case-sensitively), and the unique constraint would allow both as
+// separate accounts. Mobile keyboards autocapitalise, so this is routine.
+// Trimming catches trailing whitespace from paste/autofill.
+const normalizeEmail = (v: string) => v.trim().toLowerCase();
+
 const registerSchema = z.object({
-  email: z.string().email(),
-  username: z.string().min(3).max(50),
+  email: z.string().trim().email().transform(normalizeEmail),
+  username: z.string().trim().min(3).max(50),
   password: z.string().min(8).max(100),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform(normalizeEmail),
   password: z.string(),
 });
 
@@ -31,8 +37,13 @@ authRouter.post('/auth/register', async (req: Request, res: Response) => {
   try {
     const { email, username, password } = registerSchema.parse(req.body);
 
+    // Username is matched case-insensitively so "Admin" and "admin" can't coexist
+    // as separate accounts — in a social feed that reads as impersonation. The
+    // original casing is still stored and displayed.
     const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ email }, { username }] },
+      where: {
+        OR: [{ email }, { username: { equals: username, mode: 'insensitive' } }],
+      },
     });
     if (existingUser) {
       res.status(409).json({
@@ -112,6 +123,11 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
       },
     });
 
+    // Prune this user's expired tokens on the way through — see /auth/refresh.
+    prisma.refreshToken
+      .deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } })
+      .catch((err) => console.error('Refresh token cleanup failed:', err));
+
     res.json({
       success: true,
       data: {
@@ -176,6 +192,14 @@ authRouter.post('/auth/refresh', async (req: Request, res: Response) => {
         expiresAt,
       },
     });
+
+    // Opportunistic cleanup. A row was written on every login and every refresh
+    // and only ever deleted on explicit logout, so expired tokens accumulated
+    // forever. Pruning this user's expired rows here keeps the table bounded
+    // without needing a scheduled job. Best-effort: never fail a refresh over it.
+    prisma.refreshToken
+      .deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } })
+      .catch((err) => console.error('Refresh token cleanup failed:', err));
 
     res.json({
       success: true,
@@ -294,7 +318,45 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
 authRouter.delete('/auth/account', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
-    await prisma.user.delete({ where: { id: userId } });
+
+    await prisma.$transaction(async (tx) => {
+      // Hand off any groups this user created before removing them. A study
+      // group is shared content — the other members shouldn't lose it because
+      // the creator left. The longest-standing remaining member inherits it.
+      // Groups with no one else left fall through to the schema's onDelete
+      // cascade, which is also the backstop that stops account deletion from
+      // ever failing on a foreign key again.
+      const createdGroups = await tx.studyGroup.findMany({
+        where: { createdBy: userId },
+        select: { id: true },
+      });
+
+      for (const group of createdGroups) {
+        const successor = await tx.studyGroupMember.findFirst({
+          where: { groupId: group.id, userId: { not: userId } },
+          orderBy: { joinedAt: 'asc' },
+          select: { userId: true },
+        });
+        if (successor) {
+          await tx.studyGroup.update({
+            where: { id: group.id },
+            data: { createdBy: successor.userId },
+          });
+        }
+      }
+
+      // These two tables intentionally carry no foreign keys, so nothing removes
+      // their rows automatically. Clean them up explicitly rather than leaving
+      // orphaned records pointing at a deleted account.
+      await tx.userBlock.deleteMany({
+        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+      });
+      await tx.postReport.deleteMany({ where: { reportedBy: userId } });
+
+      // Everything else cascades from the User relations in schema.prisma.
+      await tx.user.delete({ where: { id: userId } });
+    });
+
     res.json({ success: true, data: { message: 'Account deleted' } });
   } catch (error) {
     if (handleAuthError(res, error)) return;

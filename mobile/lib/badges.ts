@@ -1,4 +1,4 @@
-import type { SubjectBadge, BadgeLevel } from '../types/profile';
+import type { CategoryBadge, BadgeLevel } from '../types/profile';
 import { BADGE_THRESHOLDS } from '../types/profile';
 import type { Task } from '../types';
 
@@ -11,7 +11,7 @@ function toLevel(count: number): BadgeLevel {
   return 'locked';
 }
 
-export function computeSubjectBadges(tasks: Task[]): SubjectBadge[] {
+export function computeCategoryBadges(tasks: Task[]): CategoryBadge[] {
   const tagCounts: Record<string, number> = {};
 
   for (const task of tasks) {

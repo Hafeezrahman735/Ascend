@@ -2,10 +2,11 @@ import { EventEmitter } from 'events';
 
 export const EventTypes = {
   SESSION_COMPLETED: 'session.completed',
-  GOAL_COMPLETED: 'goal.completed',
+  // Replaces the removed GOAL_COMPLETED / FRIEND_GOAL_COMPLETED pair, which
+  // belonged to the deleted session-target goal system and never fired.
+  TASK_GOAL_COMPLETED: 'task_goal.completed',
   ACHIEVEMENT_UNLOCKED: 'achievement.unlocked',
   FRIEND_SESSION_STARTED: 'friend.session_started',
-  FRIEND_GOAL_COMPLETED: 'friend.goal_completed',
   FEED_CREATE: 'feed.create',
   FRIEND_REQUEST_SENT: 'friend_request.sent',
   FRIEND_REQUEST_ACCEPTED: 'friend_request.accepted',
@@ -23,12 +24,16 @@ export interface SessionCompletedEvent {
   localDate: string; // YYYY-MM-DD in the user's local timezone
 }
 
-export interface GoalCompletedEvent {
+export interface TaskGoalCompletedEvent {
   userId: string;
   goalId: string;
-  goalType: 'daily' | 'weekly';
-  targetValue: number;
-  period: string;
+  title: string;
+  /** Which component(s) drove completion, for the notification copy. */
+  progressMode: 'tasks' | 'sessions' | 'both';
+  completedTaskCount: number;
+  linkedTaskCount: number;
+  actualSessions: number;
+  targetSessions: number | null;
 }
 
 export interface AchievementUnlockedEvent {
@@ -46,17 +51,22 @@ export interface FriendSessionStartedEvent {
   startedAt: string;
 }
 
-export interface FriendGoalCompletedEvent {
-  userId: string;
-  friendIds?: string[];
-  goalType: 'daily' | 'weekly';
-  username?: string;
-  completedAt?: string;
-}
+/**
+ * Personal accomplishment events. `task_completed` and `goal_completed` were
+ * added so the Recent Activity log covers finishing work, not only time spent —
+ * previously nothing emitted them and the log could never show either.
+ */
+export type FeedEventType =
+  | 'session_completed'
+  | 'achievement_unlocked'
+  | 'streak_milestone'
+  | 'level_up'
+  | 'task_completed'
+  | 'goal_completed';
 
 export interface FeedCreateEvent {
   userId: string;
-  eventType: 'session_completed' | 'achievement_unlocked' | 'streak_milestone' | 'level_up';
+  eventType: FeedEventType;
   payload: Record<string, unknown>;
 }
 

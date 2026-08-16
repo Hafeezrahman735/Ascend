@@ -17,7 +17,9 @@ export interface SettingsData {
   // Daily reminder time (local only — drives the local scheduled notification).
   dailyReminderHour: number;
   dailyReminderMinute: number;
-  theme: 'dark' | 'light';
+  theme: 'dark' | 'light' | 'system';
+  /** 0 = Sunday, 1 = Monday. Drives week ranges in the Calendar tab. */
+  weekStartDay: 0 | 1;
 }
 
 interface UserSettingsState extends SettingsData {
@@ -38,6 +40,7 @@ const DEFAULTS: SettingsData = {
   notifyAchievements: true,
   dailyReminderHour: 19,
   dailyReminderMinute: 0,
+  weekStartDay: 0,
   theme: 'dark',
 };
 
@@ -70,8 +73,12 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
       const raw = await AsyncStorage.getItem(`settings:${userId}`);
       if (raw) {
         const stored = JSON.parse(raw) as Partial<SettingsData>;
-        const theme: 'dark' | 'light' = stored.theme === 'light' ? 'light' : 'dark';
-        local = { ...DEFAULTS, ...stored, theme };
+        // Normalise on read so an unrecognised stored value can never reach the
+        // theme hook. Anything that isn't a known mode falls back to dark.
+        const theme: SettingsData['theme'] =
+          stored.theme === 'light' || stored.theme === 'system' ? stored.theme : 'dark';
+        const weekStartDay: SettingsData['weekStartDay'] = stored.weekStartDay === 1 ? 1 : 0;
+        local = { ...DEFAULTS, ...stored, theme, weekStartDay };
       }
     } catch {
       // fall through with defaults
@@ -129,6 +136,7 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
       dailyReminderHour: state.dailyReminderHour,
       dailyReminderMinute: state.dailyReminderMinute,
       theme: state.theme,
+      weekStartDay: state.weekStartDay,
     };
 
     // Persist locally first (offline-safe, instant).

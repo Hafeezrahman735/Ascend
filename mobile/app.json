@@ -20,12 +20,6 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification",
-          "fetch",
-          "remote-notification",
-          "fetch",
-          "remote-notification",
-          "fetch",
-          "remote-notification",
           "fetch"
         ],
         "NSUserNotificationUsageDescription": "Ascend sends you reminders when your focus session ends and when your friends start focusing.",
@@ -36,11 +30,9 @@
       "adaptiveIcon": {
         "backgroundColor": "#08081A"
       },
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.hafeezrahman.ascend",
       "permissions": [
-        "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE",
-        "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "POST_NOTIFICATIONS"

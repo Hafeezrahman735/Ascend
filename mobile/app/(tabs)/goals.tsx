@@ -42,21 +42,36 @@ import {
   RANK_ORDER, RANK_META, RANK_THRESHOLDS,
 } from '../../lib/rank';
 import type { RankTier } from '../../lib/rank';
-import {
-  ACHIEVEMENT_CATALOGUE,
-  computeAchievementProgress,
-} from '../../lib/achievements';
-import type { CatalogEntry } from '../../lib/achievements';
-import { computeSubjectBadges } from '../../lib/badges';
-import type { StreakState, SubjectBadge } from '../../types/profile';
+import { computeCategoryBadges } from '../../lib/badges';
+import type { StreakState, CategoryBadge } from '../../types/profile';
 
 // ─── Local types ─────────────────────────────────────────────────────────────
 
-type MergedAchievement = CatalogEntry & {
+/**
+ * One achievement as the Profile grid renders it.
+ *
+ * Built straight from the server catalogue (GET /achievements). It used to be
+ * merged from a hardcoded client list whose keys mostly did not exist on the
+ * backend — 7 of 10 could never unlock, yet still drew a progress bar that
+ * climbed to 100%, because progress was computed client-side while `isUnlocked`
+ * came from a server lookup that always missed.
+ */
+type MergedAchievement = {
+  key: string;
+  icon: string;
+  name: string;
+  description: string;
+  threshold: number;
+  /** 0..1, server-computed from the same rule that decides the unlock. */
+  progress: number;
+  currentValue: number;
   isUnlocked: boolean;
   unlockedAt: string | null;
-  progress: number;
+  isGoldTier: boolean;
 };
+
+/** Big-ticket achievements get the gold treatment in the grid. */
+const GOLD_TIER_XP = 500;
 
 // ─── Local constants ──────────────────────────────────────────────────────────
 
@@ -910,7 +925,6 @@ function RankSection({
           {RANK_ORDER.map((tier, idx) => {
             const isPast    = idx < currentIdx;
             const isCurrent = idx === currentIdx;
-            const isFuture  = idx > currentIdx;
             return (
               <Pressable
                 key={tier}
@@ -988,16 +1002,12 @@ function RankSection({
 function AchievementItem({ achievement }: { achievement: MergedAchievement }) {
   const Colors = useTheme();
   const { GOLD, TEAL } = Colors;
-  const { isUnlocked, unlockedAt, progress, icon, name, description, isGoldTier, threshold } = achievement;
+  const { isUnlocked, unlockedAt, progress, icon, name, description, isGoldTier, threshold, currentValue } = achievement;
   const hasProgress = !isUnlocked && progress > 0;
 
-  const progressLabel = () => {
-    if (typeof threshold === 'number') {
-      const current = Math.round(progress * threshold);
-      return `${current} / ${threshold}`;
-    }
-    return '';
-  };
+  // Uses the server's currentValue rather than back-computing it from the
+  // progress fraction, so the number shown is the actual counter.
+  const progressLabel = () => (threshold > 0 ? `${currentValue} / ${threshold}` : '');
 
   return (
     <View style={{
@@ -1113,7 +1123,7 @@ function AchievementsSection({
 
 // ─── Badge Card ───────────────────────────────────────────────────────────────
 
-function BadgeCard({ badge }: { badge: SubjectBadge }) {
+function BadgeCard({ badge }: { badge: CategoryBadge }) {
   const Colors = useTheme();
   const { GOLD, GOLD_DIM, AMBER_DIM, AMBER } = Colors;
   const [showTooltip, setShowTooltip] = useState(false);
@@ -1185,13 +1195,13 @@ function BadgeCard({ badge }: { badge: SubjectBadge }) {
   );
 }
 
-// ─── Subject Badges Section ───────────────────────────────────────────────────
+// ─── Category Badges Section ───────────────────────────────────────────────────
 
-function SubjectBadgesSection({ badges }: { badges: SubjectBadge[] }) {
+function CategoryBadgesSection({ badges }: { badges: CategoryBadge[] }) {
   const Colors = useTheme();
   return (
     <View style={{ marginTop: 24 }}>
-      <Text style={[sectionLabel(Colors), { paddingHorizontal: 16 }]}>Subject Badges</Text>
+      <Text style={[sectionLabel(Colors), { paddingHorizontal: 16 }]}>Category Badges</Text>
 
       {badges.length === 0 ? (
         <View style={{ paddingHorizontal: 16 }}>
@@ -1202,7 +1212,7 @@ function SubjectBadgesSection({ badges }: { badges: SubjectBadge[] }) {
             alignItems: 'center',
           }}>
             <Text style={{ color: Colors.subtext, fontSize: 13 }}>
-              No subjects yet — add tags to your tasks to earn badges
+              No categories yet — tag your tasks to see where your time goes
             </Text>
           </View>
         </View>
@@ -1275,7 +1285,7 @@ export default function ProfileScreen() {
   const prevRankRef = useRef<RankTier>(currentRank);
   const prevRewardLenRef = useRef(gamification.pendingRewards.length);
 
-  const subjectBadges = useMemo(() => computeSubjectBadges(tasks), [tasks]);
+  const categoryBadges = useMemo(() => computeCategoryBadges(tasks), [tasks]);
 
   // Compute week dots and studiedToday from server-fetched activeDates
   const serverDerivedStreak = useMemo(() => {
@@ -1293,33 +1303,36 @@ export default function ProfileScreen() {
     return { thisWeekDays, studiedToday, streakAtRisk };
   }, [weekActiveDates, gamification.currentStreak]);
 
-  const progressStats = useMemo(() => ({
-    currentStreak: gamification.currentStreak,
-    longestStreak: gamification.longestStreak,
-    totalSessions: gamification.totalSessions,
-    totalFocusMinutes: gamification.totalFocusMinutes,
-    rank: currentRank,
-  }), [gamification.currentStreak, gamification.longestStreak, gamification.totalSessions, gamification.totalFocusMinutes, currentRank]);
+  // (progressStats removed — achievement progress is now computed server-side
+  // and returned by GET /achievements, so the client no longer recomputes it.)
 
   const mergedAchievements = useMemo<MergedAchievement[]>(() => {
-    const list = ACHIEVEMENT_CATALOGUE.map(entry => {
-      const backend = gamification.achievements.find(a => a.key === entry.key);
-      const isUnlocked = backend?.isUnlocked ?? false;
-      const unlockedAt = backend?.unlockedAt ?? null;
-      const progress = isUnlocked ? 1 : Math.min(1, computeAchievementProgress(entry, progressStats));
-      return { ...entry, isUnlocked, unlockedAt, progress };
-    });
+    // Sourced entirely from the server catalogue, so everything shown here is
+    // something the backend can actually award, and its progress bar is the same
+    // number the unlock check uses.
+    const list: MergedAchievement[] = gamification.achievements.map((a) => ({
+      key: a.key,
+      icon: a.icon,
+      name: a.title,
+      description: a.description,
+      threshold: a.threshold,
+      progress: a.isUnlocked ? 1 : (a.progress ?? 0),
+      currentValue: a.currentValue ?? 0,
+      isUnlocked: a.isUnlocked,
+      unlockedAt: a.unlockedAt,
+      isGoldTier: a.xpReward >= GOLD_TIER_XP,
+    }));
 
     return list.sort((a, b) => {
       if (a.isUnlocked && a.isGoldTier && !(b.isUnlocked && b.isGoldTier)) return -1;
       if (b.isUnlocked && b.isGoldTier && !(a.isUnlocked && a.isGoldTier)) return 1;
       if (a.isUnlocked && !b.isUnlocked) return -1;
       if (b.isUnlocked && !a.isUnlocked) return 1;
-      if (a.progress > 0 && b.progress === 0) return -1;
-      if (b.progress > 0 && a.progress === 0) return 1;
-      return 0;
+      // Closest to unlocking first, so the next thing to chase is at the top.
+      if (a.progress !== b.progress) return b.progress - a.progress;
+      return a.threshold - b.threshold;
     });
-  }, [gamification.achievements, progressStats]);
+  }, [gamification.achievements]);
 
   const allUnlocked = mergedAchievements.length > 0 && mergedAchievements.every(a => a.isUnlocked);
 
@@ -1444,8 +1457,10 @@ export default function ProfileScreen() {
 
         {activeProfileTab === 'awards' ? (
           <>
+            {/* Recent Activity moved to the top of the Tasks tab — it belongs
+                next to the work it describes, not behind a profile sub-tab. */}
             <AchievementsSection achievements={mergedAchievements} allUnlocked={allUnlocked} />
-            <SubjectBadgesSection badges={subjectBadges} />
+            <CategoryBadgesSection badges={categoryBadges} />
           </>
         ) : (
           <PostsPane

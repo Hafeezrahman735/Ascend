@@ -19,14 +19,7 @@ export async function getPreferences(userId: string): Promise<NotificationPrefer
     where: { id: userId },
     select: { notificationPrefs: true },
   });
-  if (!user || !user.notificationPrefs) {
-    return { ...DEFAULT_PREFERENCES };
-  }
-  try {
-    return { ...DEFAULT_PREFERENCES, ...JSON.parse(user.notificationPrefs) };
-  } catch {
-    return { ...DEFAULT_PREFERENCES };
-  }
+  return parsePreferences(user?.notificationPrefs);
 }
 
 export async function updatePreferences(
@@ -42,24 +35,48 @@ export async function updatePreferences(
   return merged;
 }
 
-export async function shouldNotify(
-  userId: string,
+/** Parse a stored notificationPrefs string, falling back to defaults. */
+export function parsePreferences(raw: string | null | undefined): NotificationPreferences {
+  if (!raw) return { ...DEFAULT_PREFERENCES };
+  try {
+    return { ...DEFAULT_PREFERENCES, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_PREFERENCES };
+  }
+}
+
+/**
+ * Pure preference check, so bulk fan-out can filter thousands of recipients from
+ * one query instead of re-reading each user's prefs individually.
+ */
+export function allowsEvent(
+  rawPrefs: string | null | undefined,
   eventType: string,
-): Promise<boolean> {
-  const prefs = await getPreferences(userId);
+): boolean {
+  const prefs = parsePreferences(rawPrefs);
   switch (eventType) {
     case 'session.completed':
     case 'break_completed':
       return prefs.sessions;
-    case 'goal.completed':
+    case 'task_goal.completed':
       return prefs.goals;
     case 'achievement.unlocked':
       return prefs.achievements;
     case 'friend.session_started':
-    case 'friend.goal_completed':
     case 'post.created':
       return prefs.friends;
     default:
       return true;
   }
+}
+
+export async function shouldNotify(
+  userId: string,
+  eventType: string,
+): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { notificationPrefs: true },
+  });
+  return allowsEvent(user?.notificationPrefs, eventType);
 }

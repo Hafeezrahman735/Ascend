@@ -4,10 +4,6 @@ import {
   ScrollView, TextInput, Modal, Pressable, Linking, Platform,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-
-// TODO: replace with your real published values before App Store submission.
-const SUPPORT_EMAIL = 'hafeezrahman735@gmail.com'
-const PRIVACY_POLICY_URL = 'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +14,19 @@ import { useGamificationStore } from '../stores/gamificationStore';
 import { useUserProfileStore } from '../stores/userProfileStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { getRank, RANK_META } from '../lib/rank';
+import { useCalendarStore } from '../stores/calendarStore';
+import { useTimerStore } from '../stores/timerStore';
+import {
+  requestCalendarPermission,
+  listDeviceCalendars,
+  getSelectedCalendarId,
+  setSelectedCalendarId,
+  type DeviceCalendar,
+} from '../services/appleCalendar';
+
+// TODO: replace with your real published values before App Store submission.
+const SUPPORT_EMAIL = 'hafeezrahman735@gmail.com'
+const PRIVACY_POLICY_URL = 'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
 
 const AVATAR_EMOJIS = [
   '🦊', '🐸', '🦁', '🐳', '🦉', '🐰',
@@ -35,6 +44,238 @@ function formatReminderTime(hour: number, minute: number): string {
 function Divider() {
   const Colors = useTheme();
   return <View style={{ height: 0.5, backgroundColor: Colors.border }} />;
+}
+
+/**
+ * How many focus sessions the user wants to complete each day.
+ *
+ * Drives the "Sessions to go" and "Focus today" pills on the Tasks tab. Also
+ * changeable by tapping either of those pills — this is the second entry point,
+ * since a target you can only reach from one screen is easy to never find.
+ *
+ * NOTE: this value lives in timerStore and is persisted to AsyncStorage only, so
+ * unlike every other preference here it does NOT sync across devices and resets
+ * on reinstall. Moving it to the server is a follow-up.
+ */
+function DailySessionTargetRow() {
+  const Colors = useTheme();
+  const target = useTimerStore((s) => s.settings.dailySessionTarget);
+  const setTarget = useTimerStore((s) => s.setDailySessionTarget);
+  const sessionMinutes = useTimerStore((s) => Math.round(s.settings.workDuration / 60));
+
+  const focusHours = Math.round((target * sessionMinutes) / 6) / 10;
+
+  return (
+    <SettingsRow
+      label="Daily session goal"
+      subtitle={`${target} sessions ≈ ${focusHours}h of focus per day`}
+      rightComponent={
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <TouchableOpacity
+            onPress={() => setTarget(target - 1)}
+            disabled={target <= 1}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Decrease daily session goal"
+            style={{ opacity: target <= 1 ? 0.3 : 1 }}
+          >
+            <Ionicons name="remove-circle-outline" size={24} color={Colors.primarySoft} />
+          </TouchableOpacity>
+          <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '700', minWidth: 24, textAlign: 'center' }}>
+            {target}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setTarget(target + 1)}
+            disabled={target >= 50}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Increase daily session goal"
+            style={{ opacity: target >= 50 ? 0.3 : 1 }}
+          >
+            <Ionicons name="add-circle-outline" size={24} color={Colors.primarySoft} />
+          </TouchableOpacity>
+        </View>
+      }
+    />
+  );
+}
+
+/**
+ * Google and Apple calendar connections.
+ *
+ * The two are deliberately asymmetric: Google is a server-side OAuth connection
+ * (tokens live in the backend), while Apple is device-native — its permission and
+ * chosen calendar never leave the phone, so there is no server call for it here.
+ */
+function CalendarSyncRows() {
+  const Colors = useTheme();
+  const user = useAuthStore((s) => s.user);
+  const { googleStatus, fetchGoogleStatus } = useCalendarStore();
+  const [appleCalendars, setAppleCalendars] = useState<DeviceCalendar[]>([]);
+  const [appleSelected, setAppleSelected] = useState<string | null>(null);
+  const [showApplePicker, setShowApplePicker] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetchGoogleStatus();
+    if (user) getSelectedCalendarId(user.id).then(setAppleSelected);
+  }, [user?.id]);
+
+  const connectGoogle = async () => {
+    setBusy(true);
+    try {
+      const res = await api.get<{ url: string }>('/calendar/google/auth-url');
+      if (res.success && res.data?.url) {
+        await Linking.openURL(res.data.url);
+      } else {
+        Alert.alert('Google Calendar', res.error ?? 'Could not start the connection.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnectGoogle = () => {
+    Alert.alert('Disconnect Google Calendar?', 'Your Google events will stop appearing in the calendar.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          await api.delete('/calendar/google');
+          fetchGoogleStatus();
+        },
+      },
+    ]);
+  };
+
+  const connectApple = async () => {
+    if (!user) return;
+    const granted = await requestCalendarPermission();
+    if (!granted) {
+      Alert.alert('Permission needed', 'Enable calendar access in Settings to show your device events here.');
+      return;
+    }
+    const cals = await listDeviceCalendars();
+    if (cals.length === 0) {
+      Alert.alert('No calendars found', 'This device has no event calendars available.');
+      return;
+    }
+    setAppleCalendars(cals);
+    setShowApplePicker(true);
+  };
+
+  const pickAppleCalendar = async (id: string | null) => {
+    if (!user) return;
+    await setSelectedCalendarId(user.id, id);
+    setAppleSelected(id);
+    setShowApplePicker(false);
+  };
+
+  return (
+    <>
+      <SettingsRow
+        label="Google Calendar"
+        subtitle={
+          googleStatus?.configured === false
+            ? 'Not available on this server'
+            : googleStatus?.connected
+              ? 'Connected — events show in your calendar'
+              : 'Show your Google events alongside your tasks'
+        }
+        value={googleStatus?.connected ? 'Connected' : busy ? '…' : 'Connect'}
+        onPress={
+          googleStatus?.configured === false
+            ? undefined
+            : googleStatus?.connected
+              ? disconnectGoogle
+              : connectGoogle
+        }
+      />
+      <Divider />
+      <SettingsRow
+        label={Platform.OS === 'ios' ? 'Apple Calendar' : 'Device Calendar'}
+        subtitle="Stays on this device — never uploaded"
+        value={appleSelected ? 'Connected' : 'Connect'}
+        onPress={appleSelected ? () => pickAppleCalendar(null) : connectApple}
+      />
+
+      <Modal visible={showApplePicker} transparent animationType="fade" onRequestClose={() => setShowApplePicker(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: '#00000088' }} onPress={() => setShowApplePicker(false)} />
+        <View style={{ position: 'absolute', left: 20, right: 20, top: '25%', backgroundColor: Colors.surface, borderRadius: 16, padding: 16 }}>
+          <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 10 }}>
+            Choose a calendar
+          </Text>
+          {appleCalendars.map((c) => (
+            <TouchableOpacity
+              key={c.id}
+              onPress={() => pickAppleCalendar(c.id)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 11 }}
+            >
+              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: c.color }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: Colors.text, fontSize: 14 }}>{c.title}</Text>
+                <Text style={{ color: Colors.subtext, fontSize: 11 }}>{c.source}</Text>
+              </View>
+              {appleSelected === c.id && <Ionicons name="checkmark" size={18} color={Colors.primary} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+/**
+ * A settings row whose value is one of a small fixed set — clearer than a switch
+ * once there are more than two states (Theme has three).
+ */
+function SegmentedRow({ label, subtitle, options, value, onChange }: {
+  label: string;
+  subtitle?: string;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const Colors = useTheme();
+  return (
+    <View style={{ paddingVertical: 14 }}>
+      <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '500' }}>{label}</Text>
+      {subtitle && (
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>{subtitle}</Text>
+      )}
+      <View style={{ flexDirection: 'row', gap: 6, marginTop: 10 }}>
+        {options.map((opt) => {
+          const selected = opt.value === value;
+          return (
+            <TouchableOpacity
+              key={opt.value}
+              onPress={() => onChange(opt.value)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              style={{
+                flex: 1,
+                paddingVertical: 9,
+                borderRadius: 10,
+                alignItems: 'center',
+                backgroundColor: selected ? Colors.primary : Colors.raised,
+                borderWidth: 1,
+                borderColor: selected ? Colors.primary : Colors.border,
+              }}
+            >
+              <Text style={{
+                color: selected ? '#fff' : Colors.subtext,
+                fontSize: 13,
+                fontWeight: selected ? '700' : '600',
+              }}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
 }
 
 function SectionTitle({ title }: { title: string }) {
@@ -401,18 +642,40 @@ export default function SettingsScreen() {
         {/* Appearance */}
         <SectionTitle title="Appearance" />
         <SettingsCard>
-          <SettingsRow
-            label="Light mode"
-            subtitle="Off = Deep Focus Midnight · On = Warm Dawn"
-            rightComponent={
-              <Switch
-                value={settings.theme === 'light'}
-                onValueChange={(v) => { if (user) settings.update(user.id, { theme: v ? 'light' : 'dark' }); }}
-                trackColor={{ false: Colors.inactive, true: Colors.primary }}
-                thumbColor="white"
-              />
-            }
+          <SegmentedRow
+            label="Theme"
+            subtitle="System follows your phone's setting"
+            options={[
+              { value: 'system', label: 'System' },
+              { value: 'dark', label: 'Dark' },
+              { value: 'light', label: 'Light' },
+            ]}
+            value={settings.theme}
+            onChange={(v) => { if (user) settings.update(user.id, { theme: v as 'system' | 'dark' | 'light' }); }}
           />
+          <Divider />
+          <SegmentedRow
+            label="Week starts on"
+            subtitle="Used for week ranges in the Calendar tab"
+            options={[
+              { value: '0', label: 'Sunday' },
+              { value: '1', label: 'Monday' },
+            ]}
+            value={String(settings.weekStartDay)}
+            onChange={(v) => { if (user) settings.update(user.id, { weekStartDay: v === '1' ? 1 : 0 }); }}
+          />
+        </SettingsCard>
+
+        {/* Focus goals */}
+        <SectionTitle title="Focus Goals" />
+        <SettingsCard>
+          <DailySessionTargetRow />
+        </SettingsCard>
+
+        {/* Calendar sync */}
+        <SectionTitle title="Calendar Sync" />
+        <SettingsCard>
+          <CalendarSyncRows />
         </SettingsCard>
 
         {/* App */}

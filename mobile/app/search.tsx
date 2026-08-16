@@ -114,7 +114,7 @@ export default function SearchScreen() {
             <Ionicons name="search" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
             <TextInput
               ref={inputRef}
-              placeholder="Search students..."
+              placeholder="Search by username…"
               placeholderTextColor={Colors.subtext}
               onChangeText={handleChange}
               style={{ flex: 1, color: Colors.textBright, fontSize: 15 }}
@@ -134,14 +134,14 @@ export default function SearchScreen() {
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
             <Ionicons name="person-outline" size={48} color={Colors.subtext} />
             <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
-              No students found for "{social.searchQuery}"
+              No one found for "{social.searchQuery}"
             </Text>
           </View>
         ) : social.searchQuery.length < 2 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
             <Ionicons name="search" size={48} color={Colors.subtext} />
             <Text style={{ color: Colors.subtext, fontSize: 14, marginTop: 16, textAlign: 'center' }}>
-              Search by username to find and follow other students
+              Search by username to find people to follow
             </Text>
           </View>
         ) : (

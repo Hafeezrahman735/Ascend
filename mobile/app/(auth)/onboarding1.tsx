@@ -61,11 +61,16 @@ export default function Onboarding1Screen() {
             <View style={{ width: 28, height: 4, borderRadius: 2, backgroundColor: Colors.inactive }} />
           </View>
 
+          {/* The product has no positioning anywhere else, so onboarding is
+              where it gets stated: no manager, no fixed schedule, no structure
+              handed to you — this is the structure. */}
           <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginBottom: 8 }}>
-            Set up your profile
+            No one is telling you what to do next
           </Text>
           <Text style={{ color: Colors.subtext, fontSize: 15, marginBottom: 36, lineHeight: 22 }}>
-            How should the community know you?
+            That is the hard part of working for yourself. Ascend is the structure
+            you would otherwise have to invent every morning. First — what should
+            we call you?
           </Text>
 
           {error ? (

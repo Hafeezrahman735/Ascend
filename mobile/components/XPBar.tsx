@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { View, Text } from 'react-native';
 import Animated, {
   useSharedValue,
-  useAnimatedProps,
+  useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -41,8 +41,10 @@ export default function XPBar({
     }
   }, [clamped, animated]);
 
-  const animatedStyle = useAnimatedProps(() => ({
-    width: `${width.value * 100}%`,
+  // useAnimatedStyle, not useAnimatedProps — this is passed to `style`. The cast
+  // gives reanimated the `${number}%` literal type it requires for width.
+  const animatedStyle = useAnimatedStyle(() => ({
+    width: `${width.value * 100}%` as `${number}%`,
   }));
 
   return (

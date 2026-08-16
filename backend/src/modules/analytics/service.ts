@@ -56,7 +56,11 @@ export async function getFriendSummary(
       _count: true,
       _sum: { durationSeconds: true },
     }),
-    prisma.streak.findUnique({ where: { userId: targetUserId } }),
+    // Streak lives on User — see the note in modules/goals/handler.ts.
+    prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { currentStreak: true, longestStreak: true },
+    }),
     prisma.session.count({
       where: { userId: targetUserId, type: 'focus', completedAt: { gte: weekStart } },
     }),

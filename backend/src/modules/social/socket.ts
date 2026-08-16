@@ -5,7 +5,6 @@ import {
   FriendRequestSentEvent,
   FriendRequestAcceptedEvent,
 } from '../../middleware/eventBus';
-import { prisma } from '../../lib/prisma';
 
 declare module 'socket.io' {
   interface Socket {
@@ -37,7 +36,9 @@ export function setupSocialSocket(namespace: Namespace): void {
 
   namespace.on('connection', (socket: Socket) => {
     const userId = socket.userId;
-    socket.join(`user:${userId}`);
+    // See the note in modules/timer/handlers.ts — synchronous with the in-memory
+    // adapter, would need awaiting under a Redis adapter.
+    void socket.join(`user:${userId}`);
 
     if (!activeUserSockets.has(userId)) {
       activeUserSockets.set(userId, new Set());

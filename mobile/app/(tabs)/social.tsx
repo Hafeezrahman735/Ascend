@@ -60,7 +60,7 @@ function isGoldRank(rank: string): boolean {
   return rank === 'Champion' || rank === 'Legend';
 }
 
-// ─── Study Group chips ───────────────────────────────────────────────────────
+// ─── Focus Group chips ───────────────────────────────────────────────────────
 
 function GroupChip({ group, selected, onPress }: {
   group: StudyGroup; selected: boolean; onPress: () => void;
@@ -638,7 +638,7 @@ function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId
             }}
           >
             <Text style={{ color: visibility === v ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>
-              {v === 'public' ? 'Public' : 'Study Group'}
+              {v === 'public' ? 'Public' : 'Focus Group'}
             </Text>
           </Pressable>
         ))}
@@ -1125,7 +1125,7 @@ export default function SocialScreen() {
       {/* Study groups strip */}
       <View style={{ paddingTop: 8, paddingBottom: 4 }}>
         <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
-          <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>Study Groups</Text>
+          <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>Focus Groups</Text>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
           {social.studyGroups.map((g) => (
@@ -1164,7 +1164,7 @@ export default function SocialScreen() {
               <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
                 {social.selectedGroupId
                   ? 'No posts in this group yet — be the first to share'
-                  : 'Follow students or join a group to see posts here'}
+                  : 'Follow people or join a group to see posts here'}
               </Text>
               {!social.selectedGroupId && (
                 <Pressable
@@ -1243,7 +1243,7 @@ export default function SocialScreen() {
         <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
           <Ionicons name="people-outline" size={48} color={Colors.subtext} />
           <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
-            Follow other students to see a friends leaderboard
+            Follow people to see how you compare
           </Text>
         </View>
       )}

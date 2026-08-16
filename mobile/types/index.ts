@@ -101,6 +101,24 @@ export interface Achievement {
   isUnlocked: boolean;
   unlockedAt: string | null;
   isShared: boolean;
+  /** How far the user is toward `threshold`, capped at it. Server-computed. */
+  currentValue: number;
+  /** currentValue / threshold, 0..1 — for progress bars on locked achievements. */
+  progress: number;
+}
+
+/** One entry in the personal accomplishment log (GET /activity). */
+export interface ActivityEvent {
+  id: string;
+  eventType:
+    | 'session_completed'
+    | 'achievement_unlocked'
+    | 'streak_milestone'
+    | 'level_up'
+    | 'task_completed'
+    | 'goal_completed';
+  payload: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface UserGamification {
@@ -144,14 +162,16 @@ export const DAY_FULL_LABELS: Record<DayOfWeek, string> = {
 export interface Task {
   id: string;
   title: string;
-  description?: string;
-  dueDate?: string;
+  // These are nullable columns on the backend, so the API sends `null` (not
+  // undefined) when they are unset, and PATCH accepts `null` to clear them.
+  description?: string | null;
+  dueDate?: string | null;
   tags: string[];
-  estimatedMinutes?: number;
+  estimatedMinutes?: number | null;
   priority: 'low' | 'medium' | 'high' | 'urgent';
   isArchived: boolean;
   isCompleted: boolean;
-  completedAt?: string;
+  completedAt?: string | null;
   createdAt: string;
   sessionsOnTask: number;
   totalTimeOnTask: number;
@@ -178,18 +198,109 @@ export interface Task {
   lifetimeTotalFocusTime: number;
 }
 
+// ─── Calendar ────────────────────────────────────────────────────────────────
+
+export interface Note {
+  id: string;
+  content: string;
+  /** 'YYYY-MM-DD' when pinned to a day, null when unscheduled. */
+  date: string | null;
+  isTodo: boolean;
+  isCompleted: boolean;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GoogleCalendarEvent {
+  id: string;
+  date: string;
+  title: string;
+  startTime: string | null;
+  endTime: string | null;
+  isAllDay: boolean;
+}
+
+export type CalendarItemType =
+  | 'task'
+  | 'habit_instance'
+  | 'goal_deadline'
+  | 'note'
+  | 'external_google'
+  | 'external_apple';
+
+/**
+ * One schedulable thing on a day. `type` is assigned by the server (or, for
+ * external_apple, by the device layer) so the client never has to infer the kind
+ * from the shape of `data`.
+ */
+export interface CalendarItem {
+  type: CalendarItemType;
+  /** 'YYYY-MM-DD' */
+  date: string;
+  data: unknown;
+}
+
+export interface CalendarStats {
+  byTag: Record<string, number>;
+  byDayOfWeek: Record<string, number>;
+  plannedVsActual: {
+    taskId: string;
+    title: string;
+    estimatedMinutes: number;
+    actualMinutes: number;
+    ratio: number | null;
+    isOutlier: boolean;
+  }[];
+  totalSeconds: number;
+  sessionCount: number;
+  /** Distinct days with at least one session, in the requested range. */
+  daysStudied: number;
+  /** Most sessions completed on any single day in the range. */
+  bestDaySessions: number;
+  /** 'YYYY-MM-DD' -> session count, for the month heat grid. */
+  sessionsPerDay: Record<string, number>;
+  /** Live user stats — NOT scoped to the requested range. */
+  currentStreak: number;
+  longestStreak: number;
+}
+
+export interface GoogleCalendarStatus {
+  configured: boolean;
+  connected: boolean;
+  syncEnabled: boolean;
+  calendarId: string | null;
+  lastSyncedAt: string | null;
+}
+
+export type ProgressMode = 'tasks' | 'sessions' | 'both';
+
 export interface TaskGoal {
   id: string;
   title: string;
   tag: string | null;
   targetSessions: number | null;
+  /** Which components count toward progress. Server-normalised. */
+  progressMode: ProgressMode;
+  /** Calendar day, 'YYYY-MM-DD' — no time or timezone. */
   deadline: string | null;
   isCompleted: boolean;
   completedAt: string | null;
   isArchived: boolean;
   createdAt: string;
-  linkedTaskCount?: number;
-  completedTaskCount?: number;
+
+  // ── Server-computed. Authoritative — do not recompute these locally. ──
+  // The client used to derive counts from its own task list, which excludes
+  // recurring templates, giving a different answer than the server for the same
+  // goal. Use these; the local store is only for optimistic UI between fetches.
+  linkedTaskCount: number;
+  completedTaskCount: number;
+  actualSessions: number;
+  taskProgress: number;
+  /** null when the goal has no session target. */
+  sessionProgress: number | null;
+  /** 0..1 — what the progress bar renders. */
+  overallProgress: number;
 }
 
 export interface TaskAnalytics {

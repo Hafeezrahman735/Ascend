@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { User } from '../types';
-import { setTokens, clearTokens, api } from '../services/api';
+import { setTokens, clearTokens, api, setOnAuthExpired } from '../services/api';
 import { reconnectTimerSocket, disconnectTimerSocket, disconnectSocialSocket } from '../services/socket';
 import { clearSessionHistory } from '../store/sync';
 import { useGamificationStore } from './gamificationStore';
@@ -105,6 +105,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         await useTimerStore.getState().clearUserData(userId);
       }
       useGamificationStore.getState().reset();
+      // Calendar caches are per-user range blobs; clear them so the next account
+      // can't briefly paint the previous one's schedule. Lazy import keeps this
+      // out of the auth store's static dependency graph.
+      if (userId) {
+        const { useCalendarStore } = await import('./calendarStore');
+        useCalendarStore.getState().clearCalendar(userId);
+      }
       // Task store self-cleans via its useAuthStore.subscribe in taskStore.ts.
       // Setting user: null here triggers that subscription synchronously.
       // Navigation is handled by the auth guard in _layout.tsx.
@@ -126,3 +133,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearError: () => set({ error: null }),
   setIsNewUser: (value: boolean) => set({ isNewUser: value }),
 }));
+
+// When the refresh token is rejected for good, the session is over. Clear auth
+// state so the guard in _layout.tsx routes to login — otherwise the user sits on
+// a screen whose requests all silently fail. Tokens are already cleared by the
+// api layer before this runs.
+setOnAuthExpired(() => {
+  if (!useAuthStore.getState().isAuthenticated) return;
+  console.log('[auth] session expired — signing out');
+  disconnectTimerSocket();
+  disconnectSocialSocket();
+  useGamificationStore.getState().reset();
+  useAuthStore.setState({
+    user: null,
+    isAuthenticated: false,
+    isLoading: false,
+    isNewUser: false,
+    error: 'Your session expired. Please sign in again.',
+  });
+});

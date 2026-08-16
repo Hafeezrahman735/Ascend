@@ -2,7 +2,6 @@ import { useTimerStore } from '../../stores/timerStore';
 import { useShallow } from 'zustand/react/shallow';
 import {
   calcIsIdle,
-  calcIsPaused,
   calcPhaseLabel,
   calcSessionInCycle,
   computeIsLongBreak,

@@ -128,7 +128,7 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
             <TextInput
               value={name}
               onChangeText={setName}
-              placeholder="e.g. CS Study Squad"
+              placeholder="e.g. Thesis crew, Friday sprints"
               placeholderTextColor={Colors.subtext}
               maxLength={50}
               style={{
@@ -258,7 +258,7 @@ export default function GroupsScreen() {
         <Pressable onPress={() => router.back()} style={{ marginRight: 12 }}>
           <Ionicons name="chevron-back" size={24} color={Colors.text} />
         </Pressable>
-        <Text style={{ flex: 1, color: Colors.textBright, fontSize: 22, fontWeight: '800' }}>Study Groups</Text>
+        <Text style={{ flex: 1, color: Colors.textBright, fontSize: 22, fontWeight: '800' }}>Focus Groups</Text>
         <Pressable
           onPress={() => setShowCreate(true)}
           style={{ backgroundColor: Colors.primary, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7 }}

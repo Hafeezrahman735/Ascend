@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
-import { TaskGoal } from '../types';
+import { TaskGoal, ProgressMode } from '../types';
 import { useAuthStore } from './authStore';
 
 const GOALS_CACHE_KEY = (userId: string) => `goals:cache:${userId}`;
@@ -33,7 +33,9 @@ interface CreateGoalInput {
   title: string;
   tag?: string | null;
   targetSessions?: number | null;
+  /** Calendar day, 'YYYY-MM-DD'. */
   deadline?: string | null;
+  progressMode?: ProgressMode;
 }
 
 interface GoalStoreState {
@@ -87,13 +89,20 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       title: data.title,
       tag: data.tag ?? null,
       targetSessions: data.targetSessions ?? null,
+      progressMode: data.progressMode ?? (data.targetSessions ? 'both' : 'tasks'),
       deadline: data.deadline ?? null,
       isCompleted: false,
       completedAt: null,
       isArchived: false,
       createdAt: new Date().toISOString(),
+      // Placeholder until the server responds — a brand-new goal has nothing
+      // linked, so these are genuinely zero rather than a guess.
       linkedTaskCount: 0,
       completedTaskCount: 0,
+      actualSessions: 0,
+      taskProgress: 0,
+      sessionProgress: data.targetSessions ? 0 : null,
+      overallProgress: 0,
     };
     const withTemp = [tempGoal, ...get().goals];
     set({ goals: withTemp });

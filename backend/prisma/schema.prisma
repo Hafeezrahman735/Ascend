@@ -29,14 +29,18 @@ model User {
   longestStreak     Int                @default(0) @map("longest_streak")
   totalFocusTime    Int                @default(0) @map("total_focus_time")
   totalSessions     Int                @default(0) @map("total_sessions")
+  // Running count of tasks completed, maintained alongside the XP award in
+  // modules/tasks/routes.ts. Denormalized rather than COUNTed on read because
+  // it is checked on every achievement evaluation.
+  tasksCompleted    Int                @default(0) @map("tasks_completed")
   xp                Int                @default(0)
   feedEvents        FeedEvent[]
   following         Follow[]           @relation("UserFollower")
   followers         Follow[]           @relation("UserFollowing")
   friendshipsAddr   Friendship[]       @relation("Addressee")
   friendshipsReq    Friendship[]       @relation("Requester")
-  goalProgress      GoalProgress[]
-  goals             Goal[]
+  notes             Note[]
+  calendarLinks     ExternalCalendarConnection[]
   notifications     Notification[]
   refreshTokens     RefreshToken[]
   sessions          Session[]
@@ -102,37 +106,14 @@ model Session {
   @@map("sessions")
 }
 
-model Goal {
-  id           String         @id @default(uuid()) @db.Uuid
-  userId       String         @map("user_id") @db.Uuid
-  type         String         @db.VarChar(10)
-  targetCount  Int?           @map("target_count")
-  targetHours  Int?           @map("target_hours")
-  isActive     Boolean        @default(true) @map("is_active")
-  createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt @map("updated_at")
-  goalProgress GoalProgress[]
-  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("goals")
-}
-
-model GoalProgress {
-  id           String    @id @default(uuid()) @db.Uuid
-  goalId       String    @map("goal_id") @db.Uuid
-  userId       String    @map("user_id") @db.Uuid
-  currentCount Int       @default(0) @map("current_count")
-  periodStart  DateTime  @map("period_start")
-  periodEnd    DateTime  @map("period_end")
-  completedAt  DateTime? @map("completed_at")
-  goal         Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, periodStart])
-  @@index([goalId, periodStart])
-  @@map("goal_progress")
-}
-
+/// DEPRECATED — no longer read or written. Streaks live on
+/// User.currentStreak / longestStreak / lastActiveDate, which is what /auth/me
+/// serves and what /auth/me/streak-check resets. Keeping two copies meant they
+/// drifted apart and the leaderboard contradicted the profile.
+///
+/// Left in place so no data is destroyed on the next `prisma db push`. Once
+/// you've confirmed nothing depends on it, delete this model and the
+/// `streaks Streak?` relation on User, then push to drop the table.
 model Streak {
   id              String    @id @default(uuid()) @db.Uuid
   userId          String    @unique @map("user_id") @db.Uuid
@@ -243,7 +224,15 @@ model TaskGoal {
   title          String    @db.VarChar(80)
   tag            String?   @db.VarChar(30)
   targetSessions Int?      @map("target_sessions")
-  deadline       DateTime?
+  // Which components count toward this goal's progress. Defaults to 'tasks';
+  // creating a goal with targetSessions > 0 defaults it to 'both' instead.
+  // A goal with no targetSessions is always treated as 'tasks' at read time,
+  // regardless of what is stored — see resolveProgressMode in taskgoals/routes.
+  progressMode   ProgressMode @default(tasks) @map("progress_mode")
+  // A deadline is a CALENDAR DAY, not an instant. Stored as @db.Date so it
+  // carries no time or timezone: picking "Aug 10" means Aug 10 wherever the user
+  // is, and travelling or crossing DST cannot shift it.
+  deadline       DateTime? @db.Date
   isCompleted    Boolean   @default(false) @map("is_completed")
   completedAt    DateTime? @map("completed_at")
   isArchived     Boolean   @default(false) @map("is_archived")
@@ -296,6 +285,10 @@ model Follow {
   @@map("follows")
 }
 
+/// Surfaced in the UI as "Focus Group" — the audience is students, freelancers
+/// and solo operators, and "study" only speaks to one of the three. The model
+/// name is left alone deliberately: renaming it is a table rename with no
+/// product benefit, so code and copy diverge on this one noun by design.
 model StudyGroup {
   id        String             @id @default(uuid()) @db.Uuid
   name      String             @db.VarChar(100)
@@ -305,7 +298,10 @@ model StudyGroup {
   createdBy String             @map("created_by") @db.Uuid
   createdAt DateTime           @default(now()) @map("created_at")
   members   StudyGroupMember[]
-  creator   User               @relation("GroupCreator", fields: [createdBy], references: [id])
+  // Cascade: without it this relation defaults to Restrict, so deleting a user
+  // who ever created a group failed with a foreign-key error — breaking account
+  // deletion (App Store Guideline 5.1.1(v)) for that whole class of users.
+  creator   User               @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
 
   @@index([createdBy])
   @@map("study_groups")
@@ -342,6 +338,44 @@ model SocialPost {
   @@map("social_posts")
 }
 
+model Note {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id") @db.Uuid
+  content     String
+  // 'YYYY-MM-DD' when pinned to a day; null for an unscheduled note. Kept as a
+  // plain date string (not DateTime) for the same reason as TaskGoal.deadline —
+  // a day-pinned note belongs to a calendar day, not an instant.
+  date        String?  @db.VarChar(10)
+  isTodo      Boolean  @default(false) @map("is_todo")
+  isCompleted Boolean  @default(false) @map("is_completed")
+  isArchived  Boolean  @default(false) @map("is_archived")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("notes")
+}
+
+model ExternalCalendarConnection {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id") @db.Uuid
+  // 'google' only. Apple Calendar is device-native and MUST NOT be stored here —
+  // its tokens and events never leave the device. See mobile/services/appleCalendar.ts.
+  provider     String    @db.VarChar(20)
+  accessToken  String    @map("access_token")
+  refreshToken String    @map("refresh_token")
+  expiresAt    DateTime  @map("expires_at")
+  calendarId   String    @default("primary") @map("calendar_id")
+  syncEnabled  Boolean   @default(true) @map("sync_enabled")
+  lastSyncedAt DateTime? @map("last_synced_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@map("external_calendar_connections")
+}
+
 // Moderation (App Store Guideline 1.2). Standalone tables (no relation fields on
 // User/SocialPost) to keep the schema impact minimal.
 model PostReport {
@@ -371,6 +405,12 @@ enum PrivacySetting {
   public
   friends_only
   private
+}
+
+enum ProgressMode {
+  tasks
+  sessions
+  both
 }
 
 enum AchievementCategory {

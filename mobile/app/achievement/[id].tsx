@@ -50,8 +50,8 @@ export default function AchievementDetailScreen() {
     );
   }
 
-  const unlocked = achievements.filter((a) => a.unlocked);
-  const locked = achievements.filter((a) => !a.unlocked);
+  const unlocked = achievements.filter((a) => a.isUnlocked);
+  const locked = achievements.filter((a) => !a.isUnlocked);
 
   return (
     <SafeAreaView className="flex-1 bg-dark-bg dark:bg-dark-bg bg-light-bg">
@@ -75,25 +75,40 @@ export default function AchievementDetailScreen() {
           ) : null
         }
         renderItem={({ item }) => (
-          <View className={`mx-6 mb-3 rounded-2xl p-5 ${item.unlocked ? 'bg-dark-card dark:bg-dark-card bg-light-card border border-accent/30' : 'bg-dark-card/50 opacity-50'}`}>
+          <View className={`mx-6 mb-3 rounded-2xl p-5 ${item.isUnlocked ? 'bg-dark-card dark:bg-dark-card bg-light-card border border-accent/30' : 'bg-dark-card/50 opacity-50'}`}>
             <View className="flex-row items-center">
               <View className="w-14 h-14 rounded-full bg-dark-bg dark:bg-dark-bg bg-light-bg items-center justify-center mr-4">
-                <Text className="text-3xl">{item.unlocked ? item.icon : '🔒'}</Text>
+                <Text className="text-3xl">{item.isUnlocked ? item.icon : '🔒'}</Text>
               </View>
               <View className="flex-1">
-                <Text className={`text-lg font-bold ${item.unlocked ? 'text-dark-text dark:text-dark-text text-light-text' : 'text-gray-500'}`}>
+                <Text className={`text-lg font-bold ${item.isUnlocked ? 'text-dark-text dark:text-dark-text text-light-text' : 'text-gray-500'}`}>
                   {item.title}
                 </Text>
                 <Text className="text-dark-subtext dark:text-dark-subtext text-light-subtext text-sm">
-                  {item.unlocked ? item.description : 'Keep going to unlock!'}
+                  {/* Locked achievements now show what they're for, not a generic
+                      nudge — you can't work toward a goal you can't read. */}
+                  {item.description}
                 </Text>
-                {item.unlocked && item.unlockedAt && (
+                {item.isUnlocked && item.unlockedAt && (
                   <Text className="text-accent text-xs mt-1">
                     Unlocked {new Date(item.unlockedAt).toLocaleDateString()}
                   </Text>
                 )}
+                {!item.isUnlocked && item.threshold > 0 && (
+                  <View className="mt-2">
+                    <View className="h-1.5 rounded-full bg-dark-bg overflow-hidden">
+                      <View
+                        className="h-full rounded-full bg-primary"
+                        style={{ width: `${Math.min(100, Math.round((item.progress ?? 0) * 100))}%` }}
+                      />
+                    </View>
+                    <Text className="text-dark-subtext text-xs mt-1">
+                      {item.currentValue ?? 0} / {item.threshold}
+                    </Text>
+                  </View>
+                )}
               </View>
-              {item.unlocked && (
+              {item.isUnlocked && (
                 <TouchableOpacity
                   className="w-10 h-10 rounded-full bg-primary/20 items-center justify-center"
                   onPress={() => handleShare(item)}

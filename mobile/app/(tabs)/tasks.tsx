@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   View, Text, TouchableOpacity, ScrollView, Modal, TextInput,
   Alert, Platform, Dimensions, PanResponder, Animated,
-  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator, Switch,
+  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator, Switch, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,12 +18,14 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
 import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
+import RecentActivity from '../../components/RecentActivity';
 import { useAuthStore } from '../../stores/authStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
 import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
 import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
+import { daysUntilLocalDate, formatDeadlineLabel } from '../../utils/date';
 import {
   useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
   getTagColor, getTagIcon, type TagColorKey,
@@ -34,7 +36,6 @@ import { calcDaysUntilDue } from '../../store/selectors/tasks';
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
 // them from `Colors` (AMBER maps to Colors.warning to preserve the exact dark hue).
 const SCREEN_H = Dimensions.get('window').height;
-const SCREEN_W = Dimensions.get('window').width;
 // Monospace family for stat numerals / section labels (matches the design's JetBrains Mono).
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const DAY_LABELS = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
@@ -47,9 +48,6 @@ const PRIORITIES = [
 const ALL_DAYS: DayOfWeek[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 // ─── Date helpers (no date-fns) ───────────────────────────────────────────────
-function getDateStr(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
 function getMonday(date: Date): Date {
   const d = new Date(date);
   const day = d.getDay();
@@ -98,8 +96,8 @@ function getDueChip(task: Task, c: ThemeColors): { label: string; bg: string; fg
   return { label: `Due ${dayName}`, bg: c.inactive, fg: c.subtext };
 }
 
-// ─── Time-per-subject grouping ────────────────────────────────────────────────
-function buildSubjectMap(sessions: SessionRecord[], tasks: Task[]): Record<string, number> {
+// ─── Time-per-category grouping ────────────────────────────────────────────────
+function buildCategoryMap(sessions: SessionRecord[], tasks: Task[]): Record<string, number> {
   const map: Record<string, number> = {};
   for (const s of sessions) {
     if (s.type !== 'focus') continue;
@@ -258,7 +256,9 @@ function StatBox({ bg, border, icon, iconColor, label, labelColor, value, sub, b
 }
 
 // ─── TaskStatsModal ───────────────────────────────────────────────────────────
-function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onToggleComplete, onEdit }: {
+// sessionLengthMinutes stays in the prop type (callers still pass it) but is not
+// read here — the modal shows actual logged time, not the configured length.
+function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }: {
   task: Task | null; sessionLengthMinutes: number;
   onClose: () => void; onLoadTimer: (taskId: string) => void; onToggleComplete: (taskId: string) => void;
   onEdit: (taskId: string) => void;
@@ -275,8 +275,8 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
       .catch(() => setAnalyticsError(true));
   }, [task?.id]);
 
-  const subjectTag = task?.tags[0] ?? null;
-  const tagStyle = useTagStyle(subjectTag ?? '');
+  const categoryTag = task?.tags[0] ?? null;
+  const tagStyle = useTagStyle(categoryTag ?? '');
 
   if (!task) return null;
   const isPending = !task.isCompleted;
@@ -297,9 +297,9 @@ function TaskStatsModal({ task, sessionLengthMinutes, onClose, onLoadTimer, onTo
           </TouchableOpacity>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          {subjectTag && (
+          {categoryTag && (
             <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: tagStyle.bg }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {subjectTag}</Text>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
             </View>
           )}
           <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: prioColor + '22' }}>
@@ -465,6 +465,20 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const [recurringDays, setRecurringDays] = useState<DayOfWeek[]>([]); // empty = every day
   const [editingTemplate, setEditingTemplate] = useState<Task | null>(null);
 
+  // Track the keyboard height so the sheet can sit ABOVE the keyboard and cap its
+  // own height, rather than the whole sheet being lifted (which pushed the header
+  // and close button off the top of the screen).
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+  // Reset when the sheet closes so it reopens in a clean state.
+  useEffect(() => { if (!visible) setKbHeight(0); }, [visible]);
+
   useEffect(() => {
     if (visible) {
       setTitle(task?.title ?? ''); setDescription(task?.description ?? '');
@@ -535,8 +549,11 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
         <TouchableWithoutFeedback onPress={onClose}>
           <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(2,2,12,0.62)' }]} />
         </TouchableWithoutFeedback>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
-          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, maxHeight: SCREEN_H * 0.92 }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+          {/* marginBottom lifts the sheet to rest on top of the keyboard; the matching
+              maxHeight reduction keeps the sheet top (and its header/close button)
+              anchored near the top of the screen instead of clipping off it. */}
+          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, marginBottom: kbHeight, maxHeight: SCREEN_H * 0.92 - kbHeight }}>
             <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 38, height: 4, borderRadius: 3, backgroundColor: Colors.inactive }} />
             </View>
@@ -629,7 +646,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                 {estSessions > 0 && <Text style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}>≈ {estSessions} session{estSessions !== 1 ? 's' : ''}</Text>}
               </View>
 
-              {/* due date + subject */}
+              {/* due date + category */}
               <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={monoLabel}>DUE DATE</Text>
@@ -663,7 +680,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                 </View>
               </View>
 
-              {/* subject editor (revealed by "+ Add") */}
+              {/* category editor (revealed by "+ Add") */}
               {tagEditorOpen && (
                 <View style={{ marginBottom: 18 }}>
                   {allTagChips.length > 0 && (
@@ -676,7 +693,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                     </View>
                   )}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New subject…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
+                    <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New category…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
                     <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
                       <Ionicons name="add" size={18} color={Colors.primarySoft} />
                     </TouchableOpacity>
@@ -727,7 +744,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
               )}
             </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </View>
       <GoalPickerModal visible={showGoalPicker} goals={goals.filter((g) => !g.isCompleted)} selectedGoalId={taskGoalId} onSelect={setTaskGoalId} onClose={() => setShowGoalPicker(false)} />
     </Modal>
@@ -735,10 +752,12 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
 }
 
 // ─── GoalFormModal ────────────────────────────────────────────────────────────
-function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSave, onClose }: {
+function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSave, onClose, onDelete }: {
   visible: boolean; goal: TaskGoal | null; existingTags: string[]; sessionLengthMinutes: number;
   onSave: (data: { title: string; tag?: string | null; targetSessions?: number | null; deadline?: string | null }) => void;
   onClose: () => void;
+  /** Only passed when editing — creates have nothing to delete. */
+  onDelete?: () => void;
 }) {
   const Colors = useTheme();
   const { ROSE } = Colors;
@@ -760,7 +779,16 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
 
   const handleSave = () => {
     if (!title.trim()) { setTitleError(true); return; }
-    onSave({ title: title.trim(), tag: tag || null, targetSessions: targetSessions > 0 ? targetSessions : null, deadline: deadline ? new Date(deadline + 'T00:00:00').toISOString() : null });
+    // Send the calendar day as-is. This used to convert to an instant via
+    // `new Date(deadline + 'T00:00:00').toISOString()`, which baked in the
+    // creating device's timezone — the same goal then read as a different day
+    // elsewhere. The server column is a plain date now.
+    onSave({
+      title: title.trim(),
+      tag: tag || null,
+      targetSessions: targetSessions > 0 ? targetSessions : null,
+      deadline: deadline || null,
+    });
   };
   const datePickerValue = deadline ? new Date(deadline + 'T00:00:00') : new Date();
   const handleDateChange = (_e: DateTimePickerEvent, date?: Date) => {
@@ -783,7 +811,7 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
             <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
               <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE }]} placeholder="e.g. Complete Calculus unit" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={80} />
               {titleError && <Text style={{ color: ROSE, fontSize: 11, marginTop: -8, marginBottom: 12 }}>Goal title can't be empty</Text>}
-              <Text style={styles.fieldLabel}>Subject tag</Text>
+              <Text style={styles.fieldLabel}>Category</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
                 {['None', ...existingTags].map((t) => { const sel = t === 'None' ? !tag : tag === t; return (
                   <TouchableOpacity key={t} onPress={() => setTag(t === 'None' ? null : t)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
@@ -819,6 +847,20 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
                 </TouchableOpacity>
               )}
               {showDatePicker && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={new Date()} />}
+
+              {/* Editing only. Goals previously had no delete affordance anywhere
+                  in the app — they could be created but never removed. */}
+              {goal && onDelete && (
+                <TouchableOpacity
+                  onPress={onDelete}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, marginTop: 8, borderRadius: 12, borderWidth: 1, borderColor: ROSE }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete goal"
+                >
+                  <Ionicons name="trash-outline" size={16} color={ROSE} style={{ marginRight: 7 }} />
+                  <Text style={{ color: ROSE, fontSize: 14, fontWeight: '600' }}>Delete goal</Text>
+                </TouchableOpacity>
+              )}
             </ScrollView>
           </View>
         </TouchableOpacity>
@@ -838,8 +880,8 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
   const barColor = isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
   const chip = getDueChip(task, Colors);
   const prioColor = priorityColor(task.priority);
-  const subjectTag = task.tags.length > 0 ? task.tags[0] : null;
-  const tagStyle = useTagStyle(subjectTag ?? '');
+  const categoryTag = task.tags.length > 0 ? task.tags[0] : null;
+  const tagStyle = useTagStyle(categoryTag ?? '');
   const progressFrac = task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
   const linkedGoal = task.taskGoalId ? goals.find((g) => g.id === task.taskGoalId) : null;
   const swipeRef = useRef<Swipeable>(null);
@@ -869,19 +911,19 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
             </View>
             <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
             <View style={{ marginLeft: 6, alignItems: 'flex-end', gap: 4 }}>
-              {(task.parentTaskId || subjectTag) && (
+              {(task.parentTaskId || categoryTag) && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   {task.parentTaskId && (
                     <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 }}>
                       <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
                     </View>
                   )}
-                  {subjectTag && (
+                  {categoryTag && (
                     <TouchableOpacity
-                      onLongPress={() => onLongPressTag?.(subjectTag)} delayLongPress={400}
+                      onLongPress={() => onLongPressTag?.(categoryTag)} delayLongPress={400}
                       style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: tagStyle.bg }}
                     >
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {subjectTag}</Text>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -962,99 +1004,10 @@ function BarColumn({ dayLabel, sessions, maxSessions, isToday, isFuture }: { day
   );
 }
 
-// ─── DaysWorkedGrid (monthly calendar heatmap) ────────────────────────────────
-function DaysWorkedGrid({ sessionsByDate, tasks, onDayPress }: { sessionsByDate: Map<string, number>; tasks: Task[]; onDayPress: (dateStr: string) => void }) {
-  const Colors = useTheme();
-  const { ROSE } = Colors;
-  const today = new Date(); const year = today.getFullYear(); const month = today.getMonth();
-  const todayDateStr = getDateStr(today); const monthName = today.toLocaleString('en-US', { month: 'long' });
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDayOfWeek = new Date(year, month, 1).getDay();
-  const padding = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1;
-  const dueDates = useMemo(() => new Set(tasks.filter((t) => !t.isArchived && t.dueDate).map((t) => t.dueDate!.substring(0, 10))), [tasks]);
-  let daysWithSessions = 0; let daysElapsed = 0;
-  const cells: { day: number | null; dateStr: string | null }[] = [];
-  for (let i = 0; i < padding; i++) cells.push({ day: null, dateStr: null });
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    cells.push({ day: d, dateStr });
-    if (dateStr <= todayDateStr) { daysElapsed++; if ((sessionsByDate.get(dateStr) ?? 0) > 0) daysWithSessions++; }
-  }
-  while (cells.length % 7 !== 0) cells.push({ day: null, dateStr: null });
-  const CELL_SIZE = Math.floor((SCREEN_W - 40 - 12) / 7);
-  const calRows: typeof cells[] = [];
-  for (let i = 0; i < cells.length; i += 7) calRows.push(cells.slice(i, i + 7));
-  return (
-    <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{monthName} {year}</Text>
-        <Text style={{ color: Colors.subtext, fontSize: 12 }}>{daysWithSessions} of {daysElapsed} days</Text>
-      </View>
-      <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-        {['M','T','W','T','F','S','S'].map((d, i) => <View key={i} style={{ width: CELL_SIZE, alignItems: 'center' }}><Text style={{ fontSize: 9, color: Colors.subtext, fontWeight: '600' }}>{d}</Text></View>)}
-      </View>
-      {calRows.map((row, ri) => (
-        <View key={ri} style={{ flexDirection: 'row', marginBottom: 2 }}>
-          {row.map((cell, ci) => {
-            if (!cell.day || !cell.dateStr) return <View key={ci} style={{ width: CELL_SIZE, height: CELL_SIZE }} />;
-            const count = sessionsByDate.get(cell.dateStr) ?? 0;
-            const isT = cell.dateStr === todayDateStr; const isFuture = cell.dateStr > todayDateStr;
-            const hasSession = !isFuture && count > 0; const isHeavy = hasSession && count >= 8;
-            const hasDue = dueDates.has(cell.dateStr);
-            const bg = hasSession ? Colors.primary : Colors.inactive;
-            const opacity = isT ? 1 : isFuture ? 0.15 : hasSession ? (isHeavy ? 1 : 0.7) : 0.25;
-            return (
-              <TouchableOpacity key={ci} onPress={() => onDayPress(cell.dateStr!)} activeOpacity={0.6} style={{ width: CELL_SIZE, height: CELL_SIZE, borderRadius: 6, backgroundColor: isT ? 'transparent' : bg, opacity, borderWidth: isT ? 2 : 0, borderColor: isT ? Colors.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 7, fontWeight: '700', color: isT ? Colors.primary : hasSession ? 'rgba(255,255,255,0.7)' : Colors.subtext }}>{cell.day}</Text>
-                {hasDue && <View style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: isT ? Colors.primary : ROSE, marginTop: 1 }} />}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      ))}
-    </View>
-  );
-}
 
-// ─── DayDetailSheet ───────────────────────────────────────────────────────────
-function DayDetailSheet({ dateStr, tasks, onClose }: { dateStr: string | null; tasks: Task[]; onClose: () => void }) {
-  const Colors = useTheme();
-  const { ROSE } = Colors;
-  if (!dateStr) return null;
-  const label = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-  const completed = tasks.filter((t) => t.completedAt && getDateStr(new Date(t.completedAt)) === dateStr);
-  const due = tasks.filter((t) => !t.isCompleted && t.dueDate && t.dueDate.substring(0, 10) === dateStr);
-  const workedOn = tasks.filter((t) => Array.isArray(t.sessionDates) && t.sessionDates.includes(dateStr));
-  return (
-    <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.55}>
-      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{label}</Text>
-          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={Colors.subtext} /></TouchableOpacity>
-        </View>
-      </View>
-      <View style={{ height: 0.5, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
-        {completed.length === 0 && due.length === 0 && workedOn.length === 0 && <Text style={{ color: Colors.subtext, textAlign: 'center', paddingVertical: 28, fontSize: 14 }}>No activity on this day</Text>}
-        {completed.length > 0 && <View style={{ marginBottom: 20 }}>
-          <Text style={{ color: Colors.accent, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>COMPLETED</Text>
-          {completed.map((t) => <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}><Ionicons name="checkmark-circle" size={16} color={Colors.accent} style={{ marginRight: 10 }} /><Text style={{ color: Colors.textBright, fontSize: 14, flex: 1 }} numberOfLines={1}>{t.title}</Text></View>)}
-        </View>}
-        {due.length > 0 && <View style={{ marginBottom: 20 }}>
-          <Text style={{ color: ROSE, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>DUE</Text>
-          {due.map((t) => <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}><Ionicons name="calendar-outline" size={16} color={ROSE} style={{ marginRight: 10 }} /><Text style={{ color: Colors.textBright, fontSize: 14, flex: 1 }} numberOfLines={1}>{t.title}</Text></View>)}
-        </View>}
-        {workedOn.length > 0 && <View>
-          <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10 }}>WORKED ON</Text>
-          {workedOn.map((t) => <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}><Ionicons name="time-outline" size={16} color={Colors.primary} style={{ marginRight: 10 }} /><Text style={{ color: Colors.textBright, fontSize: 14, flex: 1 }} numberOfLines={1}>{t.title}</Text></View>)}
-        </View>}
-      </ScrollView>
-    </BottomSheet>
-  );
-}
 
-// ─── SubjectBar ───────────────────────────────────────────────────────────────
-function SubjectBar({ tag, seconds, totalSeconds, compact, onLongPressTag }: {
+// ─── CategoryBar ───────────────────────────────────────────────────────────────
+function CategoryBar({ tag, seconds, totalSeconds, compact, onLongPressTag }: {
   tag: string; seconds: number; totalSeconds: number; compact?: boolean; onLongPressTag?: (t: string) => void;
 }) {
   const Colors = useTheme();
@@ -1137,7 +1090,17 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
         <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 3 }}>COMPLETION</Text>
         <Text style={{ color: rateColor, fontSize: 10, fontWeight: '600' }}>{rateLabel}</Text>
       </View>
-      <TouchableOpacity onPress={noTarget ? onSetGoal : undefined} activeOpacity={noTarget ? 0.7 : 1} style={pillStyle}>
+      {/* Always tappable. This used to be `onPress={noTarget ? onSetGoal : undefined}`,
+          but noTarget is `dailyFocusTargetSeconds <= 0` and the target defaults to 8
+          sessions (clamped to a minimum of 1), so it could never be true — the
+          picker was unreachable and the target could not be changed at all. */}
+      <TouchableOpacity
+        onPress={onSetGoal}
+        activeOpacity={0.7}
+        style={pillStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Change daily session goal"
+      >
         <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800', marginBottom: 1 }}>{focusValue}</Text>
         <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 3 }}>FOCUS TODAY</Text>
         <Text style={{ color: focusSubColor, fontSize: 10, fontWeight: '600' }}>{focusSubLabel}</Text>
@@ -1147,17 +1110,30 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
 }
 
 // ─── GoalZoneRow — compact goal row used in Zone 2 of the main screen ─────────
-function GoalZoneRow({ goal, tasks }: { goal: TaskGoal; tasks: Task[] }) {
+// Spells out the components behind a blended percentage, so a 'both' goal at 58%
+// isn't opaque — e.g. "3/5 tasks · 8/12 sessions".
+function goalSubMetrics(goal: TaskGoal): string {
+  const parts: string[] = [];
+  if (goal.progressMode !== 'sessions') {
+    parts.push(`${goal.completedTaskCount}/${goal.linkedTaskCount} tasks`);
+  }
+  if (goal.progressMode !== 'tasks' && goal.targetSessions) {
+    parts.push(`${goal.actualSessions}/${goal.targetSessions} sessions`);
+  }
+  return parts.join(' · ');
+}
+
+function GoalZoneRow({ goal }: { goal: TaskGoal }) {
   const Colors = useTheme();
   const { ROSE } = Colors;
-  const linked = tasks.filter((t) => t.taskGoalId === goal.id && !t.isArchived);
-  const completedCount = linked.filter((t) => t.isCompleted).length;
-  const pct = linked.length > 0 ? Math.round((completedCount / linked.length) * 100) : 0;
+  // Server-computed. Recomputing from the local task list gave a different
+  // answer (it excludes recurring templates) and couldn't see the sessions
+  // component at all.
+  const pct = Math.round(goal.overallProgress * 100);
   const ts = useTagStyle(goal.tag ?? '');
-  const deadlineDays = goal.deadline
-    ? Math.ceil((new Date(goal.deadline).getTime() - Date.now()) / 86400000)
-    : null;
-  const barColor = pct === 100 ? Colors.accent : Colors.primary;
+  const deadlineDays = daysUntilLocalDate(goal.deadline);
+  const deadlineLabel = formatDeadlineLabel(goal.deadline);
+  const barColor = pct >= 100 ? Colors.accent : Colors.primary;
 
   return (
     <View>
@@ -1170,20 +1146,20 @@ function GoalZoneRow({ goal, tasks }: { goal: TaskGoal; tasks: Task[] }) {
         <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>
           {goal.title}
         </Text>
-        <Text style={{ color: pct === 100 ? Colors.accent : Colors.textBright, fontSize: 14, fontWeight: '800', marginLeft: 10 }}>
+        <Text style={{ color: pct >= 100 ? Colors.accent : Colors.textBright, fontSize: 14, fontWeight: '800', marginLeft: 10 }}>
           {pct}%
         </Text>
       </View>
       <View style={{ height: 5, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden' }}>
-        <View style={{ width: `${pct}%`, height: '100%', borderRadius: 3, backgroundColor: barColor }} />
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: barColor }} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
         <Text style={{ color: Colors.subtext, fontSize: 10 }}>
-          {completedCount}/{linked.length} tasks{goal.targetSessions ? ` · ${goal.targetSessions} sessions target` : ''}
+          {goalSubMetrics(goal)}
         </Text>
-        {deadlineDays !== null && (
-          <Text style={{ color: deadlineDays < 0 ? ROSE : Colors.subtext, fontSize: 10 }}>
-            {deadlineDays < 0 ? `${Math.abs(deadlineDays)}d overdue` : deadlineDays === 0 ? 'Due today' : `${deadlineDays}d left`}
+        {deadlineLabel && (
+          <Text style={{ color: (deadlineDays ?? 0) < 0 ? ROSE : Colors.subtext, fontSize: 10 }}>
+            {deadlineLabel}
           </Text>
         )}
       </View>
@@ -1192,15 +1168,14 @@ function GoalZoneRow({ goal, tasks }: { goal: TaskGoal; tasks: Task[] }) {
 }
 
 // ─── GoalCard ─────────────────────────────────────────────────────────────────
-function GoalCard({ goal, tasks, onLongPressTag }: { goal: TaskGoal; tasks: Task[]; onLongPressTag?: (t: string) => void }) {
+function GoalCard({ goal, onLongPressTag }: { goal: TaskGoal; onLongPressTag?: (t: string) => void }) {
   const Colors = useTheme();
   const { ROSE } = Colors;
   const styles = useMemo(() => getStyles(Colors), [Colors]);
-  const linked = tasks.filter((t) => t.taskGoalId === goal.id && !t.isArchived);
-  const completed = linked.filter((t) => t.isCompleted).length;
-  const pct = linked.length > 0 ? Math.round((completed / linked.length) * 100) : 0;
+  const pct = Math.round(goal.overallProgress * 100);
   const ts = useTagStyle(goal.tag ?? '');
-  const deadlineDays = goal.deadline ? Math.ceil((new Date(goal.deadline).getTime() - Date.now()) / 86400000) : null;
+  const deadlineDays = daysUntilLocalDate(goal.deadline);
+  const deadlineLabel = formatDeadlineLabel(goal.deadline);
   return (
     <View style={[styles.card, { marginBottom: 12 }]}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -1213,15 +1188,15 @@ function GoalCard({ goal, tasks, onLongPressTag }: { goal: TaskGoal; tasks: Task
                 <Text style={{ fontSize: 10, fontWeight: '700', color: ts.text }}>{ts.icon} {goal.tag}</Text>
               </TouchableOpacity>
             )}
-            {deadlineDays !== null && <Text style={{ color: deadlineDays < 0 ? ROSE : Colors.subtext, fontSize: 11 }}>{deadlineDays < 0 ? `${Math.abs(deadlineDays)}d overdue` : deadlineDays === 0 ? 'Due today' : `${deadlineDays}d left`}</Text>}
+            {deadlineLabel && <Text style={{ color: (deadlineDays ?? 0) < 0 ? ROSE : Colors.subtext, fontSize: 11 }}>{deadlineLabel}</Text>}
           </View>
         </View>
         <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800' }}>{pct}%</Text>
       </View>
       <View style={{ height: 6, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
-        <View style={{ width: `${pct}%`, height: '100%', borderRadius: 3, backgroundColor: goal.isCompleted ? Colors.accent : Colors.primary }} />
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: goal.isCompleted ? Colors.accent : Colors.primary }} />
       </View>
-      <Text style={{ color: Colors.subtext, fontSize: 12 }}>{completed}/{linked.length} tasks complete{goal.targetSessions ? ` · ${goal.targetSessions} sessions target` : ''}</Text>
+      <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goalSubMetrics(goal)}</Text>
     </View>
   );
 }
@@ -1272,19 +1247,30 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
 }
 
 // ─── Card 2: Goal Progress ────────────────────────────────────────────────────
-function GoalProgressCard({ goals, tasks, onGoalPress }: { goals: TaskGoal[]; tasks: Task[]; onGoalPress: () => void }) {
+function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPress: () => void }) {
   const Colors = useTheme();
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const activeGoals = goals.filter((g) => !g.isCompleted && !g.isArchived);
   if (activeGoals.length === 0) return null;
 
-  const withPct = activeGoals.map((g) => {
-    const linked = tasks.filter((t) => t.taskGoalId === g.id && !t.isArchived);
-    const done = linked.filter((t) => t.isCompleted).length;
-    return { ...g, pct: linked.length > 0 ? Math.round((done / linked.length) * 100) : 0, linked: linked.length };
-  }).sort((a, b) => b.pct - a.pct);
+  // Surface the goal most at risk, not the one closest to done. Sorting by
+  // completion meant a goal with nothing linked read 0% and could never appear —
+  // even with a deadline tomorrow, which is exactly when it needs attention.
+  // Soonest deadline wins; no deadline sorts last; ties break toward the goal
+  // with further to go.
+  const goal = [...activeGoals].sort((a, b) => {
+    const da = daysUntilLocalDate(a.deadline);
+    const db = daysUntilLocalDate(b.deadline);
+    if (da !== db) {
+      if (da === null) return 1;
+      if (db === null) return -1;
+      return da - db;
+    }
+    return a.overallProgress - b.overallProgress;
+  })[0];
 
-  const goal = withPct[0];
+  const pct = Math.round(goal.overallProgress * 100);
+  const deadlineLabel = formatDeadlineLabel(goal.deadline);
   const milestones = [25, 50, 75, 100];
 
   return (
@@ -1292,17 +1278,19 @@ function GoalProgressCard({ goals, tasks, onGoalPress }: { goals: TaskGoal[]; ta
       <HeroLabel text="🎯 Goal progress" />
       <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 12 }} numberOfLines={2}>{goal.title}</Text>
       <View style={{ height: 7, backgroundColor: Colors.inactive, borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
-        <View style={{ width: `${goal.pct}%`, height: '100%', borderRadius: 4, backgroundColor: goal.pct === 100 ? Colors.accent : Colors.primary }} />
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 4, backgroundColor: pct >= 100 ? Colors.accent : Colors.primary }} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
         {milestones.map((m) => (
           <View key={m} style={{ alignItems: 'center', gap: 3 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: goal.pct >= m ? Colors.accent : Colors.inactive }} />
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: pct >= m ? Colors.accent : Colors.inactive }} />
             <Text style={{ color: Colors.subtext, fontSize: 9 }}>{m}%</Text>
           </View>
         ))}
       </View>
-      <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goal.pct}% complete · {goal.linked} tasks linked</Text>
+      <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+        {pct}% · {goalSubMetrics(goal)}{deadlineLabel ? ` · ${deadlineLabel}` : ''}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -1502,7 +1490,7 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
   const renderCard = () => {
     switch (effectiveCard) {
       case 'urgency':         return <UrgencyCard tasks={tasks} onSelectAndFocus={onSelectAndFocus} />;
-      case 'goal_progress':   return <GoalProgressCard goals={goals} tasks={tasks} onGoalPress={onGoalPress} />;
+      case 'goal_progress':   return <GoalProgressCard goals={goals} onGoalPress={onGoalPress} />;
       case 'time_nudge':      return <TimeNudgeCard peakHour={peakHour} sessionHistory={sessionHistory} onFocus={onFocus} />;
       case 'momentum':        return <MomentumCard currentStreak={currentStreak} longestStreak={longestStreak} sessionHistory={sessionHistory} />;
       case 'self_comparison': return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
@@ -1642,7 +1630,6 @@ export default function TasksScreen() {
   const [showTargetPicker, setShowTargetPicker] = useState(false);
   const [draftTarget, setDraftTarget] = useState(dailySessionTarget);
   const setDailySessionTarget = useTimerStore((s) => s.setDailySessionTarget);
-  const [calDay, setCalDay] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1698,7 +1685,6 @@ export default function TasksScreen() {
   }, []);
   const monday = useMemo(() => getMonday(now), [now]);
   const nextMonday = useMemo(() => { const d = new Date(monday); d.setDate(d.getDate() + 7); return d; }, [monday]);
-  const lastMonday = useMemo(() => { const d = new Date(monday); d.setDate(d.getDate() - 7); return d; }, [monday]);
   const todayColIndex = useMemo(() => { const d = now.getDay(); return d === 0 ? 6 : d - 1; }, [now]);
 
   // ── Session analytics ──
@@ -1706,7 +1692,6 @@ export default function TasksScreen() {
   const sessionsToday = todaySessions.length;
   const focusSecondsToday = useMemo(() => todaySessions.reduce((sum, s) => sum + s.durationSeconds, 0), [todaySessions]);
   const sessionsLeft = Math.max(0, dailySessionTarget - sessionsToday);
-  const goalProgress = dailySessionTarget > 0 ? Math.min(1, sessionsToday / dailySessionTarget) : 0;
 
   const thisWeekByDay = useMemo(() => {
     const counts = [0,0,0,0,0,0,0];
@@ -1714,34 +1699,15 @@ export default function TasksScreen() {
     return counts;
   }, [sessionHistory, monday, nextMonday]);
 
-  const lastWeekByDay = useMemo(() => {
-    const counts = [0,0,0,0,0,0,0];
-    for (const s of sessionHistory) { if (s.type !== 'focus') continue; const d = new Date(s.completedAt); if (d >= lastMonday && d < monday) { const dow = d.getDay(); counts[dow === 0 ? 6 : dow-1]++; } }
-    return counts;
-  }, [sessionHistory, monday, lastMonday]);
-
   const maxDaySessions = useMemo(() => Math.max(...thisWeekByDay, 1), [thisWeekByDay]);
-  const weekTotal = useMemo(() => thisWeekByDay.reduce((a,b) => a+b, 0), [thisWeekByDay]);
-  const lastWeekTotal = useMemo(() => lastWeekByDay.reduce((a,b) => a+b, 0), [lastWeekByDay]);
 
-  const monthSessionsByDate = useMemo(() => {
-    const map = new Map<string, number>();
-    const y = now.getFullYear(); const m = now.getMonth();
-    const first = new Date(y, m, 1).getTime(); const firstNext = new Date(y, m+1, 1).getTime();
-    for (const s of sessionHistory) { if (s.type !== 'focus') continue; if (s.completedAt < first || s.completedAt >= firstNext) continue; const key = getDateStr(new Date(s.completedAt)); map.set(key, (map.get(key) ?? 0) + 1); }
-    return map;
-  }, [sessionHistory, now]);
 
-  // ── Subject data ──
-  const todaySubjectMap = useMemo(() => buildSubjectMap(todaySessions, tasks), [todaySessions, tasks]);
-  const todaySubjectTotal = useMemo(() => Object.values(todaySubjectMap).reduce((a,b) => a+b, 0), [todaySubjectMap]);
-  const todaySubjectsSorted = useMemo(() => Object.entries(todaySubjectMap).sort((a,b) => b[1]-a[1]), [todaySubjectMap]);
-  const todayTopShare = todaySubjectTotal > 0 && todaySubjectsSorted.length > 1 ? todaySubjectsSorted[0][1] / todaySubjectTotal : 0;
+  // ── Category data ──
 
   const periodSessions = useMemo(() => filterByPeriod(sessionHistory.filter((s) => s.type === 'focus'), trackerPeriod), [sessionHistory, trackerPeriod]);
-  const periodSubjectMap = useMemo(() => buildSubjectMap(periodSessions, tasks), [periodSessions, tasks]);
-  const periodSubjectTotal = useMemo(() => Object.values(periodSubjectMap).reduce((a,b) => a+b, 0), [periodSubjectMap]);
-  const periodSubjectsSorted = useMemo(() => Object.entries(periodSubjectMap).sort((a,b) => b[1]-a[1]), [periodSubjectMap]);
+  const periodCategoryMap = useMemo(() => buildCategoryMap(periodSessions, tasks), [periodSessions, tasks]);
+  const periodCategoryTotal = useMemo(() => Object.values(periodCategoryMap).reduce((a,b) => a+b, 0), [periodCategoryMap]);
+  const periodCategoriesSorted = useMemo(() => Object.entries(periodCategoryMap).sort((a,b) => b[1]-a[1]), [periodCategoryMap]);
 
   // ── Peak focus & completion rate ──
   const allFocusSessions = useMemo(() => sessionHistory.filter((s) => s.type === 'focus'), [sessionHistory]);
@@ -1797,13 +1763,14 @@ export default function TasksScreen() {
         });
         await useTaskStore.getState().fetchRecurringTemplates();
         // Still apply edits to the visible instance itself.
-        await taskActions.updateTask(formTask.id, rest as any);
+        await taskActions.updateTask(formTask.id, rest);
       } else {
         // Regular task — pass recurring through so it can be promoted to recurring.
-        await taskActions.updateTask(formTask.id, data as any);
+        await taskActions.updateTask(formTask.id, data);
       }
     } else {
-      await taskActions.createTask(data as any);
+      // No cast: taskGoalId must survive to the server, and the types now say so.
+      await taskActions.createTask(data);
     }
     setFormTask(null);
   }, [formTask, taskActions]);
@@ -1831,6 +1798,30 @@ export default function TasksScreen() {
     await taskActions.toggleComplete(taskId);
     showToast(task.isCompleted ? 'Marked incomplete' : '✓ Marked complete');
   }, [tasks, taskActions, showToast]);
+
+  const handleGoalDelete = useCallback(() => {
+    if (!formGoal) return;
+    const goalToDelete = formGoal;
+    Alert.alert(
+      'Delete goal?',
+      `"${goalToDelete.title}" will be removed. Linked tasks are kept — they just won't belong to a goal any more.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setShowGoalForm(false);
+            setFormGoal(null);
+            await goalActions.deleteGoal(goalToDelete.id);
+            // The server clears taskGoalId on every linked task, so refetch to
+            // drop the now-stale goal chips.
+            await useTaskStore.getState().fetchTasks(true);
+          },
+        },
+      ],
+    );
+  }, [formGoal, goalActions]);
 
   const handleGoalSave = useCallback(async (data: any) => {
     setShowGoalForm(false);
@@ -1862,7 +1853,19 @@ export default function TasksScreen() {
           <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TodayPill value={String(sessionsToday)} label="Sessions done" />
-              <TodayPill value={String(sessionsLeft)} label="Sessions to go" />
+              {/* Tappable: this pill is derived from the daily session target, so
+                  it is the natural place to change it. */}
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                activeOpacity={0.7}
+                onPress={() => { setDraftTarget(dailySessionTarget); setShowTargetPicker(true); }}
+                accessibilityRole="button"
+                accessibilityLabel={`${sessionsLeft} sessions to go. Change daily session goal`}
+              >
+                {/* "Today's target", not "Sessions to go" — the old label read as
+                    a Goal, which is a different feature entirely. */}
+                <TodayPill value={String(sessionsLeft)} label="Today's target" />
+              </TouchableOpacity>
               <TodayPill value={formatDuration(focusSecondsToday)} label="Focus today" />
               <TodayPill value={`${tasksDoneToday}/${totalActive}`} label="Tasks done" />
             </View>
@@ -1874,9 +1877,22 @@ export default function TasksScreen() {
             </View>
             {goals.length === 0 ? (
               <View style={[styles.card, { alignItems: 'center', paddingVertical: 32 }]}>
-                <Text style={{ color: Colors.subtext, fontSize: 13 }}>No goals yet — tap + to get started</Text>
+                <Text style={{ color: Colors.subtext, fontSize: 13 }}>No goals yet. Group your tasks into something worth finishing.</Text>
               </View>
-            ) : goals.map((g) => <GoalCard key={g.id} goal={g} tasks={tasks} onLongPressTag={setOverrideTag} />)}
+            ) : goals.map((g) => (
+              // Tap to edit. GoalFormModal already supported editing (it takes a
+              // `goal` prop and pre-fills every field) — it was simply never
+              // opened with one, so goals could be created but never changed.
+              <TouchableOpacity
+                key={g.id}
+                activeOpacity={0.85}
+                onPress={() => { setFormGoal(g); setShowGoalForm(true); }}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit goal ${g.title}`}
+              >
+                <GoalCard goal={g} onLongPressTag={setOverrideTag} />
+              </TouchableOpacity>
+            ))}
           </View>
           <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
             <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
@@ -1898,14 +1914,14 @@ export default function TasksScreen() {
             </View>
           )}
         </ScrollView>
-        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} />
+        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
       </SafeAreaView>
     );
   }
 
   if (activeView === 'time-tracker') {
-    const periodMap = buildSubjectMap(periodSessions, tasks);
+    const periodMap = buildCategoryMap(periodSessions, tasks);
     const periodTotal = Object.values(periodMap).reduce((a,b) => a+b, 0);
     const periodSorted = Object.entries(periodMap).sort((a,b) => b[1]-a[1]);
     const topShare = periodTotal > 0 && periodSorted.length > 1 ? periodSorted[0][1] / periodTotal : 0;
@@ -1937,14 +1953,14 @@ export default function TasksScreen() {
               <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>{periodSessions.length}</Text>
               <Text style={{ color: Colors.subtext, fontSize: 12 }}>sessions</Text>
               <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginTop: 4 }}>{periodSorted.length}</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 12 }}>subjects</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 12 }}>categories</Text>
             </View>
           </View>
           {periodSorted.length === 0 ? (
             <Text style={{ color: Colors.subtext, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Complete your first focus session to see your study history</Text>
           ) : (<>
             {topShare > 0.70 && <View style={{ backgroundColor: AMBER + '15', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'flex-start' }}><Text style={{ fontSize: 16, marginRight: 8 }}>⚠️</Text><Text style={{ color: AMBER, fontSize: 12, flex: 1 }}>{periodSorted[0][0]} took {Math.round(topShare * 100)}% of time — {periodSorted.slice(1).map(([t]) => t).join(', ')} may need attention.</Text></View>}
-            {periodSorted.map(([tag, secs]) => <SubjectBar key={tag} tag={tag} seconds={secs} totalSeconds={periodTotal} onLongPressTag={setOverrideTag} />)}
+            {periodSorted.map(([tag, secs]) => <CategoryBar key={tag} tag={tag} seconds={secs} totalSeconds={periodTotal} onLongPressTag={setOverrideTag} />)}
           </>)}
           <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginTop: 8, marginBottom: 14 }}>This Week</Text>
           <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 20 }]}>
@@ -1971,7 +1987,7 @@ export default function TasksScreen() {
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
             <TodayPill value={`${Math.round(allTimeSeconds / 3600)}h`} label="Focus hours" />
             <TodayPill value={String(allFocusSessions.length)} label="Sessions" />
-            <TodayPill value={String(Object.keys(buildSubjectMap(allFocusSessions, tasks)).length)} label="Subjects" />
+            <TodayPill value={String(Object.keys(buildCategoryMap(allFocusSessions, tasks)).length)} label="Categories" />
           </View>
         </ScrollView>
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
@@ -2000,7 +2016,7 @@ export default function TasksScreen() {
         <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}>
           {filteredTasks.length === 0 ? (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
-              <Text style={{ color: Colors.subtext, fontSize: 13 }}>No tasks — tap + to add one</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 13 }}>Nothing planned yet. What has to move today?</Text>
             </View>
           ) : filteredTasks.map((task) => (
             <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
@@ -2014,28 +2030,13 @@ export default function TasksScreen() {
     );
   }
 
-  if (activeView === 'calendar') {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
-          <TouchableOpacity onPress={goBack} style={{ marginRight: 12 }}><Ionicons name="chevron-back" size={24} color={Colors.text} /></TouchableOpacity>
-          <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>Calendar</Text>
-        </View>
-        <View style={{ flexDirection: 'row', paddingHorizontal: 20, gap: 8, marginBottom: 16 }}>
-          <TodayPill value={String(new Set([...sessionHistory.filter((s) => s.type === 'focus' && isThisMonth(s.completedAt)).map((s) => getDateStr(new Date(s.completedAt)))]).size)} label="Days studied" />
-          <TodayPill value={String(Math.max(...Array.from(monthSessionsByDate.values()), 0))} label="Best day" />
-          <TodayPill value={`${streak}d`} label="Streak" />
-        </View>
-        <ScrollView contentContainerStyle={{ paddingBottom: 48 }}>
-          <DaysWorkedGrid sessionsByDate={monthSessionsByDate} tasks={nonArchived} onDayPress={setCalDay} />
-        </ScrollView>
-        <DayDetailSheet dateStr={calDay} tasks={nonArchived} onClose={() => setCalDay(null)} />
-      </SafeAreaView>
-    );
-  }
+  // The calendar view that used to live here has moved to the Calendar tab —
+  // there is no reason for two calendars in one app. Days studied / best day /
+  // streak now appear in the Calendar tab's Stats panel, and the month heat grid
+  // sits under its Month view.
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // MAIN SCREEN (5 zones)
+  // MAIN SCREEN
   // ─────────────────────────────────────────────────────────────────────────────
   const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
@@ -2054,6 +2055,15 @@ export default function TasksScreen() {
               <Ionicons name="add" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Recent activity — moved here from the Profile tab. Self-only log of
+            sessions, tasks, goals, achievements and level-ups. */}
+        <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
+          <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
+            Recent Activity
+          </Text>
+          <RecentActivity limit={4} />
         </View>
 
         {/* Pill strip */}
@@ -2129,7 +2139,7 @@ export default function TasksScreen() {
           {nonArchived.length === 0 ? (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36 }]}>
               <Ionicons name="checkbox-outline" size={32} color={Colors.subtext} />
-              <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 10 }}>No tasks yet — tap + to add one</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 10 }}>Nothing planned yet. What has to move today?</Text>
             </View>
           ) : (<>
             {(() => {
@@ -2156,7 +2166,7 @@ export default function TasksScreen() {
           <ZoneHeader title="Goals" onSeeMore={() => setActiveView('goal-detail')} />
           {goals.filter((g) => !g.isCompleted && !g.isArchived).length === 0 ? (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 28 }]}>
-              <Text style={{ color: Colors.subtext, fontSize: 13 }}>No active goals</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 13 }}>No active goals — every task is standalone right now</Text>
               <TouchableOpacity onPress={() => { setFormGoal(null); setShowGoalForm(true); }}>
                 <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '600', marginTop: 10 }}>+ Add a goal</Text>
               </TouchableOpacity>
@@ -2165,7 +2175,7 @@ export default function TasksScreen() {
             <View style={[styles.card]}>
               {goals.filter((g) => !g.isCompleted && !g.isArchived).slice(0, 3).map((goal, i, arr) => (
                 <View key={goal.id}>
-                  <GoalZoneRow goal={goal} tasks={tasks} />
+                  <GoalZoneRow goal={goal} />
                   {i < arr.length - 1 && (
                     <View style={{ height: 0.5, backgroundColor: Colors.border, marginVertical: 14 }} />
                   )}
@@ -2188,13 +2198,13 @@ export default function TasksScreen() {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800' }}>{formatDuration(periodSubjectTotal)}</Text>
+                <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800' }}>{formatDuration(periodCategoryTotal)}</Text>
                 <Text style={{ color: Colors.subtext, fontSize: 12 }}>focus time · {periodSessions.length} sessions</Text>
               </View>
             </View>
-            {periodSubjectsSorted.length === 0 ? (
+            {periodCategoriesSorted.length === 0 ? (
               <Text style={{ color: Colors.subtext, fontSize: 12, textAlign: 'center', paddingVertical: 8 }}>No sessions in this period</Text>
-            ) : periodSubjectsSorted.slice(0, 3).map(([tag, secs]) => <SubjectBar key={tag} tag={tag} seconds={secs} totalSeconds={periodSubjectTotal} compact onLongPressTag={setOverrideTag} />)}
+            ) : periodCategoriesSorted.slice(0, 3).map(([tag, secs]) => <CategoryBar key={tag} tag={tag} seconds={secs} totalSeconds={periodCategoryTotal} compact onLongPressTag={setOverrideTag} />)}
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 12 }}>
               {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} sessions={thisWeekByDay[i]} maxSessions={maxDaySessions} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
             </View>
@@ -2213,21 +2223,12 @@ export default function TasksScreen() {
           </View>
         </View>
 
-        {/* Zone 5 — Calendar */}
-        <View style={{ marginBottom: 8 }}>
-          <View style={{ paddingHorizontal: 20, marginBottom: 10 }}>
-            <ZoneHeader title="Calendar" onSeeMore={() => setActiveView('calendar')} />
-          </View>
-          <DaysWorkedGrid sessionsByDate={monthSessionsByDate} tasks={nonArchived} onDayPress={setCalDay} />
-        </View>
-
       </ScrollView>
 
       {/* Modals */}
       {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
       <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
-      <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} />
-      <DayDetailSheet dateStr={calDay} tasks={nonArchived} onClose={() => setCalDay(null)} />
+      <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
       <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
       <Toast message={toast} />
     </SafeAreaView>

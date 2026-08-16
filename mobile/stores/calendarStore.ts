@@ -1,0 +1,265 @@
+import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '../services/api';
+import type { CalendarItem, CalendarStats, GoogleCalendarStatus, Note } from '../types';
+import { useAuthStore } from './authStore';
+import {
+  fetchAppleEvents,
+  getSelectedCalendarId,
+  isAppleCalendarSupported,
+} from '../services/appleCalendar';
+
+/**
+ * Calendar data for the visible range.
+ *
+ * Cached per range rather than as one blob: users scrub back and forth across
+ * weeks and months, and a single cache key would mean refetching a range that
+ * was already loaded a moment ago.
+ */
+
+const rangeKey = (userId: string, start: string, end: string) =>
+  `calendar:cache:${userId}:${start}:${end}`;
+
+// Keep the set of cached range keys so logout can clear them all — AsyncStorage
+// has no prefix-delete.
+const INDEX_KEY = (userId: string) => `calendar:cache:index:${userId}`;
+
+async function readCache(userId: string, start: string, end: string): Promise<CalendarItem[] | null> {
+  try {
+    const raw = await AsyncStorage.getItem(rangeKey(userId, start, end));
+    return raw ? (JSON.parse(raw) as CalendarItem[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCache(
+  userId: string,
+  start: string,
+  end: string,
+  items: CalendarItem[],
+): Promise<void> {
+  try {
+    const key = rangeKey(userId, start, end);
+    await AsyncStorage.setItem(key, JSON.stringify(items));
+    const rawIndex = await AsyncStorage.getItem(INDEX_KEY(userId));
+    const index: string[] = rawIndex ? JSON.parse(rawIndex) : [];
+    if (!index.includes(key)) {
+      index.push(key);
+      await AsyncStorage.setItem(INDEX_KEY(userId), JSON.stringify(index));
+    }
+  } catch (err) {
+    console.warn('[calendarStore] cache write failed:', err);
+  }
+}
+
+async function clearCache(userId: string): Promise<void> {
+  try {
+    const rawIndex = await AsyncStorage.getItem(INDEX_KEY(userId));
+    const index: string[] = rawIndex ? JSON.parse(rawIndex) : [];
+    if (index.length > 0) await AsyncStorage.multiRemove(index);
+    await AsyncStorage.removeItem(INDEX_KEY(userId));
+  } catch {
+    /* best effort */
+  }
+}
+
+interface CalendarStoreState {
+  /** Items for the currently-viewed range, server + device merged. */
+  items: CalendarItem[];
+  notes: Note[];
+  stats: CalendarStats | null;
+  googleStatus: GoogleCalendarStatus | null;
+  isLoading: boolean;
+  isLoadingStats: boolean;
+  error: string | null;
+  /** Set when Google is connected but its events couldn't be loaded this fetch. */
+  syncWarning: string | null;
+  loadedRange: { start: string; end: string } | null;
+
+  fetchRange: (start: string, end: string) => Promise<void>;
+  fetchStats: (start: string, end: string) => Promise<void>;
+  fetchGoogleStatus: () => Promise<void>;
+  createNote: (data: { content: string; date?: string | null; isTodo?: boolean }) => Promise<void>;
+  updateNote: (id: string, data: Partial<Note>) => Promise<void>;
+  deleteNote: (id: string) => Promise<void>;
+  clearCalendar: (userId?: string) => void;
+}
+
+export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
+  items: [],
+  notes: [],
+  stats: null,
+  googleStatus: null,
+  isLoading: false,
+  isLoadingStats: false,
+  error: null,
+  syncWarning: null,
+  loadedRange: null,
+
+  fetchRange: async (start, end) => {
+    const userId = useAuthStore.getState().user?.id;
+    set({ isLoading: true, error: null, syncWarning: null, loadedRange: { start, end } });
+
+    // Paint cached items for this exact range immediately, so scrubbing back to a
+    // week you already visited is instant rather than a spinner.
+    if (userId) {
+      const cached = await readCache(userId, start, end);
+      if (cached) set({ items: cached, isLoading: false });
+    }
+
+    try {
+      const res = await api.get<{
+        items: CalendarItem[];
+        googleConnected: boolean;
+        googleSyncError: string | null;
+      }>(`/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+
+      if (!res.success || !res.data) {
+        set({ error: res.error || 'Failed to load calendar', isLoading: false });
+        return;
+      }
+
+      let items = res.data.items;
+
+      // Apple events are read on-device and merged here — never fetched by, or
+      // stored on, the server.
+      if (userId && isAppleCalendarSupported()) {
+        const appleCalendarId = await getSelectedCalendarId(userId);
+        if (appleCalendarId) {
+          const appleItems = await fetchAppleEvents(appleCalendarId, start, end);
+          items = [...items, ...appleItems];
+        }
+      }
+
+      // A later range change may have landed while this request was in flight.
+      const current = get().loadedRange;
+      if (current && (current.start !== start || current.end !== end)) return;
+
+      const notes = items
+        .filter((i) => i.type === 'note')
+        .map((i) => i.data as Note);
+
+      set({
+        items,
+        notes,
+        isLoading: false,
+        syncWarning: res.data.googleSyncError,
+      });
+
+      if (userId) writeCache(userId, start, end, items);
+    } catch {
+      set({ error: 'Failed to load calendar', isLoading: false });
+    }
+  },
+
+  fetchStats: async (start, end) => {
+    set({ isLoadingStats: true });
+    try {
+      // tzOffset so day-of-week buckets follow the user's calendar day.
+      const tzOffset = -new Date().getTimezoneOffset();
+      const res = await api.get<CalendarStats>(
+        `/calendar/stats?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&tzOffset=${tzOffset}`,
+      );
+      set({ stats: res.success && res.data ? res.data : null, isLoadingStats: false });
+    } catch {
+      set({ isLoadingStats: false });
+    }
+  },
+
+  fetchGoogleStatus: async () => {
+    try {
+      const res = await api.get<GoogleCalendarStatus>('/calendar/google/status');
+      if (res.success && res.data) set({ googleStatus: res.data });
+    } catch {
+      /* non-critical */
+    }
+  },
+
+  createNote: async (data) => {
+    const previous = get().notes;
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: Note = {
+      id: tempId,
+      content: data.content,
+      date: data.date ?? null,
+      isTodo: data.isTodo ?? false,
+      isCompleted: false,
+      isArchived: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    set({ notes: [...previous, optimistic] });
+
+    try {
+      const res = await api.post<Note>('/notes', data);
+      if (res.success && res.data) {
+        const confirmed = res.data;
+        set({
+          notes: get().notes.map((n) => (n.id === tempId ? confirmed : n)),
+          // Keep the aggregated item list in step so Day view updates without a refetch.
+          items: [
+            ...get().items.filter((i) => !(i.type === 'note' && (i.data as Note).id === tempId)),
+            ...(confirmed.date ? [{ type: 'note' as const, date: confirmed.date, data: confirmed }] : []),
+          ],
+        });
+      } else {
+        set({ notes: previous });
+      }
+    } catch {
+      set({ notes: previous });
+    }
+  },
+
+  updateNote: async (id, data) => {
+    const previous = get().notes;
+    const previousItems = get().items;
+    const applyLocal = (n: Note) => (n.id === id ? { ...n, ...data } : n);
+    set({
+      notes: previous.map(applyLocal),
+      items: previousItems.map((i) =>
+        i.type === 'note' && (i.data as Note).id === id
+          ? { ...i, data: applyLocal(i.data as Note) }
+          : i,
+      ),
+    });
+
+    try {
+      const res = await api.patch<Note>(`/notes/${id}`, data);
+      if (!res.success) set({ notes: previous, items: previousItems });
+    } catch {
+      set({ notes: previous, items: previousItems });
+    }
+  },
+
+  deleteNote: async (id) => {
+    const previous = get().notes;
+    const previousItems = get().items;
+    set({
+      notes: previous.filter((n) => n.id !== id),
+      items: previousItems.filter((i) => !(i.type === 'note' && (i.data as Note).id === id)),
+    });
+
+    try {
+      const res = await api.delete(`/notes/${id}`);
+      if (!res.success) set({ notes: previous, items: previousItems });
+    } catch {
+      set({ notes: previous, items: previousItems });
+    }
+  },
+
+  clearCalendar: (userId?: string) => {
+    const resolved = userId ?? useAuthStore.getState().user?.id;
+    set({
+      items: [],
+      notes: [],
+      stats: null,
+      googleStatus: null,
+      isLoading: false,
+      error: null,
+      syncWarning: null,
+      loadedRange: null,
+    });
+    if (resolved) clearCache(resolved);
+  },
+}));

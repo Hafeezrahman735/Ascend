@@ -3,14 +3,14 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
+import { resolveLocalDate, dayNameFromLocalDate } from '../../lib/localDate';
+import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
+import { awardXp } from '../../lib/gamification';
+import { taskCompletionXP } from '../../lib/xp';
+import { eventBus, EventTypes } from '../../middleware/eventBus';
 
 const PRIORITY_VALUES = ['low', 'medium', 'high', 'urgent'] as const;
 const DAY_VALUES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-
-// Maps a Date to its lowercase 3-letter weekday name (matches recurringDays values).
-function getDayName(date: Date): string {
-  return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][date.getDay()];
-}
 
 // Returns the [start, end) UTC-day bounds for an ISO date string 'YYYY-MM-DD'.
 function dayBounds(isoDate: string): { start: Date; end: Date } {
@@ -29,6 +29,12 @@ const createTaskSchema = z.object({
   priority: z.enum(PRIORITY_VALUES).optional().default('medium'),
   isRecurring: z.boolean().optional().default(false),
   recurringDays: z.array(z.enum(DAY_VALUES)).max(7).optional().default([]),
+  // Was missing entirely, so a goal picked in the create form was silently
+  // dropped by zod and the user had to create-then-edit to attach it.
+  taskGoalId: z.string().nullable().optional(),
+  // The client's calendar day, so a recurring task spawns on the user's "today"
+  // rather than the server's. See lib/localDate.ts.
+  localDate: z.string().optional().nullable(),
 });
 
 const updateTaskSchema = z.object({
@@ -53,6 +59,13 @@ export function setupTaskRoutes(router: Router): void {
       const userId = authenticate(req);
       const data = createTaskSchema.parse(req.body);
 
+      // Same ownership gate as the update path — a task may only be attached to
+      // a goal the caller owns.
+      if (!(await userOwnsGoal(userId, data.taskGoalId))) {
+        res.status(404).json({ success: false, error: 'Goal not found' });
+        return;
+      }
+
       const task = await prisma.task.create({
         data: {
           userId,
@@ -64,13 +77,14 @@ export function setupTaskRoutes(router: Router): void {
           priority: data.priority,
           isRecurring: data.isRecurring,
           recurringDays: data.recurringDays,
+          taskGoalId: data.taskGoalId ?? null,
         },
       });
 
       // If recurring, spawn today's instance immediately so it shows up right away.
       if (data.isRecurring) {
-        const today = new Date().toISOString().split('T')[0];
-        const todayDayName = getDayName(new Date());
+        const today = resolveLocalDate(data.localDate, new Date(), 'POST /tasks');
+        const todayDayName = dayNameFromLocalDate(today);
         const shouldSpawnToday =
           data.recurringDays.length === 0 || data.recurringDays.includes(todayDayName as typeof DAY_VALUES[number]);
 
@@ -87,6 +101,10 @@ export function setupTaskRoutes(router: Router): void {
               parentTaskId: task.id,
               isRecurring: false, // instances are not themselves recurring
               recurringDays: [],
+              // Instances inherit the template's goal link. Templates are hidden
+              // from GET /tasks, so without this a recurring task linked to a
+              // goal contributed nothing to it — ever.
+              taskGoalId: data.taskGoalId ?? null,
               sessionsOnTask: 0,
               totalTimeOnTask: 0,
               sessionDates: [],
@@ -156,8 +174,14 @@ export function setupTaskRoutes(router: Router): void {
   router.post('/tasks/spawn-recurring', async (req: Request, res: Response) => {
     try {
       const userId = authenticate(req);
-      const today = new Date().toISOString().split('T')[0];
-      const todayDayName = getDayName(new Date());
+      // "Today" is the CLIENT's calendar day. Using the server's UTC date here
+      // ended the day early for anyone west of UTC: their in-progress habit was
+      // archived as missed and the streak reset while it was still that evening.
+      const { localDate } = z
+        .object({ localDate: z.string().optional().nullable() })
+        .parse(req.body ?? {});
+      const today = resolveLocalDate(localDate, new Date(), 'POST /tasks/spawn-recurring');
+      const todayDayName = dayNameFromLocalDate(today);
       const { start: todayStart, end: todayEnd } = dayBounds(today);
 
       const templates = await prisma.task.findMany({
@@ -253,6 +277,10 @@ export function setupTaskRoutes(router: Router): void {
             parentTaskId: template.id,
             isRecurring: false,
             recurringDays: [],
+            // Carry the template's goal link onto each spawned instance — the
+            // template itself is excluded from GET /tasks, so the instance is
+            // the only thing that can count toward the goal.
+            taskGoalId: template.taskGoalId,
             sessionsOnTask: 0,
             totalTimeOnTask: 0,
             sessionDates: [],
@@ -294,7 +322,6 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
-      const period = (req.query.period as string | undefined) ?? 'all';
       const now = new Date();
       const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
       const dayOfWeekNow = now.getUTCDay();
@@ -303,18 +330,15 @@ export function setupTaskRoutes(router: Router): void {
       startOfWeekNow.setUTCDate(startOfWeekNow.getUTCDate() + mondayOffsetNow);
       const startOfMonthNow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 
-      const periodFilter: Record<string, Date | undefined> = {
-        today: startOfDay,
-        week:  startOfWeekNow,
-        month: startOfMonthNow,
-      };
-      const periodStart = periodFilter[period];
-
+      // Always read the full history. There used to be a `period` query param that
+      // filtered this query, which meant ?period=today returned today's total
+      // under the key `totalTimeAllTime` and skewed estimationAccuracy with it.
+      // The today/week/month buckets below are derived by comparing timestamps, so
+      // one unfiltered read gives every bucket the correct value.
       const sessions = await prisma.session.findMany({
         where: {
           taskId: id,
           userId,
-          ...(periodStart ? { completedAt: { gte: periodStart } } : {}),
         },
         select: {
           durationSeconds: true,
@@ -340,7 +364,6 @@ export function setupTaskRoutes(router: Router): void {
       let totalTimeThisMonth = 0;
       let totalTimeAllTime = 0;
       let totalCompleted = 0;
-      let totalSkipped = 0;
       const hourCounts: Record<number, number> = {};
 
       for (const s of sessions) {
@@ -363,13 +386,12 @@ export function setupTaskRoutes(router: Router): void {
         const hour = ca.getUTCHours();
         hourCounts[hour] = (hourCounts[hour] || 0) + s.durationSeconds;
 
-        if (s.plannedDurationSeconds && s.durationSeconds >= s.plannedDurationSeconds * 0.9) {
-          totalCompleted++;
-        } else if (s.plannedDurationSeconds) {
-          totalSkipped++;
-        } else {
-          totalCompleted++;
-        }
+        // A session counts as completed if it ran at least 90% of its planned
+        // length, or had no planned length to fall short of. The three-branch
+        // version also tracked a `totalSkipped` counter that was never read.
+        const ranFullLength =
+          !s.plannedDurationSeconds || s.durationSeconds >= s.plannedDurationSeconds * 0.9;
+        if (ranFullLength) totalCompleted++;
       }
 
       let mostProductiveHour: { hour: number; label: string } | null = null;
@@ -430,6 +452,14 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
+      // A task may only be attached to a goal the caller owns. Without this a
+      // user could point their task at someone else's goal id and pollute that
+      // goal's counts.
+      if (data.taskGoalId !== undefined && !(await userOwnsGoal(userId, data.taskGoalId))) {
+        res.status(404).json({ success: false, error: 'Goal not found' });
+        return;
+      }
+
       const updateData: Record<string, unknown> = {};
       if (data.title !== undefined) updateData.title = data.title;
       if (data.description !== undefined) updateData.description = data.description;
@@ -473,17 +503,58 @@ export function setupTaskRoutes(router: Router): void {
               },
             });
           } else {
-            // Uncompleting today's instance undoes today's increment only —
-            // it does not touch the totalCompletions / totalFocusTimeMs history.
+            // Uncompleting is a full undo of the completion above. It previously
+            // rolled back only the streak and left totalCompletions /
+            // totalFocusTimeMs untouched, so toggling complete → incomplete →
+            // complete inflated the lifetime counters without bound.
             await prisma.task.update({
               where: { id: template.id },
-              data: { currentStreak: Math.max(0, template.currentStreak - 1) },
+              data: {
+                currentStreak: Math.max(0, template.currentStreak - 1),
+                totalCompletions: Math.max(0, template.totalCompletions - 1),
+                totalFocusTimeMs: Math.max(0, template.totalFocusTimeMs - (task.totalTimeOnTask ?? 0)),
+              },
             });
           }
         }
       }
 
-      res.json({ success: true, data: task });
+      // ── Gamification on completion ──
+      // Finishing work now earns XP, not just spending time on it. Un-checking
+      // revokes exactly what completing granted, so the pair is a true undo and
+      // toggling can't farm XP.
+      let reward = null;
+      const completionChanged =
+        data.isCompleted !== undefined && existing.isCompleted !== data.isCompleted;
+
+      if (completionChanged) {
+        const xp = taskCompletionXP(task.priority);
+        const isNowComplete = data.isCompleted === true;
+
+        reward = await awardXp(userId, isNowComplete ? xp : -xp, {
+          tasksCompletedDelta: isNowComplete ? 1 : -1,
+        });
+
+        if (isNowComplete) {
+          eventBus.emit(EventTypes.FEED_CREATE, {
+            userId,
+            eventType: 'task_completed',
+            payload: { taskTitle: task.title, priority: task.priority, xpEarned: xp },
+          });
+        }
+      }
+
+      // Anything that changed completion or moved the task between goals can move
+      // goal progress. Recompute both the old and new goal so a task leaving a
+      // goal updates that goal too.
+      if (data.isCompleted !== undefined || data.taskGoalId !== undefined) {
+        await syncGoalCompletion(
+          userId,
+          [existing.taskGoalId, task.taskGoalId].filter((g): g is string => !!g),
+        );
+      }
+
+      res.json({ success: true, data: task, reward });
     } catch (err) {
       if (err instanceof z.ZodError) {
         res.status(400).json({ success: false, error: err.errors[0].message });
@@ -519,16 +590,24 @@ export function setupTaskRoutes(router: Router): void {
       await prisma.session.deleteMany({ where: { taskId: id, userId } });
 
       if (removedSeconds > 0 || removedCount > 0) {
-        const user = await prisma.user.findUnique({
-          where: { id: userId },
-          select: { totalFocusTime: true, totalSessions: true },
-        });
+        // Atomic decrement. Read-then-write lost updates when a session completed
+        // (which increments these same columns) between the read and the write.
         await prisma.user.update({
           where: { id: userId },
           data: {
-            totalFocusTime: Math.max(0, (user?.totalFocusTime ?? 0) - removedSeconds),
-            totalSessions: Math.max(0, (user?.totalSessions ?? 0) - removedCount),
+            totalFocusTime: { decrement: removedSeconds },
+            totalSessions: { decrement: removedCount },
           },
+        });
+        // The old code clamped at zero; `decrement` cannot, so restore the floor
+        // in a follow-up that only touches rows which actually went negative.
+        await prisma.user.updateMany({
+          where: { id: userId, totalFocusTime: { lt: 0 } },
+          data: { totalFocusTime: 0 },
+        });
+        await prisma.user.updateMany({
+          where: { id: userId, totalSessions: { lt: 0 } },
+          data: { totalSessions: 0 },
         });
       }
 

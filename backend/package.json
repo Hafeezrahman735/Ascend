@@ -6,16 +6,21 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc",
     "start": "node dist/index.js",
-    "lint": "eslint src/",
+    "lint": "eslint src/ prisma/",
     "clean": "rm -rf dist",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "lint:fix": "eslint src/ prisma/ --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "@googleapis/calendar": "^16.0.0",
     "@prisma/client": "^6.19.3",
     "bcrypt": "5.1.1",
     "cors": "2.8.5",
@@ -36,8 +41,11 @@
     "@types/jsonwebtoken": "9.0.6",
     "@types/morgan": "1.9.9",
     "@types/node": "22.0.0",
+    "eslint": "^9.39.5",
     "prisma": "^6.19.3",
     "tsx": "4.16.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^4.1.10"
   }
 }

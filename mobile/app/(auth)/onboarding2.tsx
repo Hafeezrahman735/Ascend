@@ -44,7 +44,7 @@ export default function Onboarding2Screen() {
           Pick your avatar
         </Text>
         <Text style={{ color: Colors.subtext, fontSize: 15, marginBottom: 28, lineHeight: 22 }}>
-          Choose an emoji that represents you
+          This is how you show up to the people keeping you honest.
         </Text>
 
         {/* Selected preview */}

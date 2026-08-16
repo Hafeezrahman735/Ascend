@@ -1,6 +1,5 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { View } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
 
 export default function TabLayout() {
@@ -49,10 +48,23 @@ export default function TabLayout() {
           ),
         }}
       />
+      {/* Appended after Tasks — existing tab order and titles are unchanged. */}
+      <Tabs.Screen
+        name="calendar"
+        options={{
+          title: 'Calendar',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="social"
         options={{
-          title: 'Social',
+          // "Social" reads as a distraction to someone working alone; "Circle"
+          // frames it as accountability. The route stays `social` — renaming the
+          // file would break every router.push('/social') for no user benefit.
+          title: 'Circle',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'people' : 'people-outline'} size={22} color={color} />
           ),

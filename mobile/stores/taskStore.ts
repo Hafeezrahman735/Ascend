@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { Task, DayOfWeek } from '../types';
 import { useAuthStore } from './authStore';
 import { removeTaskSessionsFromHistory } from '../store/sync';
+import { getLocalDateString } from '../utils/date';
 
 const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
 
@@ -57,6 +58,47 @@ function normalizeTasks(raw: Task[]): Task[] {
   return raw.map(normalizeTask);
 }
 
+// Goal progress (linked/completed task counts, session counts, auto-completion)
+// is computed server-side. Any task change that could move it is followed by a
+// silent goal refetch so the two never drift. Imported lazily to avoid a static
+// circular import between the task and goal stores.
+function refreshGoals(): void {
+  import('./goalStore')
+    .then(({ useGoalStore }) => useGoalStore.getState().fetchGoals(true))
+    .catch((err) => console.warn('[tasks] goal refresh failed:', err));
+}
+
+// Payloads mirroring the backend's createTaskSchema / updateTaskSchema. These
+// were previously narrower than what the form actually sends, so call sites used
+// `as any` — which is exactly how taskGoalId went missing on create without
+// anything failing to compile.
+export interface TaskCreateInput {
+  title: string;
+  description?: string | null;
+  dueDate?: string | null;
+  tags?: string[];
+  estimatedMinutes?: number | null;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
+  isRecurring?: boolean;
+  recurringDays?: DayOfWeek[];
+  taskGoalId?: string | null;
+}
+
+export interface TaskUpdateInput {
+  title?: string;
+  description?: string | null;
+  dueDate?: string | null;
+  tags?: string[];
+  estimatedMinutes?: number | null;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
+  isCompleted?: boolean;
+  completedAt?: string | null;
+  taskGoalId?: string | null;
+  order?: number | null;
+  isRecurring?: boolean;
+  recurringDays?: DayOfWeek[];
+}
+
 function isTempId(id: string): boolean {
   return id.startsWith('temp-');
 }
@@ -70,23 +112,8 @@ interface TaskStoreState {
 
   hydrateTasks: (userId: string) => Promise<void>;
   fetchTasks: (silent?: boolean) => Promise<void>;
-  createTask: (data: {
-    title: string;
-    description?: string;
-    dueDate?: string;
-    tags?: string[];
-    estimatedMinutes?: number;
-    priority?: 'low' | 'medium' | 'high' | 'urgent';
-    isRecurring?: boolean;
-    recurringDays?: DayOfWeek[];
-  }) => Promise<Task | null>;
-  updateTask: (id: string, data: Partial<{
-    title: string;
-    description: string | null;
-    dueDate: string | null;
-    tags: string[];
-    estimatedMinutes: number | null;
-  }>) => Promise<void>;
+  createTask: (data: TaskCreateInput) => Promise<Task | null>;
+  updateTask: (id: string, data: TaskUpdateInput) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   selectTask: (id: string | null) => void;
   incrementTaskSession: (id: string, duration: number) => void;
@@ -171,6 +198,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       sessionDates: [],
       isRecurring: data.isRecurring ?? false,
       recurringDays: data.recurringDays ?? [],
+      taskGoalId: data.taskGoalId ?? null,
       lastSpawnedDate: null,
       parentTaskId: null,
       currentStreak: 0,
@@ -186,7 +214,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     persistTasks(withTemp, userId); // Survive an app kill during the POST
 
     try {
-      const res = await api.post<Task>('/tasks', data);
+      const res = await api.post<Task>('/tasks', { ...data, localDate: getLocalDateString() });
       if (res.success && res.data) {
         const confirmed = normalizeTask(res.data);
         // Recurring tasks: the POST returns the TEMPLATE, which must never appear in
@@ -210,6 +238,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
           : [confirmed, ...current];
         set({ tasks: next });
         persistTasks(next, userId);
+        // A task created into a goal changes that goal's linked count.
+        if (confirmed.taskGoalId) refreshGoals();
         return confirmed;
       }
       // Server rejected — temp task stays visible; next fetchTasks will reconcile.
@@ -232,6 +262,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...res.data } : t));
         set({ tasks });
         persistTasks(tasks, userId);
+        // Completion or a goal re-link both move goal progress server-side.
+        if (data.isCompleted !== undefined || data.taskGoalId !== undefined) refreshGoals();
       } else {
         set({ tasks: previous });
         persistTasks(previous, userId);
@@ -294,6 +326,9 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     persistTasks(optimistic, userId);
     try {
       await api.patch(`/tasks/${id}`, { isCompleted: nowCompleted, completedAt });
+      // The server owns goal progress and may have just auto-completed this
+      // task's goal. Reconcile rather than recomputing locally.
+      if (task.taskGoalId) refreshGoals();
     } catch {
       const reverted = get().tasks.map((t) =>
         t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t,
@@ -331,7 +366,13 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   // haven't spawned yet today. Non-critical and never throws.
   spawnRecurringTasks: async () => {
     try {
-      const res = await api.post<{ spawned: number; archived?: number; templateIds: string[] }>('/tasks/spawn-recurring', {});
+      // localDate makes the server spawn against the user's calendar day. Without
+      // it the server falls back to its own UTC date, which ends the day early
+      // for anyone west of UTC and resets their habit streak a day sooner.
+      const res = await api.post<{ spawned: number; archived?: number; templateIds: string[] }>(
+        '/tasks/spawn-recurring',
+        { localDate: getLocalDateString() },
+      );
       // Refetch when anything changed — not just on spawn. A new day can archive a
       // missed instance without spawning one (non-scheduled day, or already spawned),
       // and without a refetch that stale instance lingers locally as "overdue".

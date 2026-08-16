@@ -8,7 +8,7 @@ export interface StreakState {
 
 export type BadgeLevel = 'locked' | 'bronze' | 'silver' | 'gold';
 
-export interface SubjectBadge {
+export interface CategoryBadge {
   tag: string;
   icon: string;
   level: BadgeLevel;

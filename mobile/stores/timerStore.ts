@@ -5,6 +5,7 @@ import { useTaskStore } from './taskStore';
 import { useAuthStore } from './authStore';
 import { useGamificationStore } from './gamificationStore';
 import { recordCompletedSession, generateSessionId } from '../store/sync';
+import { getLocalDateString } from '../utils/date';
 import type { SessionReward } from '../types';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
@@ -104,10 +105,8 @@ const DEFAULT_SETTINGS: Settings = {
   dailySessionTarget: 8,
 };
 
-function getTodayString() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// Single definition of the local-date convention lives in utils/date.ts.
+const getTodayString = () => getLocalDateString();
 
 function getPhaseDuration(phase: TimerPhase, settings: Settings): number {
   if (phase === 'longBreak') return settings.longBreakDuration;
@@ -158,7 +157,9 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
     set({ status: 'paused', elapsedAtPause: elapsed, startedAt: null, timeLeft });
     persistActiveSession();
-    api.post('/timer/pause', { elapsedSeconds: elapsed })
+    // Send both: remainingSeconds is what the server column means, elapsedSeconds
+    // keeps older server builds working during a rollout.
+    api.post('/timer/pause', { remainingSeconds: timeLeft, elapsedSeconds: elapsed })
       .catch((err) => console.warn('[timer] pause sync failed:', err));
   },
 

@@ -2,7 +2,6 @@ import { View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LeaderboardEntry } from '../types';
 import { useTheme } from '../hooks/useTheme';
-import LevelBadge from './LevelBadge';
 
 interface LeaderboardRowProps {
   entry: LeaderboardEntry;
@@ -27,9 +26,11 @@ export default function LeaderboardRow({
 }: LeaderboardRowProps) {
   const Colors = useTheme();
   const rankStyle = getRankStyle(rank, Colors.subtext);
+  // Mirrors what the leaderboard endpoints actually return: /social/leaderboard/streak
+  // sends currentStreak, /social/leaderboard/weekly sends totalSeconds (not minutes).
   const valueText = type === 'longest_streak'
-    ? `${entry.currentStreak || 0} 🔥`
-    : `${entry.value || 0} min`;
+    ? `${entry.currentStreak ?? 0} 🔥`
+    : `${Math.floor((entry.totalSeconds ?? 0) / 60)} min`;
 
   return (
     <View
@@ -59,9 +60,6 @@ export default function LeaderboardRow({
           {entry.username}
           {isMe ? ' (You)' : ''}
         </Text>
-        <View className="ml-2">
-          <LevelBadge level={entry.level || 1} size="sm" />
-        </View>
       </View>
       <Text className="text-white font-bold text-sm">{valueText}</Text>
     </View>

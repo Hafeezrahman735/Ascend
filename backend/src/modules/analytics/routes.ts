@@ -285,7 +285,11 @@ analyticsRouter.get('/analytics/summary', async (req: Request, res: Response) =>
       ? Math.round((totalSecondsAgg._sum.durationSeconds / 3600) * 10) / 10
       : 0;
 
-    const streak = await prisma.streak.findUnique({ where: { userId } });
+    // Streak lives on User — see the note in modules/goals/handler.ts.
+    const streak = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { currentStreak: true, longestStreak: true },
+    });
 
     res.json({
       success: true,

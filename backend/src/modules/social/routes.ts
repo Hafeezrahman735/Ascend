@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
@@ -26,7 +27,7 @@ function getRankTitle(xp: number): string {
   if (xp >= 10000) return 'Champion';
   if (xp >= 5000) return 'Legend';
   if (xp >= 2500) return 'Elite';
-  if (xp >= 1000) return 'Scholar';
+  if (xp >= 1000) return 'Steady';
   return 'Rookie';
 }
 
@@ -46,6 +47,97 @@ const EXACT_RE = new RegExp(`\\b(${EXACT_TERMS.join('|')})\\b`, 'i');
 function containsBlockedContent(text: string | null | undefined): boolean {
   if (!text) return false;
   return STEM_RE.test(text) || EXACT_RE.test(text);
+}
+
+// ─── Post payload allowlist ──────────────────────────────────────────────────
+// The only client-supplied fields that may be persisted into SocialPost.payload.
+// Identity and metadata (id, authorId, authorName, authorRank, createdAt,
+// visibility, reactions…) are server-owned and deliberately absent — a client
+// that sends them has them dropped rather than honoured.
+const POST_PAYLOAD_FIELDS = {
+  sessionId: z.string().max(64).nullable().optional(),
+  achievementId: z.string().max(64).nullable().optional(),
+  streakAtPost: z.number().int().min(0).max(100_000).nullable().optional(),
+  // Mirrors FreePostTag in mobile/types/index.ts.
+  contentTag: z
+    .enum(['study_tip', 'question', 'motivation', 'celebration', 'resource', 'general'])
+    .nullable()
+    .optional(),
+  photoUrl: z.string().max(2048).nullable().optional(),
+  attachedStats: z
+    .array(z.object({ label: z.string().max(40), value: z.string().max(40) }))
+    .max(6)
+    .nullable()
+    .optional(),
+} as const;
+
+// Server-owned fields on a rendered post. Spreading the stored payload BEFORE
+// these guarantees a payload can never override the real author or timestamps,
+// no matter what an older row happens to contain.
+function renderPost(
+  post: {
+    id: string;
+    authorId: string;
+    type: string;
+    caption: string | null;
+    createdAt: Date;
+    visibility: string;
+    groupId: string | null;
+    payload: unknown;
+    reactions: unknown;
+  },
+  author: { username?: string | null; xp?: number | null; avatarEmoji?: string | null } | null | undefined,
+  groupName?: string,
+): Record<string, unknown> {
+  return {
+    ...(post.payload as Record<string, unknown>),
+    id: post.id,
+    authorId: post.authorId,
+    authorName: author?.username ?? 'Unknown',
+    authorEmoji: resolveAvatar(author?.avatarEmoji, post.authorId),
+    authorRank: getRankTitle(author?.xp ?? 0),
+    type: post.type,
+    caption: post.caption,
+    createdAt: post.createdAt.toISOString(),
+    visibility: post.visibility,
+    groupId: post.groupId,
+    groupName,
+    reactions: (post.reactions ?? {}),
+  };
+}
+
+// ─── Group access ────────────────────────────────────────────────────────────
+// A private group's contents (posts, leaderboard, membership) are readable only
+// by its members. Public groups stay open to any signed-in user, which is what
+// makes them discoverable in /social/groups/all.
+//
+// Returns the group when access is allowed, or a reason when it is not, so
+// callers can distinguish "no such group" from "not yours to see".
+async function resolveGroupAccess(
+  groupId: string,
+  userId: string,
+): Promise<
+  | { ok: true; group: { id: string; name: string; isPrivate: boolean }; isMember: boolean }
+  | { ok: false; status: 404 | 403; error: string }
+> {
+  const group = await prisma.studyGroup.findUnique({
+    where: { id: groupId },
+    select: { id: true, name: true, isPrivate: true },
+  });
+  if (!group) return { ok: false, status: 404, error: 'Group not found' };
+
+  const membership = await prisma.studyGroupMember.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    select: { id: true },
+  });
+  const isMember = !!membership;
+
+  // Private groups reveal nothing to non-members — including their existence.
+  if (group.isPrivate && !isMember) {
+    return { ok: false, status: 404, error: 'Group not found' };
+  }
+
+  return { ok: true, group, isMember };
 }
 
 // Users hidden from `userId` in both directions: people they blocked and people
@@ -561,36 +653,44 @@ socialRouter.get('/social/leaderboard', async (req: Request, res: Response) => {
     }
 
     if (type === 'longest_streak') {
-      const streaks = await prisma.streak.findMany({
+      // Ranked straight from User — the single source of truth for streaks
+      // (see the note in modules/goals/handler.ts). Reading the old Streak table
+      // here is what made this board disagree with the profile after a reset.
+      const streaks = await prisma.user.findMany({
         orderBy: { currentStreak: 'desc' },
         take: 100,
-        include: {
-          user: { select: { id: true, username: true, avatarUrl: true, level: true } },
+        select: {
+          id: true,
+          username: true,
+          avatarUrl: true,
+          level: true,
+          currentStreak: true,
+          longestStreak: true,
         },
       });
 
       let filtered = streaks;
       if (scope === 'friends' && friendIds.length > 0) {
         const friendSet = new Set(friendIds);
-        filtered = streaks.filter((s) => friendSet.has(s.userId));
+        filtered = streaks.filter((s) => friendSet.has(s.id));
       }
 
       // Drop users who opted out of the leaderboard (self always kept).
-      const visible = await visibleLeaderboardIds(filtered.map((s) => s.userId), userId);
-      filtered = filtered.filter((s) => visible.has(s.userId));
+      const visible = await visibleLeaderboardIds(filtered.map((s) => s.id), userId);
+      filtered = filtered.filter((s) => visible.has(s.id));
 
-      const userRank = filtered.findIndex((s) => s.userId === userId) + 1;
-      const myEntry = filtered.find((s) => s.userId === userId);
+      const userRank = filtered.findIndex((s) => s.id === userId) + 1;
+      const myEntry = filtered.find((s) => s.id === userId);
 
       const entries = filtered.map((s, index) => ({
         rank: index + 1,
-        userId: s.userId,
-        username: s.user.username,
-        avatarUrl: s.user.avatarUrl,
-        level: s.user.level,
+        userId: s.id,
+        username: s.username,
+        avatarUrl: s.avatarUrl,
+        level: s.level,
         currentStreak: s.currentStreak,
         longestStreak: s.longestStreak,
-        isMe: s.userId === userId,
+        isMe: s.id === userId,
       }));
 
       res.json({
@@ -599,10 +699,10 @@ socialRouter.get('/social/leaderboard', async (req: Request, res: Response) => {
           entries,
           myEntry: myEntry ? {
             rank: userRank > 0 ? userRank : entries.length + 1,
-            userId: myEntry.userId,
-            username: myEntry.user.username,
-            avatarUrl: myEntry.user.avatarUrl,
-            level: myEntry.user.level,
+            userId: myEntry.id,
+            username: myEntry.username,
+            avatarUrl: myEntry.avatarUrl,
+            level: myEntry.level,
             currentStreak: myEntry.currentStreak,
             longestStreak: myEntry.longestStreak,
             isMe: true,
@@ -735,26 +835,32 @@ socialRouter.get('/social/leaderboard/streak', async (req: Request, res: Respons
   try {
     const userId = authenticate(req);
 
-    const rawStreaks = await prisma.streak.findMany({
+    // Ranked from User — the single source of truth for streaks (see the note in
+    // modules/goals/handler.ts). Opt-outs are filtered in the query rather than
+    // after `take`, so hidden users no longer consume leaderboard slots.
+    const streaks = await prisma.user.findMany({
+      where: { OR: [{ showOnLeaderboard: true }, { id: userId }] },
       orderBy: { currentStreak: 'desc' },
       take: 100,
-      include: {
-        user: { select: { id: true, username: true, avatarUrl: true, showOnLeaderboard: true } },
+      select: {
+        id: true,
+        username: true,
+        avatarUrl: true,
+        currentStreak: true,
+        longestStreak: true,
       },
     });
 
-    const streaks = rawStreaks.filter((s) => s.user.showOnLeaderboard || s.userId === userId);
-
-    const userRank = streaks.findIndex((s) => s.userId === userId) + 1;
+    const userRank = streaks.findIndex((s) => s.id === userId) + 1;
 
     const leaderboard = streaks.map((s, index) => ({
       rank: index + 1,
-      userId: s.userId,
-      username: s.user.username,
-      avatarUrl: s.user.avatarUrl,
+      userId: s.id,
+      username: s.username,
+      avatarUrl: s.avatarUrl,
       currentStreak: s.currentStreak,
       longestStreak: s.longestStreak,
-      isMe: s.userId === userId,
+      isMe: s.id === userId,
     }));
 
     res.json({
@@ -834,10 +940,9 @@ socialRouter.get('/social/stats/me', async (req: Request, res: Response) => {
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('[social/stats/me] error:', error);
-    res.json({
-      success: true,
-      data: { userId: '', friendCount: 0, followerCount: 0, followingCount: 0, friendPreviews: [] },
-    });
+    // Previously returned success:true with zeroed counts, which made a real
+    // outage look like an empty profile — invisible to the user and to metrics.
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -864,26 +969,15 @@ socialRouter.get('/social/posts/mine', async (req: Request, res: Response) => {
     const hasMore = posts.length > limit;
     const page = hasMore ? posts.slice(0, limit) : posts;
 
-    const data = page.map((p) => ({
-      id: p.id,
-      authorId: p.authorId,
-      authorName: user?.username ?? 'Unknown',
-      authorEmoji: resolveAvatar(user?.avatarEmoji, p.authorId),
-      authorRank: getRankTitle(user?.xp ?? 0),
-      type: p.type,
-      caption: p.caption,
-      createdAt: p.createdAt.toISOString(),
-      visibility: p.visibility,
-      groupId: p.groupId,
-      reactions: p.reactions as Record<string, string[]>,
-      ...(p.payload as Record<string, unknown>),
-    }));
+    const data = page.map((p) => renderPost(p, user));
 
     res.json({ success: true, data: { posts: data, cursor: hasMore ? page[page.length - 1].createdAt.toISOString() : null } });
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('[social/posts/mine] error:', error);
-    res.json({ success: true, data: { posts: [], cursor: null } });
+    // Reporting failure as an empty post list hid outages behind a plausible
+    // empty state; the client can now distinguish the two.
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -901,6 +995,13 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
     if (authorId) {
       whereClause = { authorId, visibility: 'public' };
     } else if (groupId) {
+      // Group feeds are gated on access — otherwise any signed-in user could read
+      // a private group's posts just by knowing its id.
+      const access = await resolveGroupAccess(groupId, userId);
+      if (!access.ok) {
+        res.status(access.status).json({ success: false, error: access.error });
+        return;
+      }
       whereClause = { groupId, visibility: 'group' };
     } else {
       const following = await prisma.follow.findMany({
@@ -944,21 +1045,9 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
     }) : [];
     const groupMap = new Map(groups.map((g) => [g.id, g.name]));
 
-    const data = page.map((p) => ({
-      id: p.id,
-      authorId: p.authorId,
-      authorName: p.author.username,
-      authorEmoji: resolveAvatar(p.author.avatarEmoji, p.authorId),
-      authorRank: getRankTitle(p.author.xp),
-      type: p.type,
-      caption: p.caption,
-      createdAt: p.createdAt.toISOString(),
-      visibility: p.visibility,
-      groupId: p.groupId,
-      groupName: p.groupId ? groupMap.get(p.groupId) : undefined,
-      reactions: p.reactions as Record<string, string[]>,
-      ...(p.payload as Record<string, unknown>),
-    }));
+    const data = page.map((p) =>
+      renderPost(p, p.author, p.groupId ? groupMap.get(p.groupId) : undefined),
+    );
 
     res.json({
       success: true,
@@ -979,8 +1068,14 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
       caption: z.string().max(280).nullable().optional(),
       visibility: z.enum(['public', 'group']).default('public'),
       groupId: z.string().uuid().nullable().optional(),
+      // Post-body fields, stored in the `payload` JSON column. This is an
+      // allowlist on purpose: anything not named here is dropped. Adding a new
+      // post type means adding its fields here — never widening to req.body,
+      // which would let a client set server-owned fields like authorName.
+      ...POST_PAYLOAD_FIELDS,
     });
-    const { type, caption, visibility, groupId } = schema.parse(req.body);
+    const parsed = schema.parse(req.body);
+    const { type, caption, visibility, groupId } = parsed;
 
     // Content moderation (Guideline 1.2): reject objectionable captions.
     if (containsBlockedContent(caption)) {
@@ -988,12 +1083,36 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
       return;
     }
 
-    const payloadFields = { ...req.body };
-    delete payloadFields.type;
-    delete payloadFields.caption;
-    delete payloadFields.visibility;
-    delete payloadFields.groupId;
-    delete payloadFields.reactions;
+    // Build the payload only from validated fields, dropping any that are absent.
+    // Absent and explicitly-null fields are both omitted — the client already
+    // reads these with `?? null` defaults, so storing nulls adds nothing.
+    const payloadFields: Record<string, Prisma.InputJsonValue> = {};
+    for (const key of Object.keys(POST_PAYLOAD_FIELDS)) {
+      const value = parsed[key as keyof typeof parsed];
+      if (value !== undefined && value !== null) {
+        payloadFields[key] = value;
+      }
+    }
+
+    // You may only post into a group you belong to. Without this, group feeds
+    // could be written to by any outsider who knew the group id.
+    let groupName: string | undefined;
+    if (visibility === 'group') {
+      if (!groupId) {
+        res.status(400).json({ success: false, error: 'A group is required for a group post' });
+        return;
+      }
+      const access = await resolveGroupAccess(groupId, userId);
+      if (!access.ok) {
+        res.status(access.status).json({ success: false, error: access.error });
+        return;
+      }
+      if (!access.isMember) {
+        res.status(403).json({ success: false, error: 'Join this group to post in it' });
+        return;
+      }
+      groupName = access.group.name;
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -1006,17 +1125,13 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
         type,
         caption: caption ?? null,
         visibility,
-        groupId: groupId ?? null,
+        // A public post never carries a group id, so it can't leak group
+        // membership through the feed.
+        groupId: visibility === 'group' ? groupId! : null,
         payload: payloadFields,
         reactions: {},
       },
     });
-
-    let groupName: string | undefined;
-    if (groupId) {
-      const g = await prisma.studyGroup.findUnique({ where: { id: groupId }, select: { name: true } });
-      groupName = g?.name;
-    }
 
     // Notify the author's followers about a new public post. Group-only posts
     // stay within the group and don't fan out to followers.
@@ -1032,21 +1147,7 @@ socialRouter.post('/social/posts', async (req: Request, res: Response) => {
 
     res.status(201).json({
       success: true,
-      data: {
-        id: post.id,
-        authorId: post.authorId,
-        authorName: user?.username ?? 'Unknown',
-        authorEmoji: resolveAvatar(user?.avatarEmoji, post.authorId),
-        authorRank: getRankTitle(user?.xp ?? 0),
-        type: post.type,
-        caption: post.caption,
-        createdAt: post.createdAt.toISOString(),
-        visibility: post.visibility,
-        groupId: post.groupId,
-        groupName,
-        reactions: {},
-        ...(post.payload as Record<string, unknown>),
-      },
+      data: renderPost(post, user, groupName),
     });
   } catch (error) {
     if (handleZodError(res, error)) return;
@@ -1063,20 +1164,38 @@ socialRouter.post('/social/posts/:id/react', async (req: Request, res: Response)
     const schema = z.object({ emoji: z.string().max(8) });
     const { emoji } = schema.parse(req.body);
 
-    const post = await prisma.socialPost.findUnique({ where: { id }, select: { id: true, reactions: true } });
-    if (!post) {
+    // Read-modify-write on a JSON column is lossy: two users reacting at the same
+    // moment both read the old map and the second write erases the first. Doing
+    // the toggle inside a transaction with a row lock serialises them, so every
+    // reaction survives.
+    //
+    // SELECT … FOR UPDATE holds the lock until the transaction commits; the
+    // update below then applies on top of whatever the previous holder wrote.
+    const reactions = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ reactions: unknown }[]>`
+        SELECT reactions FROM social_posts WHERE id = ${id}::uuid FOR UPDATE
+      `;
+      if (rows.length === 0) return null;
+
+      const current = (rows[0].reactions ?? {}) as Record<string, string[]>;
+      const existing = current[emoji] ?? [];
+      const hasReacted = existing.includes(userId);
+      const next: Record<string, string[]> = {
+        ...current,
+        [emoji]: hasReacted ? existing.filter((uid) => uid !== userId) : [...existing, userId],
+      };
+      // Drop empty buckets so the map doesn't accumulate dead emoji keys forever.
+      if (next[emoji].length === 0) delete next[emoji];
+
+      await tx.socialPost.update({ where: { id }, data: { reactions: next } });
+      return next;
+    });
+
+    if (reactions === null) {
       res.status(404).json({ success: false, error: 'Post not found' });
       return;
     }
 
-    const reactions = post.reactions as Record<string, string[]>;
-    const existing = reactions[emoji] ?? [];
-    const hasReacted = existing.includes(userId);
-    reactions[emoji] = hasReacted
-      ? existing.filter((uid) => uid !== userId)
-      : [...existing, userId];
-
-    await prisma.socialPost.update({ where: { id }, data: { reactions } });
     res.json({ success: true, data: { reactions } });
   } catch (error) {
     if (handleZodError(res, error)) return;
@@ -1453,6 +1572,14 @@ socialRouter.post('/social/groups', async (req: Request, res: Response) => {
     });
     const { name, emoji, color, isPrivate } = schema.parse(req.body);
 
+    // Group names are user-generated content shown to other people, so they get
+    // the same moderation gate as post captions (Guideline 1.2). Previously only
+    // captions were checked, leaving an unfiltered public surface.
+    if (containsBlockedContent(name)) {
+      res.status(400).json({ success: false, error: "That group name isn't allowed." });
+      return;
+    }
+
     const group = await prisma.studyGroup.create({
       data: { name, emoji, color, isPrivate, createdBy: userId },
     });
@@ -1480,9 +1607,12 @@ socialRouter.post('/social/groups/:id/join', async (req: Request, res: Response)
     const userId = authenticate(req);
     const { id: groupId } = req.params;
 
-    const group = await prisma.studyGroup.findUnique({ where: { id: groupId } });
-    if (!group) {
-      res.status(404).json({ success: false, error: 'Group not found' });
+    // resolveGroupAccess rejects private groups for non-members, so this also
+    // enforces that a private group can only ever be joined by invitation —
+    // knowing the id is not enough.
+    const access = await resolveGroupAccess(groupId, userId);
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, error: access.error });
       return;
     }
 
@@ -1535,6 +1665,13 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
       const groupIdParam = req.query.groupId as string | undefined;
       if (!groupIdParam) {
         res.json({ success: true, data: { entries: [], myEntry: null } });
+        return;
+      }
+      // Same gate as the group feed — a private group's member stats are not
+      // readable by outsiders.
+      const access = await resolveGroupAccess(groupIdParam, userId);
+      if (!access.ok) {
+        res.status(access.status).json({ success: false, error: access.error });
         return;
       }
       const members = await prisma.studyGroupMember.findMany({
@@ -1614,7 +1751,37 @@ socialRouter.get('/social/focus-leaderboard', async (req: Request, res: Response
       }));
     }
 
-    const myEntry = entries.find((e) => e.userId === userId) ?? null;
+    // If the user isn't in the top 100 they still deserve to see where they
+    // stand — previously myEntry was simply null for everyone outside the page,
+    // which is most users. Count how many people are ahead of them to get a real
+    // position instead.
+    let myEntry = entries.find((e) => e.userId === userId) ?? null;
+    if (!myEntry) {
+      const me = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, username: true, xp: true, currentStreak: true, totalFocusTime: true, avatarEmoji: true },
+      });
+      if (me) {
+        const ahead = await prisma.user.count({
+          where: {
+            totalFocusTime: { gt: me.totalFocusTime ?? 0 },
+            ...(scopeUserIds ? { id: { in: scopeUserIds } } : {}),
+            showOnLeaderboard: true,
+          },
+        });
+        myEntry = {
+          userId: me.id,
+          displayName: me.username,
+          avatarEmoji: resolveAvatar(me.avatarEmoji, me.id),
+          rank: getRankTitle(me.xp ?? 0),
+          currentStreak: me.currentStreak ?? 0,
+          focusMinutes: Math.floor((me.totalFocusTime ?? 0) / 60),
+          position: ahead + 1,
+          positionDelta: null,
+          isMe: true,
+        };
+      }
+    }
 
     res.json({ success: true, data: { entries, myEntry } });
   } catch (error) {

@@ -2,7 +2,6 @@ import { Server as SocketIOServer } from 'socket.io';
 import {
   SessionCompletedEvent,
   FriendSessionStartedEvent,
-  FriendGoalCompletedEvent,
   FeedCreateEvent,
 } from '../../middleware/eventBus';
 import { prisma } from '../../lib/prisma';
@@ -44,7 +43,7 @@ export async function handleFeedCreate(
 export async function handleSocialBroadcast(
   io: SocketIOServer,
   eventType: string,
-  payload: SessionCompletedEvent | FriendSessionStartedEvent | FriendGoalCompletedEvent,
+  payload: SessionCompletedEvent | FriendSessionStartedEvent,
 ): Promise<void> {
   const userId = payload.userId;
 
@@ -82,16 +81,7 @@ export async function handleSocialBroadcast(
     }, 'friend:session_started');
   }
 
-  if (eventType === 'friend.goal_completed') {
-    const p = payload as FriendGoalCompletedEvent;
-    const friendIds = p.friendIds || [];
-    for (const friendId of friendIds) {
-      io.of('/social').to(`user:${friendId}`).emit('friend:goal_completed', {
-        userId,
-        username: p.username || 'Unknown',
-        goalType: p.goalType,
-        completedAt: p.completedAt || new Date().toISOString(),
-      });
-    }
-  }
+  // The 'friend.goal_completed' branch was removed with the session-target goal
+  // system. TaskGoal is personal — a user's own grouped tasks — so there is no
+  // friend-visible goal completion to broadcast.
 }

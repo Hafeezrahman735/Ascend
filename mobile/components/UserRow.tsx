@@ -17,13 +17,13 @@ interface UserRowProps {
   onAction?: () => void;
 }
 
+// avatarUrl and lastActive remain in the prop type (callers pass them) but this
+// row renders an emoji avatar and an activeToday dot, so neither is read.
 export default function UserRow({
   username,
-  avatarUrl,
   level,
   streak,
   activeToday,
-  lastActive,
   subtitle,
   actionLabel,
   actionDisabled,

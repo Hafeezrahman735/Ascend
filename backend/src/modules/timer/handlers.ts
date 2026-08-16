@@ -25,7 +25,11 @@ export function setupTimerHandlers(namespace: Namespace): void {
 
   namespace.on('connection', (socket: Socket) => {
     const userId = socket.userId;
-    socket.join(`user:${userId}`);
+    // `void`: join() is synchronous with the default in-memory adapter, and
+    // socket.io does not await connection handlers anyway. If a Redis adapter is
+    // ever added for multi-instance scaling this becomes async and would need
+    // awaiting before any emit to this room.
+    void socket.join(`user:${userId}`);
 
     socket.on('disconnect', () => {});
   });

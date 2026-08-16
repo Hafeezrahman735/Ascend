@@ -561,7 +561,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
 
   fetchNotifications: async () => {
     try {
-      const response = await api.get<Array<{ id: string; type: string; title: string; body: string; isRead: boolean; createdAt: string }>>('/notifications');
+      const response = await api.get<{ id: string; type: string; title: string; body: string; isRead: boolean; createdAt: string }[]>('/notifications');
       if (response.success && response.data) {
         const list = Array.isArray(response.data) ? response.data : [];
         const mapped: InAppNotification[] = list.map((n) => ({

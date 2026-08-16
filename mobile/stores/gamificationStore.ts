@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../services/api';
-import { SessionReward, UserGamification, Achievement } from '../types';
+import { SessionReward, UserGamification, Achievement, ActivityEvent } from '../types';
+import { getLocalDateString } from '../utils/date';
 
 interface GamificationStoreState {
   xp: number;
@@ -10,12 +11,16 @@ interface GamificationStoreState {
   totalSessions: number;
   totalFocusMinutes: number;
   achievements: Achievement[];
+  /** Personal accomplishment log — sessions, tasks, goals, achievements, levels. */
+  activity: ActivityEvent[];
+  isLoadingActivity: boolean;
   pendingRewards: SessionReward[];
   isLoading: boolean;
 
   fetchProfile: () => Promise<void>;
   checkAndResetDayStreak: () => Promise<void>;
   fetchAchievements: () => Promise<void>;
+  fetchActivity: () => Promise<void>;
   applySessionReward: (reward: SessionReward, durationSeconds?: number) => void;
   clearPendingRewards: () => void;
   reset: () => void;
@@ -29,6 +34,8 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   totalSessions: 0,
   totalFocusMinutes: 0,
   achievements: [],
+  activity: [],
+  isLoadingActivity: false,
   pendingRewards: [],
   isLoading: false,
 
@@ -54,9 +61,9 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   // on boot/foreground alongside spawnRecurringTasks; never throws.
   checkAndResetDayStreak: async () => {
     try {
-      const d = new Date();
-      const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const res = await api.post<{ currentStreak: number }>('/auth/me/streak-check', { localDate });
+      const res = await api.post<{ currentStreak: number }>('/auth/me/streak-check', {
+        localDate: getLocalDateString(),
+      });
       if (res.success && res.data) {
         set({ currentStreak: res.data.currentStreak });
       }
@@ -71,6 +78,19 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
         set({ achievements: res.data });
       }
     } catch {
+    }
+  },
+
+  fetchActivity: async () => {
+    set({ isLoadingActivity: true });
+    try {
+      const res = await api.get<{ events: ActivityEvent[]; cursor: string | null }>('/activity');
+      set({
+        activity: res.success && res.data ? res.data.events : [],
+        isLoadingActivity: false,
+      });
+    } catch {
+      set({ isLoadingActivity: false });
     }
   },
 
@@ -111,6 +131,9 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
       totalSessions: 0,
       totalFocusMinutes: 0,
       achievements: [],
+      // Cleared on logout so the next account never sees the previous one's log.
+      activity: [],
+      isLoadingActivity: false,
       pendingRewards: [],
     });
   },
