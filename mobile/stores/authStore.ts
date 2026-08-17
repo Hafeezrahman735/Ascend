@@ -12,6 +12,13 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   isNewUser: boolean;
+  /**
+   * True when we hold tokens but could not reach the server to validate them.
+   * Distinct from "logged out": the session may well be fine. The auth guard
+   * uses this to avoid bouncing a valid user to the login screen during a
+   * backend restart, where logging in again would fail for the same reason.
+   */
+  sessionUnavailable: boolean;
 
   login: (email: string, password: string) => Promise<boolean>;
   register: (email: string, username: string, password: string) => Promise<boolean>;
@@ -21,12 +28,17 @@ interface AuthState {
   setIsNewUser: (value: boolean) => void;
 }
 
+// Failures that mean "no answer from the server" rather than "the server
+// rejected you". Only the latter should ever end a session.
+const TRANSPORT_FAILURES: ReadonlySet<string> = new Set(['offline', 'timeout', 'server']);
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isAuthenticated: false,
   isLoading: false,
   error: null,
   isNewUser: false,
+  sessionUnavailable: false,
 
   login: async (email: string, password: string) => {
     set({ isLoading: true, error: null });
@@ -115,19 +127,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Task store self-cleans via its useAuthStore.subscribe in taskStore.ts.
       // Setting user: null here triggers that subscription synchronously.
       // Navigation is handled by the auth guard in _layout.tsx.
-      set({ user: null, isAuthenticated: false, isLoading: false, error: null, isNewUser: false });
+      set({ user: null, isAuthenticated: false, isLoading: false, error: null, isNewUser: false, sessionUnavailable: false });
     }
   },
 
   loadUser: async () => {
-    try {
-      const response = await api.get<User>('/auth/me');
-      if (response.success && response.data) {
-        set({ user: response.data, isAuthenticated: true });
-      }
-    } catch {
-      set({ user: null, isAuthenticated: false });
+    const response = await api.get<User>('/auth/me');
+
+    if (response.success && response.data) {
+      set({ user: response.data, isAuthenticated: true, sessionUnavailable: false });
+      return;
     }
+
+    // The api layer already retried transient failures. Reaching here with a
+    // transport error means the server is genuinely unreachable — hold the
+    // session rather than silently signing the user out.
+    // A definitively rejected session arrives via setOnAuthExpired instead.
+    set({ sessionUnavailable: TRANSPORT_FAILURES.has(response.errorKind ?? '') });
   },
 
   clearError: () => set({ error: null }),
@@ -149,6 +165,7 @@ setOnAuthExpired(() => {
     isAuthenticated: false,
     isLoading: false,
     isNewUser: false,
+    sessionUnavailable: false,
     error: 'Your session expired. Please sign in again.',
   });
 });

@@ -226,9 +226,14 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 // the accessor lazy-loads on first use if this fails.
 loadAchievementCatalogue().catch((err) => console.error('Achievement catalogue warm-up failed:', err));
 
-server.listen(Number(config.PORT), () => {
-  console.log(`Ascend backend running on port ${config.PORT}`);
-});
+// Integration tests import this module for its exported `app` and let supertest
+// bind its own ephemeral port. Listening here too would fight for the port and
+// leave a live handle open after the suite finishes.
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(Number(config.PORT), () => {
+    console.log(`Ascend backend running on port ${config.PORT}`);
+  });
+}
 
 // A rejected promise we forgot to catch is recoverable — log it and carry on.
 process.on('unhandledRejection', (reason) => {

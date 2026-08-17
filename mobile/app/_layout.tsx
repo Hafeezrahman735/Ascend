@@ -1,6 +1,6 @@
 import '../global.css';
-import { useEffect, useRef, useState } from 'react';
-import { View, ActivityIndicator, Alert, Linking } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, ActivityIndicator, Alert, Linking } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -20,14 +20,41 @@ import { useTimerNotifications } from '../hooks/useTimerNotifications';
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
 
+// Blocking hydration: everything the first painted screen needs. Settings come
+// first so the theme is correct before the UI appears.
+async function hydrateForUser(userId: string): Promise<void> {
+  await useUserSettingsStore.getState().load(userId);
+  await useTaskStore.getState().hydrateTasks(userId);
+  await useGoalStore.getState().hydrateGoals(userId);
+  await useTimerStore.getState().hydrate(userId);
+}
+
+// Non-blocking refresh. Deliberately unawaited — these populate screens the
+// user has not reached yet.
+function refreshBackgroundData(): void {
+  useTaskStore.getState().fetchTasks(true);
+  useTaskStore.getState().spawnRecurringTasks();
+  // Reset the overall day-streak immediately if a day was missed (mirrors
+  // the immediate recurring-streak reset), before fetchProfile reads it.
+  useGamificationStore.getState().checkAndResetDayStreak();
+  useGoalStore.getState().fetchGoals(true);
+  useGamificationStore.getState().fetchProfile();
+  useGamificationStore.getState().fetchAchievements();
+  useSocialStore.getState().fetchNotifications();
+  useSocialStore.getState().fetchStudyGroups();
+  useTimerStore.getState().fetchWeekSessions();
+}
+
 export default function RootLayout() {
   const Colors = useTheme();
   const isDark = useIsDark();
   const [isReady, setIsReady] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const router = useRouter();
   const segments = useSegments();
   const user = useAuthStore((s) => s.user);
   const isNewUser = useAuthStore((s) => s.isNewUser);
+  const sessionUnavailable = useAuthStore((s) => s.sessionUnavailable);
   const isNavigating = useRef(false);
 
   // Subscribes to the timer store and schedules/cancels timer notifications, and
@@ -75,7 +102,10 @@ export default function RootLayout() {
     // the screen within the group (e.g. '(auth)' / 'onboarding1').
     const currentScreen = (segments as string[])[1] as string | undefined;
     const onOnboarding = !!user && isNewUser && (currentScreen === 'onboarding1' || currentScreen === 'onboarding2');
-    const needsAuth = !user && !inAuthGroup;
+    // Having no user because the server was unreachable is not the same as being
+    // signed out. Redirecting in that case strands the user on a login screen
+    // that cannot work either — the retry screen below handles it instead.
+    const needsAuth = !user && !inAuthGroup && !sessionUnavailable;
     const needsApp = !!user && inAuthGroup && !onOnboarding;
 
     if (!needsAuth && !needsApp) return;
@@ -123,11 +153,7 @@ export default function RootLayout() {
           console.log('[bootstrap] user:', authedUser?.id, authedUser?.username);
 
           if (authedUser) {
-            // Load settings first so the theme is correct before the UI paints.
-            await useUserSettingsStore.getState().load(authedUser.id);
-            await useTaskStore.getState().hydrateTasks(authedUser.id);
-            await useGoalStore.getState().hydrateGoals(authedUser.id);
-            await useTimerStore.getState().hydrate(authedUser.id);
+            await hydrateForUser(authedUser.id);
           } else {
             await useTimerStore.getState().hydrate('');
           }
@@ -138,17 +164,7 @@ export default function RootLayout() {
 
         // Non-blocking background refresh after Stack mounts.
         if (useAuthStore.getState().user) {
-          useTaskStore.getState().fetchTasks(true);
-          useTaskStore.getState().spawnRecurringTasks();
-          // Reset the overall day-streak immediately if a day was missed (mirrors
-          // the immediate recurring-streak reset), before fetchProfile reads it.
-          useGamificationStore.getState().checkAndResetDayStreak();
-          useGoalStore.getState().fetchGoals(true);
-          useGamificationStore.getState().fetchProfile();
-          useGamificationStore.getState().fetchAchievements();
-          useSocialStore.getState().fetchNotifications();
-          useSocialStore.getState().fetchStudyGroups();
-          useTimerStore.getState().fetchWeekSessions();
+          refreshBackgroundData();
         }
 
       } catch (err) {
@@ -168,6 +184,24 @@ export default function RootLayout() {
     }
   }, [user]);
 
+  // Retry after the server was unreachable at launch. Runs the same hydration
+  // bootstrap does, so a successful retry lands on a fully populated app rather
+  // than an empty one.
+  const retryConnection = useCallback(async () => {
+    if (isRetrying) return;
+    setIsRetrying(true);
+    try {
+      await useAuthStore.getState().loadUser();
+      const authedUser = useAuthStore.getState().user;
+      if (authedUser) {
+        await hydrateForUser(authedUser.id);
+        refreshBackgroundData();
+      }
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [isRetrying]);
+
   if (!isReady) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
@@ -181,6 +215,51 @@ export default function RootLayout() {
           }}
         >
           <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // We hold tokens but could not reach the server to validate them. The login
+  // screen would fail for the same reason, so offer a retry rather than a
+  // misleading "signed out".
+  if (sessionUnavailable && !user) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: Colors.bg,
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: 32,
+          }}
+        >
+          <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '600', textAlign: 'center' }}>
+            Can&apos;t reach the server
+          </Text>
+          <Text style={{ color: Colors.subtext, fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+            You&apos;re still signed in. This usually clears up in a moment.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isRetrying}
+            onPress={retryConnection}
+            style={{
+              marginTop: 24,
+              minHeight: 48,
+              justifyContent: 'center',
+              paddingHorizontal: 28,
+              borderRadius: 12,
+              backgroundColor: Colors.primary,
+              opacity: isRetrying ? 0.6 : 1,
+            }}
+          >
+            <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>
+              {isRetrying ? 'Retrying…' : 'Try again'}
+            </Text>
+          </Pressable>
         </View>
       </GestureHandlerRootView>
     );

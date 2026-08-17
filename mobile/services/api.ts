@@ -58,7 +58,10 @@ let refreshInFlight: Promise<boolean> | null = null;
 async function performRefresh(): Promise<boolean> {
   if (!refreshToken) return false;
   try {
-    const response = await fetch(`${Config.API_URL}/auth/refresh`, {
+    // Uses the timeout wrapper for the same reason every other call does: a bare
+    // fetch here could hang indefinitely, and because refreshes are coalesced,
+    // one stuck refresh blocks every request waiting behind it.
+    const response = await fetchWithTimeout(`${Config.API_URL}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
@@ -110,22 +113,109 @@ function refreshAccessToken(): Promise<boolean> {
   return refreshInFlight;
 }
 
-const TIMEOUT_MS = 10000;
+/**
+ * Why a request can fail, kept separate from the human-readable message.
+ *
+ * Callers need this to tell "the server did not answer" apart from "the server
+ * said no". Treating those the same is what signs a valid user out when the
+ * backend is merely restarting — see authStore.loadUser.
+ */
+export type ApiErrorKind = 'offline' | 'timeout' | 'server' | 'unauthorized' | 'invalid-response';
 
-function fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
-  return new Promise<Response>((resolve, reject) => {
-    const timeoutId = setTimeout(() => reject(new Error('Request timed out')), TIMEOUT_MS);
-    fetch(url, options).then(
-      (response) => { clearTimeout(timeoutId); resolve(response); },
-      (err) => { clearTimeout(timeoutId); reject(err); },
-    );
-  });
+// A type alias rather than an interface: some endpoints (e.g. /social/feed) put
+// extra fields like nextCursor alongside `data`, and callers read them via a
+// Record cast. Interfaces have no implicit index signature, so that cast would
+// stop compiling.
+export type ApiResponse<T> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+  errorKind?: ApiErrorKind;
+};
+
+const ERROR_MESSAGES: Record<ApiErrorKind, string> = {
+  offline: 'Network error: Could not reach the server. Check your connection.',
+  timeout: 'The server took too long to respond. Please try again.',
+  server: 'The server is temporarily unavailable. Please try again.',
+  unauthorized: 'Your session has expired.',
+  'invalid-response': 'Server returned an invalid response',
+};
+
+// Per attempt, not per call. The backend answers in well under a second when
+// warm; this budget exists for the window after a container restart.
+const ATTEMPT_TIMEOUT_MS = 12000;
+const MAX_ATTEMPTS = 3;
+// Ceiling across all attempts, so a user is never left waiting three full
+// timeouts back to back.
+const TOTAL_DEADLINE_MS = 30000;
+const BASE_BACKOFF_MS = 400;
+
+// Gateway codes Railway's edge returns while a container is coming up. Unlike a
+// 4xx these carry no useful body — retrying is strictly better than surfacing
+// the HTML error page as "invalid response".
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const isAbortError = (err: unknown): boolean =>
+  err instanceof Error && err.name === 'AbortError';
+
+function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = ATTEMPT_TIMEOUT_MS,
+): Promise<Response> {
+  // AbortController rather than a Promise.race: the previous version resolved
+  // the caller but left the request running, so a timed-out call kept consuming
+  // a socket and could still deliver a response nobody was listening for.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(timeoutId),
+  );
 }
+
+type SendResult = { response: Response } | { failure: ApiErrorKind };
+
+/**
+ * One HTTP attempt, retried with exponential backoff and jitter on failures
+ * that are plausibly transient. Deliberately does NOT retry 4xx or 5xx other
+ * than the gateway codes: those are answers, not absences of one, and retrying
+ * a rejected write is worse than reporting it.
+ */
+async function sendWithRetry(url: string, options: RequestInit): Promise<SendResult> {
+  const startedAt = Date.now();
+  let lastFailure: ApiErrorKind = 'offline';
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(url, options);
+      if (!RETRYABLE_STATUS.has(response.status)) return { response };
+      lastFailure = 'server';
+    } catch (err) {
+      lastFailure = isAbortError(err) ? 'timeout' : 'offline';
+    }
+
+    if (attempt === MAX_ATTEMPTS) break;
+
+    const backoff = BASE_BACKOFF_MS * 2 ** (attempt - 1) + Math.random() * 250;
+    if (Date.now() - startedAt + backoff > TOTAL_DEADLINE_MS) break;
+    await sleep(backoff);
+  }
+
+  return { failure: lastFailure };
+}
+
+const transportFailure = <T>(kind: ApiErrorKind): ApiResponse<T> => ({
+  success: false,
+  error: ERROR_MESSAGES[kind],
+  errorKind: kind,
+});
 
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
-): Promise<{ success: boolean; data?: T; error?: string }> {
+): Promise<ApiResponse<T>> {
   const url = `${Config.API_URL}${endpoint}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -139,12 +229,9 @@ export async function apiRequest<T>(
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(url, { ...options, headers });
-  } catch {
-    return { success: false, error: 'Network error: Could not reach the server. Check your connection.' };
-  }
+  const first = await sendWithRetry(url, { ...options, headers });
+  if ('failure' in first) return transportFailure<T>(first.failure);
+  let response = first.response;
 
   if (response.status === 401 && refreshToken) {
     // If the token already changed underneath us, a refresh has just landed —
@@ -152,19 +239,32 @@ export async function apiRequest<T>(
     const refreshed = accessToken !== tokenUsed ? true : await refreshAccessToken();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${accessToken}`;
-      try {
-        response = await fetchWithTimeout(url, { ...options, headers });
-      } catch {
-        return { success: false, error: 'Network error: Could not reach the server. Check your connection.' };
-      }
+      const retried = await sendWithRetry(url, { ...options, headers });
+      if ('failure' in retried) return transportFailure<T>(retried.failure);
+      response = retried.response;
     }
   }
 
+  let body: ApiResponse<T>;
   try {
-    return await response.json();
+    body = await response.json();
   } catch {
-    return { success: false, error: 'Server returned an invalid response' };
+    return transportFailure<T>('invalid-response');
   }
+
+  // The body is the source of truth for the message — it is the server's own
+  // wording. errorKind is added alongside it so callers can branch on the cause
+  // without string-matching.
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      return { ...body, success: false, errorKind: 'unauthorized' };
+    }
+    if (response.status >= 500) {
+      return { ...body, success: false, errorKind: 'server' };
+    }
+  }
+
+  return body;
 }
 
 export const api = {

@@ -318,6 +318,8 @@ A task is complete only when:
 
 ✓ Documentation updated if needed
 
+✓ Every new route needs an integration test before it's considered done
+
 ---
 
 # Communication
