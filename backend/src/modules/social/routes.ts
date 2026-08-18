@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
+import { getRankTitle } from '../../lib/rank';
 import { handleAuthError, handleZodError } from '../../lib/errors';
 import { getFriendIds, getFriendSessions } from '../../services/friendshipService';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
@@ -23,13 +24,6 @@ function resolveAvatar(stored: string | null | undefined, userId: string): strin
   return stored && stored.trim() ? stored : getAvatarEmoji(userId);
 }
 
-function getRankTitle(xp: number): string {
-  if (xp >= 10000) return 'Champion';
-  if (xp >= 5000) return 'Legend';
-  if (xp >= 2500) return 'Elite';
-  if (xp >= 1000) return 'Steady';
-  return 'Rookie';
-}
 
 // ─── Moderation helpers (App Store Guideline 1.2) ────────────────────────────
 // Minimal server-side profanity gate on user-generated captions. STEM_TERMS are
