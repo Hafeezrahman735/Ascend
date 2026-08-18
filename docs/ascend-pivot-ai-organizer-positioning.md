@@ -1,5 +1,10 @@
 # Repositioning Ascend around an AI organizer — design and system process
 
+> **STATUS: ON HOLD as of 2026-08-18.** Superseded for now by
+> `docs/plans/achievements-and-rank.md`, which rebuilds (not just reframes)
+> achievements and rank. Revisit this doc before starting its Phase 5 —
+> the "reframed, not rebuilt" stance below is currently NOT the active direction.
+
 Scope, per your answers: this is a repositioning, not a rebuild — everything already built (tasks, TaskGoal, recurring habits, social/leaderboards, gamification, the timer itself) stays and stays functional. What changes is what's the *hero* and what the app is *for*. Audience: students, freelancers, and solo operators — the common thread across all three is nobody is telling them what to do next. No manager, no fixed schedule, no built-in structure. AI style: hybrid — conversational for capture and coaching, autonomous underneath for the actual day-planning.
 
 ## The positioning gap, grounded in what's actually out there
