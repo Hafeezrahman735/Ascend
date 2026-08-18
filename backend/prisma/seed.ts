@@ -27,8 +27,8 @@ interface AchievementSeed {
 // never unlock anything. Worth a follow-up ticket; out of scope for the goals work.
 const achievements: AchievementSeed[] = [
   { key: 'streak_3', title: 'Three Days Running', description: 'Complete focus sessions 3 days in a row', icon: '🔥', xpReward: 50, category: 'STREAK', threshold: 3 },
-  { key: 'streak_7', title: 'Full Week', description: 'Complete focus sessions 7 days in a row', icon: '🔥', xpReward: 100, category: 'STREAK', threshold: 7 },
-  { key: 'streak_14', title: 'Two Weeks Steady', description: 'Complete focus sessions 14 days in a row', icon: '⚡', xpReward: 200, category: 'STREAK', threshold: 14 },
+  { key: 'streak_7', title: 'Full Week', description: 'Complete focus sessions 7 days in a row', icon: '📅', xpReward: 100, category: 'STREAK', threshold: 7 },
+  { key: 'streak_14', title: 'Two Weeks Steady', description: 'Complete focus sessions 14 days in a row', icon: '🗿', xpReward: 200, category: 'STREAK', threshold: 14 },
   { key: 'streak_30', title: 'A Month of Showing Up', description: 'Complete focus sessions 30 days in a row', icon: '👑', xpReward: 500, category: 'STREAK', threshold: 30 },
   { key: 'streak_60', title: 'Sixty Days', description: 'Complete focus sessions 60 days in a row', icon: '💎', xpReward: 1000, category: 'STREAK', threshold: 60 },
   { key: 'streak_100', title: 'One Hundred Days', description: 'Complete focus sessions 100 days in a row', icon: '🌟', xpReward: 2000, category: 'STREAK', threshold: 100 },
@@ -40,7 +40,7 @@ const achievements: AchievementSeed[] = [
   { key: 'sessions_250', title: 'Two Fifty', description: 'Complete 250 focus sessions', icon: '🚀', xpReward: 1000, category: 'SESSIONS', threshold: 250 },
   { key: 'sessions_500', title: 'Five Hundred', description: 'Complete 500 focus sessions', icon: '⭐', xpReward: 2500, category: 'SESSIONS', threshold: 500 },
   { key: 'focus_60', title: 'First Hour', description: 'Accumulate 1 hour of total focus time', icon: '⏱️', xpReward: 50, category: 'FOCUS_TIME', threshold: 1 },
-  { key: 'focus_300', title: 'Five Hours In', description: 'Accumulate 5 hours of total focus time', icon: '🏃', xpReward: 100, category: 'FOCUS_TIME', threshold: 5 },
+  { key: 'focus_300', title: 'Five Hours In', description: 'Accumulate 5 hours of total focus time', icon: '⏳', xpReward: 100, category: 'FOCUS_TIME', threshold: 5 },
   { key: 'focus_600', title: 'Ten Hours', description: 'Accumulate 10 hours of total focus time', icon: '📈', xpReward: 200, category: 'FOCUS_TIME', threshold: 10 },
   { key: 'focus_3000', title: 'Fifty Hours', description: 'Accumulate 50 hours of total focus time', icon: '💪', xpReward: 500, category: 'FOCUS_TIME', threshold: 50 },
   { key: 'focus_6000', title: 'One Hundred Hours', description: 'Accumulate 100 hours of total focus time', icon: '🦸', xpReward: 1000, category: 'FOCUS_TIME', threshold: 100 },

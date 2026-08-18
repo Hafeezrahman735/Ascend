@@ -65,8 +65,12 @@ export function achievementProgress(category: string, stats: AchievementStats): 
   switch (category) {
     case 'STREAK':     return stats.currentStreak;
     case 'SESSIONS':   return stats.totalSessions;
-    // Thresholds for this category are expressed in minutes.
-    case 'FOCUS_TIME': return Math.floor(stats.totalFocusTime / 60);
+    // Thresholds for this category are expressed in HOURS — the seed titles say
+    // "Accumulate N hours" and carry threshold: N. This divided by 60 (seconds ->
+    // minutes) and compared minutes against an hours threshold, so "One Hundred
+    // Hours" unlocked after 100 minutes. Already-unlocked rows are left alone:
+    // achievements are never revoked in this system.
+    case 'FOCUS_TIME': return Math.floor(stats.totalFocusTime / 3600);
     case 'LEVEL':      return stats.level;
     case 'TASKS':      return stats.tasksCompleted;
     default:           return 0;
@@ -81,7 +85,7 @@ export function achievementProgress(category: string, stats: AchievementStats): 
  * threshold of 1, so treating them as ordinary counter achievements would unlock
  * every one of them the moment a user completed a single session.
  */
-const BEHAVIOURAL_KEYS = new Set([
+export const BEHAVIOURAL_KEYS = new Set([
   'social-butterfly',
   'early-bird',
   'night-owl',

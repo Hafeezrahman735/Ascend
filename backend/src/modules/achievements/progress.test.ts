@@ -23,9 +23,28 @@ describe('achievementProgress', () => {
     expect(achievementProgress('TASKS', stats)).toBe(17);
   });
 
-  it('converts focus time to minutes, matching how thresholds are expressed', () => {
-    // FOCUS_TIME thresholds are minutes (focus_60 = "1 hour"), the counter is seconds.
-    expect(achievementProgress('FOCUS_TIME', stats)).toBe(120);
+  it('converts focus time to HOURS, matching how thresholds are expressed', () => {
+    // This test previously asserted minutes and was encoding a live bug.
+    //
+    // The seeded thresholds are hours, not minutes: focus_60 is titled
+    // "Accumulate 1 hour" and carries `threshold: 1`; focus_6000 is
+    // "One Hundred Hours" and carries `threshold: 100`. Only the KEY names are
+    // in minutes, which is what misled the original assertion. Comparing
+    // minutes against an hours threshold unlocked "One Hundred Hours" after
+    // 100 minutes.
+    //
+    // Fixed in the code rather than the seed because seeding does not run on
+    // deploy (railway.json preDeployCommand is `prisma db push` only), so the
+    // rows already in production carry the hour values and the comparison has
+    // to match them.
+    expect(achievementProgress('FOCUS_TIME', stats)).toBe(2);
+  });
+
+  it('does not credit a partial hour', () => {
+    // 59 minutes 59 seconds is still zero hours — the boundary that decides
+    // whether "First Hour" unlocks a minute early.
+    expect(achievementProgress('FOCUS_TIME', { ...stats, totalFocusTime: 3599 })).toBe(0);
+    expect(achievementProgress('FOCUS_TIME', { ...stats, totalFocusTime: 3600 })).toBe(1);
   });
 
   it('covers TASKS — the category that existed in the enum but had no branch', () => {

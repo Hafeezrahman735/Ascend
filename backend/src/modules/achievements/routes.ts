@@ -3,9 +3,11 @@ import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
 import { handleAuthError } from '../../lib/errors';
-import { achievementProgress, type AchievementStats } from './handler';
+import { achievementProgress, BEHAVIOURAL_KEYS, type AchievementStats } from './handler';
+import { deriveTier } from './tier';
 
 export const achievementsRouter = Router();
+
 
 /** The counters achievement thresholds are measured against, for one user. */
 async function loadAchievementStats(userId: string): Promise<AchievementStats | null> {
@@ -37,7 +39,15 @@ function serializeAchievement(
   unlocked: { unlockedAt: Date; isShared: boolean } | undefined,
   stats: AchievementStats | null,
 ) {
-  const currentValue = stats ? achievementProgress(achievement.category, stats) : 0;
+  // Behavioural achievements ("complete a session before 8am") are binary
+  // conditions carrying a placeholder threshold of 1, so the generic SESSIONS
+  // counter reported them as 100% complete while permanently locked — which put
+  // four dead entries at the front of any nearest-to-unlock ordering. They have
+  // no partial progress: either the condition was met or it was not.
+  const isBehavioural = BEHAVIOURAL_KEYS.has(achievement.key);
+  const currentValue = isBehavioural
+    ? (unlocked ? achievement.threshold : 0)
+    : stats ? achievementProgress(achievement.category, stats) : 0;
   // Unlocked achievements always read as full, even if the underlying counter
   // later fell (a streak resets, a task is un-completed) — the achievement was
   // genuinely earned and is never revoked.
@@ -55,6 +65,7 @@ function serializeAchievement(
     isUnlocked: !!unlocked,
     unlockedAt: unlocked?.unlockedAt || null,
     isShared: unlocked?.isShared || false,
+    tier: deriveTier(achievement.xpReward),
     currentValue: cappedValue,
     progress: achievement.threshold > 0 ? cappedValue / achievement.threshold : 0,
   };
