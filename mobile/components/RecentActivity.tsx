@@ -69,9 +69,14 @@ export default function RecentActivity({ limit = 8 }: { limit?: number }) {
   const Colors = useTheme();
   const { activity, isLoadingActivity, fetchActivity } = useGamificationStore();
 
+  // Refresh is the caller's job — the Tasks screen fetches on focus, because a
+  // parent that hides this component until the log is non-empty can never let a
+  // self-owned fetch populate it. This fallback only covers a caller that does
+  // not fetch at all; with data already loaded it stays quiet rather than firing
+  // a second request every time the card is swiped into view.
   useEffect(() => {
-    fetchActivity();
-  }, [fetchActivity]);
+    if (activity.length === 0) fetchActivity();
+  }, [activity.length, fetchActivity]);
 
   const visible = useMemo(() => activity.slice(0, limit), [activity, limit]);
 

@@ -25,7 +25,7 @@ import { useGamificationStore } from '../../stores/gamificationStore';
 import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
 import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
-import { daysUntilLocalDate, formatDeadlineLabel } from '../../utils/date';
+import { daysUntilLocalDate, formatDeadlineLabel, getLocalDateString } from '../../utils/date';
 import {
   useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
   getTagColor, getTagIcon, type TagColorKey,
@@ -482,7 +482,10 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   useEffect(() => {
     if (visible) {
       setTitle(task?.title ?? ''); setDescription(task?.description ?? '');
-      setDueDate(task?.dueDate ?? ''); setTags(task?.tags ?? []);
+      // New tasks default to today so they land on the calendar straight away.
+      // Editing is left alone — silently dating an existing undated task on open
+      // would reschedule it just for being looked at.
+      setDueDate(task?.dueDate ?? getLocalDateString()); setTags(task?.tags ?? []);
       setEstimatedMinutes(task?.estimatedMinutes ?? 0); setPriority(task?.priority ?? 'medium');
       setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTagEditorOpen(false); setTitleError(false);
       // Recurring lives on the template; an instance carries it via parentTaskId.
@@ -592,7 +595,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                 </View>
                 <Switch
                   value={isRecurring}
-                  onValueChange={(val) => { setIsRecurring(val); if (!val) setRecurringDays([]); }}
+                  onValueChange={(val) => { setIsRecurring(val); if (val) setDueDate(''); else setRecurringDays([]); }}
                   trackColor={{ false: Colors.inactive, true: Colors.primary }}
                   thumbColor="#FFFFFF"
                 />
@@ -1435,11 +1438,27 @@ function SelfComparisonCard({ sessionHistory, onFocus }: { sessionHistory: Sessi
   );
 }
 
+// ─── Card 6: Recent Activity ──────────────────────────────────────────────────
+// Was a standalone section above the pill strip. It answers "what have I already
+// done", which is the same question SelfComparisonCard asks at a different
+// resolution — so it belongs in the rotation rather than competing for the top of
+// the screen with the cards that drive action.
+function RecentActivityCard() {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  return (
+    <View style={styles.card}>
+      <HeroLabel text="🕒 Recent activity" />
+      <RecentActivity limit={4} />
+    </View>
+  );
+}
+
 // ─── HeroCard (swipe via RNGH Gesture.Pan + tappable dots) ────────────────────
-function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour, currentStreak, longestStreak, onSelectAndFocus, onGoalPress, onFocus }: {
+function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour, currentStreak, longestStreak, hasActivity, onSelectAndFocus, onGoalPress, onFocus }: {
   activeCard: HeroCardType; setCard: (c: HeroCardType) => void;
   tasks: Task[]; goals: TaskGoal[]; sessionHistory: SessionRecord[]; peakHour: number | null;
-  currentStreak: number; longestStreak: number;
+  currentStreak: number; longestStreak: number; hasActivity: boolean;
   onSelectAndFocus: (id: string) => void; onGoalPress: () => void; onFocus: () => void;
 }) {
   const Colors = useTheme();
@@ -1457,6 +1476,7 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
       case 'goal_progress': return goals.some((g) => !g.isCompleted && !g.isArchived);
       case 'time_nudge':    return peakHour !== null;
       case 'momentum':      return currentStreak > 0;
+      case 'recent_activity': return hasActivity;
       case 'self_comparison': return true;
       default: return false;
     }
@@ -1494,6 +1514,7 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
       case 'time_nudge':      return <TimeNudgeCard peakHour={peakHour} sessionHistory={sessionHistory} onFocus={onFocus} />;
       case 'momentum':        return <MomentumCard currentStreak={currentStreak} longestStreak={longestStreak} sessionHistory={sessionHistory} />;
       case 'self_comparison': return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
+      case 'recent_activity': return <RecentActivityCard />;
       default:                return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
     }
   };
@@ -1616,6 +1637,10 @@ export default function TasksScreen() {
   const dailySessionTarget = settings.dailySessionTarget;
   const streak = useGamificationStore((s) => s.currentStreak ?? 0);
   const longestStreak = useGamificationStore((s) => s.longestStreak ?? 0);
+  // Drives whether the recent-activity card appears in the rotation at all. The
+  // screen fetches it (below) rather than leaving it to the card: a card that is
+  // filtered out never mounts, so a card-owned fetch could never populate itself.
+  const hasActivity = useGamificationStore((s) => s.activity.length > 0);
 
   const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>(null);
@@ -1668,6 +1693,7 @@ export default function TasksScreen() {
   useFocusEffect(useCallback(() => {
     useTaskStore.getState().fetchTasks(true);
     useGoalStore.getState().fetchGoals(true);
+    useGamificationStore.getState().fetchActivity();
     loadSessionHistory();
   }, [loadSessionHistory]));
 
@@ -2057,15 +2083,6 @@ export default function TasksScreen() {
           </View>
         </View>
 
-        {/* Recent activity — moved here from the Profile tab. Self-only log of
-            sessions, tasks, goals, achievements and level-ups. */}
-        <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
-          <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
-            Recent Activity
-          </Text>
-          <RecentActivity limit={4} />
-        </View>
-
         {/* Pill strip */}
         <PillStrip
           completedToday={completedToday}
@@ -2088,6 +2105,7 @@ export default function TasksScreen() {
           peakHour={peakHour}
           currentStreak={streak}
           longestStreak={longestStreak}
+          hasActivity={hasActivity}
           onSelectAndFocus={selectAndFocus}
           onGoalPress={() => setActiveView('goal-detail')}
           onFocus={goToFocus}

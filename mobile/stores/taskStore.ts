@@ -68,6 +68,18 @@ function refreshGoals(): void {
     .catch((err) => console.warn('[tasks] goal refresh failed:', err));
 }
 
+// The calendar places tasks by due date, so creating, rescheduling, completing
+// or deleting one makes whatever range the calendar has cached wrong. Flagging
+// is enough: the calendar screen refetches when it next gains focus, so the
+// user pays for one request only if they actually open the tab. Imported lazily
+// for the same reason as refreshGoals — a static import would close the
+// authStore -> timerStore -> taskStore cycle noted at initTaskStore below.
+function invalidateCalendar(): void {
+  import('./calendarStore')
+    .then(({ useCalendarStore }) => useCalendarStore.getState().invalidate())
+    .catch((err) => console.warn('[tasks] calendar invalidate failed:', err));
+}
+
 // Payloads mirroring the backend's createTaskSchema / updateTaskSchema. These
 // were previously narrower than what the form actually sends, so call sites used
 // `as any` — which is exactly how taskGoalId went missing on create without
@@ -240,6 +252,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         persistTasks(next, userId);
         // A task created into a goal changes that goal's linked count.
         if (confirmed.taskGoalId) refreshGoals();
+        invalidateCalendar();
         return confirmed;
       }
       // Server rejected — temp task stays visible; next fetchTasks will reconcile.
@@ -264,6 +277,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         persistTasks(tasks, userId);
         // Completion or a goal re-link both move goal progress server-side.
         if (data.isCompleted !== undefined || data.taskGoalId !== undefined) refreshGoals();
+        invalidateCalendar();
       } else {
         set({ tasks: previous });
         persistTasks(previous, userId);
@@ -291,6 +305,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         // The task's focus sessions were deleted server-side — drop them from the
         // local time-tracker cache too so its stats update without a full reconcile.
         removeTaskSessionsFromHistory(id).catch(() => {});
+        invalidateCalendar();
       }
     } catch (err) {
       console.warn('[tasks] deleteTask failed:', err);
@@ -329,6 +344,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       // The server owns goal progress and may have just auto-completed this
       // task's goal. Reconcile rather than recomputing locally.
       if (task.taskGoalId) refreshGoals();
+      invalidateCalendar();
     } catch {
       const reverted = get().tasks.map((t) =>
         t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t,
@@ -380,6 +396,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       if (changed) {
         await get().fetchTasks(true);
         console.log('[taskStore] recurring: spawned', res.data!.spawned, 'archived', res.data!.archived ?? 0);
+        invalidateCalendar();
       }
     } catch (err) {
       console.warn('[taskStore] spawnRecurringTasks failed:', err);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useCalendarStore } from '../../stores/calendarStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
@@ -17,7 +18,6 @@ import MonthView from '../../components/calendar/MonthView';
 import WeekView from '../../components/calendar/WeekView';
 import DayView from '../../components/calendar/DayView';
 import StatsView from '../../components/calendar/StatsView';
-import SessionHeatGrid from '../../components/calendar/SessionHeatGrid';
 
 /**
  * Calendar tab — owns the view mode, the anchored date, and the fetch for the
@@ -60,23 +60,31 @@ export default function CalendarScreen() {
     };
   }, [viewMode, anchorDate, weekStartsOn]);
 
-  // Month view needs stats too — the focus heat grid is driven by
-  // stats.sessionsPerDay, not by the scheduled items in `fetchRange`.
-  const needsStats = viewMode === 'stats' || viewMode === 'month';
+  // Stats is the only view built from aggregates; every other view renders the
+  // scheduled items that fetchRange returns.
+  const loadVisibleRange = useCallback(
+    () => (viewMode === 'stats' ? fetchStats(start, end) : fetchRange(start, end)),
+    [viewMode, start, end, fetchRange, fetchStats],
+  );
 
   useEffect(() => {
-    if (viewMode !== 'stats') fetchRange(start, end);
-    if (needsStats) fetchStats(start, end);
-  }, [viewMode, needsStats, start, end, fetchRange, fetchStats]);
+    loadVisibleRange();
+  }, [loadVisibleRange]);
+
+  // Tasks are created and edited on another tab, so by the time the calendar is
+  // shown again its range can be out of date. taskStore flags the change and
+  // this pays for it — one refetch, only when something actually moved.
+  useFocusEffect(
+    useCallback(() => {
+      if (useCalendarStore.getState().isStale) loadVisibleRange();
+    }, [loadVisibleRange]),
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([
-      viewMode !== 'stats' ? fetchRange(start, end) : Promise.resolve(),
-      needsStats ? fetchStats(start, end) : Promise.resolve(),
-    ]);
+    await loadVisibleRange();
     setRefreshing(false);
-  }, [viewMode, needsStats, start, end, fetchRange, fetchStats]);
+  }, [loadVisibleRange]);
 
   const itemsByDate = useMemo(() => groupItemsByDate(items), [items]);
 
@@ -183,18 +191,7 @@ export default function CalendarScreen() {
           }
         >
           {viewMode === 'month' && (
-            <>
-              <MonthView anchorDate={anchorDate} itemsByDate={itemsByDate} onDayPress={openDay} />
-              {/* Focus intensity, moved over from the Tasks tab's calendar.
-                  MonthView above shows what's scheduled; this shows what actually
-                  got done. */}
-              <SessionHeatGrid
-                anchorDate={anchorDate}
-                sessionsPerDay={stats?.sessionsPerDay ?? {}}
-                itemsByDate={itemsByDate}
-                onDayPress={openDay}
-              />
-            </>
+            <MonthView anchorDate={anchorDate} itemsByDate={itemsByDate} onDayPress={openDay} />
           )}
           {viewMode === 'week' && (
             <WeekView

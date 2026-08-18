@@ -76,6 +76,13 @@ interface CalendarStoreState {
   /** Set when Google is connected but its events couldn't be loaded this fetch. */
   syncWarning: string | null;
   loadedRange: { start: string; end: string } | null;
+  /**
+   * Set when another store changes something the calendar renders — a task
+   * created, rescheduled, completed or deleted. The calendar screen refetches
+   * on focus while this is true, so switching back from the Tasks tab never
+   * shows a stale day.
+   */
+  isStale: boolean;
 
   fetchRange: (start: string, end: string) => Promise<void>;
   fetchStats: (start: string, end: string) => Promise<void>;
@@ -84,6 +91,8 @@ interface CalendarStoreState {
   updateNote: (id: string, data: Partial<Note>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   clearCalendar: (userId?: string) => void;
+  /** Marks the calendar for refetch after an external change. */
+  invalidate: () => void;
 }
 
 export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
@@ -96,6 +105,7 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
   error: null,
   syncWarning: null,
   loadedRange: null,
+  isStale: false,
 
   fetchRange: async (start, end) => {
     const userId = useAuthStore.getState().user?.id;
@@ -144,6 +154,7 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
         items,
         notes,
         isLoading: false,
+        isStale: false,
         syncWarning: res.data.googleSyncError,
       });
 
@@ -248,6 +259,16 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
     }
   },
 
+  // Called by other stores after they change something the calendar shows.
+  // The persisted range cache is dropped too: it is painted instantly on the
+  // next visit, so leaving it would briefly redisplay a task that was just
+  // deleted or rescheduled.
+  invalidate: () => {
+    const userId = useAuthStore.getState().user?.id;
+    if (userId) void clearCache(userId);
+    set({ isStale: true });
+  },
+
   clearCalendar: (userId?: string) => {
     const resolved = userId ?? useAuthStore.getState().user?.id;
     set({
@@ -259,6 +280,7 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
       error: null,
       syncWarning: null,
       loadedRange: null,
+      isStale: false,
     });
     if (resolved) clearCache(resolved);
   },

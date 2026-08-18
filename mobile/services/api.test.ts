@@ -111,7 +111,7 @@ describe('apiRequest', () => {
       json: async () => {
         throw new Error('Unexpected token < in JSON');
       },
-    } as Response);
+    } as unknown as Response);
 
     const res = await apiRequest('/tasks');
 

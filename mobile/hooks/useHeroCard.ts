@@ -9,13 +9,15 @@ export type HeroCardType =
   | 'goal_progress'
   | 'time_nudge'
   | 'momentum'
-  | 'self_comparison';
+  | 'self_comparison'
+  | 'recent_activity';
 
 export const CARD_ORDER: HeroCardType[] = [
   'momentum',
   'goal_progress',
   'time_nudge',
   'self_comparison',
+  'recent_activity',
   'urgency',
 ];
 
@@ -41,6 +43,10 @@ function diffMinutes(a: Date, b: Date): number {
 
 // ─── Pure selection function — NO store reads ─────────────────────────────────
 
+// Note: 'recent_activity' is deliberately absent from the priority chain below.
+// Every other card is a nudge — it asks for an action right now. The activity log
+// is a backward-looking record, so it earns a place in the rotation (swipe or tap
+// a dot) but never preempts a card that is trying to get the user working.
 export function selectHeroCard(params: {
   tasks: Task[];
   goals: TaskGoal[];
