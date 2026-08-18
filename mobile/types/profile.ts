@@ -6,17 +6,7 @@ export interface StreakState {
   streakAtRisk: boolean;
 }
 
-export type BadgeLevel = 'locked' | 'bronze' | 'silver' | 'gold';
-
-export interface CategoryBadge {
-  tag: string;
-  icon: string;
-  level: BadgeLevel;
-  sessionCount: number;
-}
-
-export const BADGE_THRESHOLDS = {
-  bronze: 10,
-  silver: 30,
-  gold: 75,
-} as const;
+// BadgeLevel / CategoryBadge / BADGE_THRESHOLDS were removed with the per-tag
+// badge system (2026-08-18). It was a third progression concept alongside Level
+// and Rank, computed client-side from task.sessionsOnTask, and it competed
+// visually with the achievements row for the same space on the profile.

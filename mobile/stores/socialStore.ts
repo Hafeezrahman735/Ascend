@@ -91,6 +91,14 @@ interface SocialState {
   following: UserListItem[];
   userPosts: SocialPost[];
   userPostsCursor: string | null;
+  /**
+   * Scoped to the user's own posts.
+   *
+   * The profile renders this list permanently now (it used to be behind a tab),
+   * so binding it to the shared `isLoading` meant any unrelated social action —
+   * loading friends, following someone — flashed a spinner inside the profile.
+   */
+  isLoadingUserPosts: boolean;
   fetchUserSocialStats: () => Promise<void>;
   fetchFollowers: () => Promise<void>;
   fetchFollowing: () => Promise<void>;
@@ -136,6 +144,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   following: [],
   userPosts: [],
   userPostsCursor: null,
+  isLoadingUserPosts: false,
 
   setActiveTab: (tab) => {
     set({ activeTab: tab });
@@ -623,6 +632,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   fetchUserPosts: async () => {
+    set({ isLoadingUserPosts: true });
     try {
       const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>('/social/posts/mine');
       if (response.success && response.data) {
@@ -632,6 +642,8 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       }
     } catch {
       set({ userPosts: [], userPostsCursor: null });
+    } finally {
+      set({ isLoadingUserPosts: false });
     }
   },
 

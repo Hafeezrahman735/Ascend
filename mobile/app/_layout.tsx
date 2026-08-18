@@ -13,6 +13,7 @@ import { useSocialStore } from '../stores/socialStore';
 import { useGoalStore } from '../stores/goalStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { useTheme, useIsDark } from '../hooks/useTheme';
+import UnlockOverlay from '../components/achievements/UnlockOverlay';
 import { setupNotifications, configureNotificationHandler } from '../services/notifications';
 import { useNotificationListener } from '../hooks/useNotificationListener';
 import { useTimerNotifications } from '../hooks/useTimerNotifications';
@@ -271,13 +272,16 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="achievement/[id]" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="achievements" />
         <Stack.Screen name="friend/[id]" />
         <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
         <Stack.Screen name="search" />
         <Stack.Screen name="user/[id]" />
         <Stack.Screen name="groups" />
       </Stack>
+      {/* App-level so an unlock is celebrated wherever the user is — sessions
+          complete on the Timer tab, not the profile. */}
+      <UnlockOverlay />
     </GestureHandlerRootView>
   );
 }

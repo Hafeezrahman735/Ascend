@@ -31,7 +31,6 @@ import Animated, {
 import { useAuthStore } from '../../stores/authStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useGamification } from '../../store/hooks';
-import { useTaskStore } from '../../stores/taskStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useSocialStore } from '../../stores/socialStore';
 import type { SocialPost, UserSocialStats, UserListItem } from '../../types';
@@ -39,11 +38,13 @@ import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
 import {
   getRank, getXpToNextRank, getXpProgressInRank,
-  RANK_ORDER, RANK_META, RANK_THRESHOLDS,
+  RANK_ORDER, RANK_META,
 } from '../../lib/rank';
 import type { RankTier } from '../../lib/rank';
-import { computeCategoryBadges } from '../../lib/badges';
-import type { StreakState, CategoryBadge } from '../../types/profile';
+import RankSection from '../../components/profile/CurrentRankSection';
+import { sectionLabel, fmtXP } from '../../components/profile/shared';
+import AchievementsRow from '../../components/achievements/AchievementsRow';
+import type { StreakState } from '../../types/profile';
 
 // ─── Local types ─────────────────────────────────────────────────────────────
 
@@ -56,22 +57,10 @@ import type { StreakState, CategoryBadge } from '../../types/profile';
  * climbed to 100%, because progress was computed client-side while `isUnlocked`
  * came from a server lookup that always missed.
  */
-type MergedAchievement = {
-  key: string;
-  icon: string;
-  name: string;
-  description: string;
-  threshold: number;
-  /** 0..1, server-computed from the same rule that decides the unlock. */
-  progress: number;
-  currentValue: number;
-  isUnlocked: boolean;
-  unlockedAt: string | null;
-  isGoldTier: boolean;
-};
-
-/** Big-ticket achievements get the gold treatment in the grid. */
-const GOLD_TIER_XP = 500;
+// Ordering, the display shape, and the gold-tier rule all live in
+// lib/achievementOrder.ts now: it is pure, so it can be unit-tested, and it
+// reads `tier` from the server instead of re-deriving an xpReward threshold
+// that was duplicated from the backend.
 
 // ─── Local constants ──────────────────────────────────────────────────────────
 
@@ -113,17 +102,6 @@ async function buildStreakState(
     thisWeekDays: Array(7).fill(false),
     streakAtRisk: false,
   };
-}
-
-function fmtDate(iso: string | null): string {
-  if (!iso) return '';
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const d = new Date(iso);
-  return `${months[d.getMonth()]} ${d.getDate()}`;
-}
-
-function fmtXP(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 function fmtFocusMins(mins: number): string {
@@ -514,42 +492,6 @@ function RankUpOverlay({ tier, reduceMotion }: { tier: RankTier; reduceMotion: b
   );
 }
 
-// ─── Achievement toast ────────────────────────────────────────────────────────
-
-function AchievementToast({ icon, name, xpReward }: { icon: string; name: string; xpReward: number }) {
-  const Colors = useTheme();
-  const { TEAL } = Colors;
-  const translateY = useSharedValue(-80);
-
-  useEffect(() => {
-    translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
-    const t = setTimeout(() => {
-      translateY.value = withTiming(-80, { duration: 300 });
-    }, 2700);
-    return () => clearTimeout(t);
-  }, []);
-
-  const style = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
-
-  return (
-    <Animated.View style={[style, {
-      position: 'absolute', top: 60, left: 16, right: 16, zIndex: 200,
-      backgroundColor: Colors.surface,
-      borderWidth: 1, borderColor: TEAL,
-      borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
-      flexDirection: 'row', alignItems: 'center', gap: 12,
-    }]}>
-      <Text style={{ fontSize: 24 }}>{icon}</Text>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>
-          Achievement unlocked — {name}
-        </Text>
-        <Text style={{ color: TEAL, fontSize: 12, marginTop: 2 }}>+{xpReward} XP</Text>
-      </View>
-    </Animated.View>
-  );
-}
-
 // ─── Hero Card ────────────────────────────────────────────────────────────────
 
 interface HeroCardProps {
@@ -866,395 +808,18 @@ function StreakSection({
   );
 }
 
-// ─── Rank Section ─────────────────────────────────────────────────────────────
-
-function RankSection({
-  xp,
-  level,
-  currentRank,
-}: {
-  xp: number;
-  level: number;
-  currentRank: RankTier;
-}) {
-  const Colors = useTheme();
-  const { GOLD, BORDER_SOFT, GOLD_DIM } = Colors;
-  const [tooltip, setTooltip] = useState<string | null>(null);
-  const currentIdx = RANK_ORDER.indexOf(currentRank);
-  const xpToNext = getXpToNextRank(xp);
-  const nextRankIdx = currentIdx + 1;
-  const nextRankTier: RankTier | null = nextRankIdx < RANK_ORDER.length ? RANK_ORDER[nextRankIdx] : null;
-
-  return (
-    <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-      <Text style={sectionLabel(Colors)}>Current Rank</Text>
-
-      <View style={{
-        backgroundColor: Colors.surface,
-        borderRadius: 16, padding: 20,
-        borderWidth: 1, borderColor: Colors.border,
-        overflow: 'hidden',
-      }}>
-        {/* Gold glow */}
-        <View style={{
-          position: 'absolute', bottom: -40, right: -40,
-          width: 140, height: 140, borderRadius: 70,
-          backgroundColor: '#FFD70010',
-        }} />
-
-        {/* Rank name + icon */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View>
-            <Text style={{
-              color: GOLD, fontSize: 28, fontWeight: '800', letterSpacing: 0.5,
-            }}>
-              {currentRank}
-            </Text>
-            <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 4, fontFamily: 'monospace' }}>
-              Level {level} · {fmtXP(xp)} XP
-            </Text>
-          </View>
-          <Text style={{ fontSize: 44 }}>{RANK_META[currentRank].icon}</Text>
-        </View>
-
-        {/* Divider */}
-        <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 16 }} />
-
-        {/* Tier chips */}
-        <View style={{ flexDirection: 'row', gap: 6 }}>
-          {RANK_ORDER.map((tier, idx) => {
-            const isPast    = idx < currentIdx;
-            const isCurrent = idx === currentIdx;
-            return (
-              <Pressable
-                key={tier}
-                onPress={() => setTooltip(tooltip === tier ? null : tier)}
-                style={{ flex: 1, alignItems: 'center' }}
-              >
-                {isCurrent && (
-                  <View style={{
-                    backgroundColor: Colors.primary,
-                    borderRadius: 4, paddingHorizontal: 4, paddingVertical: 2,
-                    marginBottom: 4,
-                  }}>
-                    <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700', letterSpacing: 0.5 }}>
-                      YOU
-                    </Text>
-                  </View>
-                )}
-                <View style={{
-                  paddingVertical: 7, borderRadius: 10,
-                  width: '100%', alignItems: 'center',
-                  backgroundColor: isCurrent ? GOLD_DIM : Colors.raised,
-                  borderWidth: 1,
-                  borderColor: isCurrent ? `${GOLD}55` : Colors.border,
-                  opacity: isPast ? 0.45 : 1,
-                }}>
-                  <Text style={{ fontSize: 14 }}>{RANK_META[tier].icon}</Text>
-                  <Text style={{
-                    fontSize: 9, marginTop: 3, fontWeight: '600',
-                    color: isCurrent ? GOLD : Colors.subtext,
-                    letterSpacing: 0.3,
-                  }}>
-                    {tier.slice(0, 3).toUpperCase()}
-                  </Text>
-                </View>
-
-                {tooltip === tier && (
-                  <View style={{
-                    position: 'absolute', bottom: -36,
-                    backgroundColor: Colors.raised,
-                    borderWidth: 1, borderColor: Colors.border,
-                    borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4,
-                    zIndex: 10, minWidth: 70, alignItems: 'center',
-                  }}>
-                    <Text style={{ color: Colors.text, fontSize: 10, fontFamily: 'monospace' }}>
-                      {fmtXP(RANK_THRESHOLDS[tier])} XP
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Next rank info */}
-        {nextRankTier && (
-          <View style={{
-            flexDirection: 'row', justifyContent: 'space-between',
-            alignItems: 'center', marginTop: 26,
-          }}>
-            <Text style={{ color: Colors.subtext, fontSize: 12 }}>
-              Next: {nextRankTier}
-            </Text>
-            <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'monospace' }}>
-              {fmtXP(xpToNext)} XP needed
-            </Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-}
-
-// ─── Achievement Card ─────────────────────────────────────────────────────────
-
-function AchievementItem({ achievement }: { achievement: MergedAchievement }) {
-  const Colors = useTheme();
-  const { GOLD, TEAL } = Colors;
-  const { isUnlocked, unlockedAt, progress, icon, name, description, isGoldTier, threshold, currentValue } = achievement;
-  const hasProgress = !isUnlocked && progress > 0;
-
-  // Uses the server's currentValue rather than back-computing it from the
-  // progress fraction, so the number shown is the actual counter.
-  const progressLabel = () => (threshold > 0 ? `${currentValue} / ${threshold}` : '');
-
-  return (
-    <View style={{
-      backgroundColor: Colors.surface,
-      borderRadius: 14, overflow: 'hidden',
-      borderWidth: 1, borderColor: Colors.border,
-      opacity: (!isUnlocked && progress === 0) ? 0.45 : 1,
-      flex: 1,
-    }}>
-      {/* Top accent bar */}
-      {isUnlocked && (
-        <View style={{
-          height: 2,
-          backgroundColor: isGoldTier ? GOLD : Colors.primary,
-        }} />
-      )}
-
-      <View style={{ padding: 14 }}>
-        <Text style={{ fontSize: 28, marginBottom: 8 }}>{icon}</Text>
-
-        <Text style={{
-          color: Colors.textBright, fontSize: 13, fontWeight: '700',
-          marginBottom: 3,
-        }} numberOfLines={1}>
-          {name}
-        </Text>
-
-        <Text style={{
-          color: Colors.subtext, fontSize: 11, lineHeight: 15,
-        }} numberOfLines={2}>
-          {description}
-        </Text>
-
-        {isUnlocked && (
-          <Text style={{
-            color: isGoldTier ? GOLD : TEAL,
-            fontSize: 11, fontWeight: '600', marginTop: 10,
-          }}>
-            ✓ Earned · {fmtDate(unlockedAt)}
-          </Text>
-        )}
-
-        {hasProgress && (
-          <View style={{ marginTop: 10 }}>
-            <View style={{
-              height: 4, backgroundColor: Colors.inactive,
-              borderRadius: 2, overflow: 'hidden',
-            }}>
-              <View style={{
-                height: 4, width: `${Math.min(1, progress) * 100}%`,
-                backgroundColor: Colors.primary, borderRadius: 2,
-              }} />
-            </View>
-            {typeof threshold === 'number' && (
-              <Text style={{
-                color: Colors.subtext, fontSize: 10,
-                marginTop: 4, fontFamily: 'monospace',
-              }}>
-                {progressLabel()}
-              </Text>
-            )}
-          </View>
-        )}
-      </View>
-    </View>
-  );
-}
-
-// ─── Achievements Section ─────────────────────────────────────────────────────
-
-function AchievementsSection({
-  achievements,
-  allUnlocked,
-}: {
-  achievements: MergedAchievement[];
-  allUnlocked: boolean;
-}) {
-  const Colors = useTheme();
-  const { GOLD_DIM, GOLD } = Colors;
-  return (
-    <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-      <Text style={sectionLabel(Colors)}>Achievements</Text>
-
-      {allUnlocked && (
-        <View style={{
-          backgroundColor: GOLD_DIM,
-          borderRadius: 12, padding: 12,
-          flexDirection: 'row', alignItems: 'center', gap: 10,
-          marginBottom: 14, borderWidth: 1, borderColor: `${GOLD}33`,
-        }}>
-          <Text style={{ fontSize: 20 }}>🏅</Text>
-          <Text style={{ color: GOLD, fontSize: 13, fontWeight: '700' }}>
-            All achievements unlocked
-          </Text>
-        </View>
-      )}
-
-      {/* 2-column grid */}
-      <View style={{ gap: 10 }}>
-        {Array.from({ length: Math.ceil(achievements.length / 2) }, (_, row) => (
-          <View key={row} style={{ flexDirection: 'row', gap: 10 }}>
-            {achievements.slice(row * 2, row * 2 + 2).map(a => (
-              <AchievementItem key={a.key} achievement={a} />
-            ))}
-            {/* Fill empty cell if odd */}
-            {row * 2 + 1 >= achievements.length && <View style={{ flex: 1 }} />}
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-// ─── Badge Card ───────────────────────────────────────────────────────────────
-
-function BadgeCard({ badge }: { badge: CategoryBadge }) {
-  const Colors = useTheme();
-  const { GOLD, GOLD_DIM, AMBER_DIM, AMBER } = Colors;
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  const borderColor =
-    badge.level === 'gold'   ? GOLD :
-    badge.level !== 'locked' ? Colors.primary :
-    Colors.border;
-
-  const chipBg =
-    badge.level === 'gold'   ? GOLD_DIM :
-    badge.level === 'silver' ? Colors.surface :
-    badge.level === 'bronze' ? AMBER_DIM :
-    Colors.inactive;
-
-  const chipText =
-    badge.level === 'gold'   ? GOLD :
-    badge.level === 'silver' ? '#C0C0C0' :
-    badge.level === 'bronze' ? AMBER :
-    Colors.subtext;
-
-  const chipLabel =
-    badge.level === 'locked' ? '—' : badge.level.toUpperCase();
-
-  return (
-    <Pressable
-      onLongPress={() => setShowTooltip(true)}
-      onPressOut={() => setShowTooltip(false)}
-      style={{
-        width: 96,
-        backgroundColor: Colors.surface,
-        borderRadius: 14, padding: 14,
-        borderWidth: 1,
-        borderColor,
-        opacity: badge.level === 'locked' ? 0.5 : 1,
-        alignItems: 'center',
-      }}
-    >
-      <Text style={{ fontSize: 26, marginBottom: 6 }}>{badge.icon}</Text>
-      <Text
-        style={{ color: Colors.text, fontSize: 12, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}
-        numberOfLines={1}
-      >
-        {badge.tag}
-      </Text>
-      <View style={{
-        backgroundColor: chipBg,
-        borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
-      }}>
-        <Text style={{ color: chipText, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
-          {chipLabel}
-        </Text>
-      </View>
-
-      {showTooltip && (
-        <View style={{
-          position: 'absolute', bottom: -34,
-          backgroundColor: Colors.raised,
-          borderWidth: 1, borderColor: Colors.border,
-          borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5,
-          zIndex: 20,
-        }}>
-          <Text style={{ color: Colors.text, fontSize: 11, fontFamily: 'monospace' }} numberOfLines={1}>
-            {badge.sessionCount} sessions · {badge.level}
-          </Text>
-        </View>
-      )}
-    </Pressable>
-  );
-}
-
-// ─── Category Badges Section ───────────────────────────────────────────────────
-
-function CategoryBadgesSection({ badges }: { badges: CategoryBadge[] }) {
-  const Colors = useTheme();
-  return (
-    <View style={{ marginTop: 24 }}>
-      <Text style={[sectionLabel(Colors), { paddingHorizontal: 16 }]}>Category Badges</Text>
-
-      {badges.length === 0 ? (
-        <View style={{ paddingHorizontal: 16 }}>
-          <View style={{
-            backgroundColor: Colors.surface,
-            borderRadius: 14, padding: 20,
-            borderWidth: 1, borderColor: Colors.border,
-            alignItems: 'center',
-          }}>
-            <Text style={{ color: Colors.subtext, fontSize: 13 }}>
-              No categories yet — tag your tasks to see where your time goes
-            </Text>
-          </View>
-        </View>
-      ) : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 10, flexDirection: 'row' }}
-        >
-          {badges.map(badge => (
-            <BadgeCard key={badge.tag} badge={badge} />
-          ))}
-        </ScrollView>
-      )}
-
-      <View style={{ height: 40 }} />
-    </View>
-  );
-}
 
 // ─── Section label style ──────────────────────────────────────────────────────
-
-const sectionLabel = (c: ThemeColors) => ({
-  color: c.subtext,
-  fontSize: 11,
-  fontWeight: '600' as const,
-  letterSpacing: 1.5,
-  textTransform: 'uppercase' as const,
-  marginBottom: 12,
-});
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const Colors = useTheme();
-  const { BORDER_SOFT } = Colors;
   const router = useRouter();
   const auth = useAuthStore();
   const profileAvatar = useUserProfileStore((s) => s.avatarEmoji);
   const loadProfile = useUserProfileStore((s) => s.load);
   const gamification = useGamification();
-  const tasks = useTaskStore(s => s.tasks);
   const social = useSocialStore();
 
   const weekActiveDates = useTimerStore(s => s.weekActiveDates);
@@ -1276,16 +841,12 @@ export default function ProfileScreen() {
     streakAtRisk: false,
   });
   const [rankUpTier, setRankUpTier] = useState<RankTier | null>(null);
-  const [toast, setToast] = useState<{ icon: string; name: string; xpReward: number } | null>(null);
-  const [activeProfileTab, setActiveProfileTab] = useState<'awards' | 'posts'>('awards');
   const [showFollowers, setShowFollowers] = useState(false);
   const [showFollowing, setShowFollowing] = useState(false);
   const [showFriends, setShowFriends] = useState(false);
 
   const prevRankRef = useRef<RankTier>(currentRank);
-  const prevRewardLenRef = useRef(gamification.pendingRewards.length);
 
-  const categoryBadges = useMemo(() => computeCategoryBadges(tasks), [tasks]);
 
   // Compute week dots and studiedToday from server-fetched activeDates
   const serverDerivedStreak = useMemo(() => {
@@ -1306,35 +867,6 @@ export default function ProfileScreen() {
   // (progressStats removed — achievement progress is now computed server-side
   // and returned by GET /achievements, so the client no longer recomputes it.)
 
-  const mergedAchievements = useMemo<MergedAchievement[]>(() => {
-    // Sourced entirely from the server catalogue, so everything shown here is
-    // something the backend can actually award, and its progress bar is the same
-    // number the unlock check uses.
-    const list: MergedAchievement[] = gamification.achievements.map((a) => ({
-      key: a.key,
-      icon: a.icon,
-      name: a.title,
-      description: a.description,
-      threshold: a.threshold,
-      progress: a.isUnlocked ? 1 : (a.progress ?? 0),
-      currentValue: a.currentValue ?? 0,
-      isUnlocked: a.isUnlocked,
-      unlockedAt: a.unlockedAt,
-      isGoldTier: a.xpReward >= GOLD_TIER_XP,
-    }));
-
-    return list.sort((a, b) => {
-      if (a.isUnlocked && a.isGoldTier && !(b.isUnlocked && b.isGoldTier)) return -1;
-      if (b.isUnlocked && b.isGoldTier && !(a.isUnlocked && a.isGoldTier)) return 1;
-      if (a.isUnlocked && !b.isUnlocked) return -1;
-      if (b.isUnlocked && !a.isUnlocked) return 1;
-      // Closest to unlocking first, so the next thing to chase is at the top.
-      if (a.progress !== b.progress) return b.progress - a.progress;
-      return a.threshold - b.threshold;
-    });
-  }, [gamification.achievements]);
-
-  const allUnlocked = mergedAchievements.length > 0 && mergedAchievements.every(a => a.isUnlocked);
 
   // Load data on mount
   useEffect(() => {
@@ -1380,19 +912,9 @@ export default function ProfileScreen() {
     }
   }, [currentRank]);
 
-  // Achievement toast from pending rewards
-  useEffect(() => {
-    const rewards = gamification.pendingRewards;
-    if (rewards.length > prevRewardLenRef.current) {
-      const latest = rewards[rewards.length - 1];
-      if (latest?.newlyUnlocked?.length > 0) {
-        const first = latest.newlyUnlocked[0];
-        setToast({ icon: first.icon, name: first.title, xpReward: first.xpReward });
-        setTimeout(() => setToast(null), 3000);
-      }
-    }
-    prevRewardLenRef.current = rewards.length;
-  }, [gamification.pendingRewards]);
+  // Unlock celebration is handled app-wide by <UnlockOverlay /> in _layout.tsx.
+  // It used to live here as a toast, which meant it only fired if the user
+  // happened to be on the profile — sessions complete on the Timer tab.
 
   return (
     <SafeAreaView
@@ -1429,48 +951,20 @@ export default function ProfileScreen() {
         <StreakSection streakState={{ ...streakState, ...serverDerivedStreak }} reduceMotion={reduceMotion} />
         <RankSection xp={xp} level={gamification.level} currentRank={currentRank} />
 
-        {/* Awards | Posts tab switcher */}
-        <View style={{ marginTop: 24, paddingHorizontal: 16 }}>
-          <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: BORDER_SOFT }}>
-            {(['awards', 'posts'] as const).map((tab) => (
-              <Pressable
-                key={tab}
-                onPress={() => setActiveProfileTab(tab)}
-                style={{ flex: 1, alignItems: 'center', paddingTop: 4, paddingBottom: 10 }}
-              >
-                <Text style={{
-                  color: activeProfileTab === tab ? Colors.textBright : Colors.subtext,
-                  fontSize: 13, fontWeight: '600',
-                }}>
-                  {tab === 'awards' ? 'Awards' : 'Posts'}
-                </Text>
-                {activeProfileTab === tab && (
-                  <View style={{
-                    position: 'absolute', bottom: 0, left: '15%', right: '15%',
-                    height: 2, backgroundColor: Colors.primary, borderRadius: 1,
-                  }} />
-                )}
-              </Pressable>
-            ))}
-          </View>
-        </View>
+        <AchievementsRow />
 
-        {activeProfileTab === 'awards' ? (
-          <>
-            {/* Recent Activity moved to the top of the Tasks tab — it belongs
-                next to the work it describes, not behind a profile sub-tab. */}
-            <AchievementsSection achievements={mergedAchievements} allUnlocked={allUnlocked} />
-            <CategoryBadgesSection badges={categoryBadges} />
-          </>
-        ) : (
-          <PostsPane
-            posts={social.userPosts}
-            isLoading={social.isLoading}
-            hasMore={social.userPostsCursor !== null}
-            onLoadMore={social.fetchMoreUserPosts}
-            onPostPress={(post) => router.push(`/post/${post.id}`)}
-          />
-        )}
+        {/* Posts, formerly behind an Awards|Posts switcher. One scroll now:
+            rank, then what you earned, then what you shared. */}
+        <View style={{ marginTop: 24, paddingHorizontal: 16 }}>
+          <Text style={sectionLabel(Colors)}>Your Posts</Text>
+        </View>
+        <PostsPane
+          posts={social.userPosts}
+          isLoading={social.isLoadingUserPosts}
+          hasMore={social.userPostsCursor !== null}
+          onLoadMore={social.fetchMoreUserPosts}
+          onPostPress={(post) => router.push(`/post/${post.id}`)}
+        />
       </ScrollView>
 
       {/* Followers modal */}
@@ -1514,10 +1008,6 @@ export default function ProfileScreen() {
         <RankUpOverlay tier={rankUpTier} reduceMotion={reduceMotion} />
       )}
 
-      {/* Achievement toast */}
-      {toast && (
-        <AchievementToast icon={toast.icon} name={toast.name} xpReward={toast.xpReward} />
-      )}
     </SafeAreaView>
   );
 }

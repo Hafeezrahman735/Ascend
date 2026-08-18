@@ -1,6 +1,8 @@
 import { create } from 'zustand';
-import { api } from '../services/api';
-import { SessionReward, UserGamification, Achievement, ActivityEvent } from '../types';
+import { api, type ApiErrorKind } from '../services/api';
+import {
+  SessionReward, UserGamification, Achievement, ActivityEvent, NewlyUnlockedAchievement,
+} from '../types';
 import { getLocalDateString } from '../utils/date';
 
 interface GamificationStoreState {
@@ -11,10 +13,30 @@ interface GamificationStoreState {
   totalSessions: number;
   totalFocusMinutes: number;
   achievements: Achievement[];
+  isLoadingAchievements: boolean;
+  /**
+   * Why the last achievements fetch failed, or null if it succeeded.
+   *
+   * Without this, a failed fetch and a user who has unlocked nothing are
+   * indistinguishable — both leave `achievements` empty. Any surface that hides
+   * itself when the list is empty would silently render "you have nothing"
+   * during an outage.
+   */
+  achievementsError: ApiErrorKind | null;
   /** Personal accomplishment log — sessions, tasks, goals, achievements, levels. */
   activity: ActivityEvent[];
   isLoadingActivity: boolean;
   pendingRewards: SessionReward[];
+  /**
+   * Achievements earned but not yet celebrated, oldest first.
+   *
+   * A queue rather than a single value because one session can unlock several
+   * at once — the old toast showed `newlyUnlocked[0]` and silently dropped the
+   * rest. Lives in the store, not in a screen, so the celebration can be
+   * rendered at the app root: sessions complete on the Timer tab, so a
+   * profile-only surface fires where the user is not looking.
+   */
+  unlockQueue: NewlyUnlockedAchievement[];
   isLoading: boolean;
 
   fetchProfile: () => Promise<void>;
@@ -23,6 +45,10 @@ interface GamificationStoreState {
   fetchActivity: () => Promise<void>;
   applySessionReward: (reward: SessionReward, durationSeconds?: number) => void;
   clearPendingRewards: () => void;
+  /** Drop the achievement currently being celebrated and advance the queue. */
+  dismissUnlock: () => void;
+  /** Publish an earned achievement to the social feed. */
+  shareUnlock: (achievementId: string) => Promise<boolean>;
   reset: () => void;
 }
 
@@ -34,9 +60,12 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   totalSessions: 0,
   totalFocusMinutes: 0,
   achievements: [],
+  isLoadingAchievements: false,
+  achievementsError: null,
   activity: [],
   isLoadingActivity: false,
   pendingRewards: [],
+  unlockQueue: [],
   isLoading: false,
 
   fetchProfile: async () => {
@@ -72,13 +101,22 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   },
 
   fetchAchievements: async () => {
-    try {
-      const res = await api.get<Achievement[]>('/achievements');
-      if (res.success && res.data) {
-        set({ achievements: res.data });
-      }
-    } catch {
+    set({ isLoadingAchievements: true });
+
+    // No try/catch: apiRequest resolves with { success: false } rather than
+    // throwing, so the old empty catch could never fire and the `res.success`
+    // false branch was simply missing — a failed fetch left the list empty and
+    // silent.
+    const res = await api.get<Achievement[]>('/achievements');
+
+    if (res.success && res.data) {
+      set({ achievements: res.data, isLoadingAchievements: false, achievementsError: null });
+      return;
     }
+
+    // Keep whatever was already loaded — a transient failure should not blank a
+    // list the user was looking at.
+    set({ isLoadingAchievements: false, achievementsError: res.errorKind ?? 'server' });
   },
 
   fetchActivity: async () => {
@@ -104,6 +142,8 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
       totalSessions: state.totalSessions + 1,
       totalFocusMinutes: state.totalFocusMinutes + Math.floor(durationSeconds / 60),
       pendingRewards: [...state.pendingRewards, reward],
+      // Every unlock queues, not just the first.
+      unlockQueue: [...state.unlockQueue, ...reward.newlyUnlocked],
     });
 
     if (reward.newlyUnlocked.length > 0) {
@@ -122,6 +162,23 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
     set({ pendingRewards: [] });
   },
 
+  dismissUnlock: () => {
+    set((state) => ({ unlockQueue: state.unlockQueue.slice(1) }));
+  },
+
+  shareUnlock: async (achievementId: string) => {
+    // The endpoint toggles, so this is only ever called from the celebration,
+    // where the achievement is by definition not shared yet.
+    const res = await api.patch<{ isShared: boolean }>(`/achievements/${achievementId}/share`, {});
+    if (!res.success) return false;
+    set((state) => ({
+      achievements: state.achievements.map((a) =>
+        a.id === achievementId ? { ...a, isShared: true } : a,
+      ),
+    }));
+    return true;
+  },
+
   reset: () => {
     set({
       xp: 0,
@@ -131,10 +188,13 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
       totalSessions: 0,
       totalFocusMinutes: 0,
       achievements: [],
+      isLoadingAchievements: false,
+      achievementsError: null,
       // Cleared on logout so the next account never sees the previous one's log.
       activity: [],
       isLoadingActivity: false,
       pendingRewards: [],
+      unlockQueue: [],
     });
   },
 }));

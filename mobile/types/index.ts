@@ -105,6 +105,13 @@ export interface Achievement {
   currentValue: number;
   /** currentValue / threshold, 0..1 — for progress bars on locked achievements. */
   progress: number;
+  /**
+   * Difficulty tier 1-4, server-derived from xpReward. Ordering only — never
+   * rendered as a visible label, because the tier is provisional until an
+   * authored `tier` column lands and a re-tiering would read as a downgrade.
+   * Optional so a client running against an older server still type-checks.
+   */
+  tier?: 1 | 2 | 3 | 4;
 }
 
 /** One entry in the personal accomplishment log (GET /activity). */
