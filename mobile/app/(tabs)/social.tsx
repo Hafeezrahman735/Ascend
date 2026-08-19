@@ -1038,16 +1038,13 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
 const SCOPES = [
   { key: 'friends', label: 'Friends' },
   { key: 'global',  label: 'Global' },
-  { key: 'group',   label: 'Group' },
 ] as const;
 
-const PERIODS = [
-  { key: 'month',    label: 'This month' },
-  { key: 'all_time', label: 'All time' },
-] as const;
+type Scope = typeof SCOPES[number]['key'];
 
-type Scope  = typeof SCOPES[number]['key'];
-type Period = typeof PERIODS[number]['key'];
+// The board is all-time only. The month/all-time toggle was removed, so this is
+// the single value sent to the server; the endpoint still takes the parameter.
+const LEADERBOARD_PERIOD = 'all_time';
 
 export default function SocialScreen() {
   const Colors = useTheme();
@@ -1063,18 +1060,17 @@ export default function SocialScreen() {
   const [showNotifications,  setShowNotifications]  = useState(false);
   const [refreshing,         setRefreshing]         = useState(false);
   const [scope,              setScope]              = useState<Scope>('global');
-  const [period,             setPeriod]             = useState<Period>('all_time');
 
   useEffect(() => {
     social.fetchPosts(social.selectedGroupId ?? undefined);
     social.fetchStudyGroups();
-    social.fetchFocusLeaderboard(scope, period);
+    social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
     social.fetchNotifications();
   }, []);
 
   useEffect(() => {
-    social.fetchFocusLeaderboard(scope, period);
-  }, [scope, period]);
+    social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
+  }, [scope]);
 
   const handleRefreshFeed = useCallback(async () => {
     setRefreshing(true);
@@ -1194,13 +1190,13 @@ export default function SocialScreen() {
       refreshControl={
         <RefreshControl
           refreshing={social.isLoading}
-          onRefresh={() => social.fetchFocusLeaderboard(scope, period)}
+          onRefresh={() => social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD)}
           tintColor={Colors.primary}
         />
       }
     >
       {/* Scope selector */}
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 8 }}>
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 14 }}>
         {SCOPES.map(({ key, label }, i) => (
           <Pressable
             key={key}
@@ -1214,26 +1210,6 @@ export default function SocialScreen() {
             }}
           >
             <Text style={{ color: scope === key ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {/* Period selector */}
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginBottom: 14 }}>
-        {PERIODS.map(({ key, label }, i) => (
-          <Pressable
-            key={key}
-            onPress={() => setPeriod(key)}
-            style={{
-              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
-              backgroundColor: period === key ? Colors.primaryDim : SURFACE,
-              borderWidth: 1, borderColor: period === key ? Colors.primary : BORDER_SOFT,
-              marginRight: i < PERIODS.length - 1 ? 6 : 0,
-            }}
-          >
-            <Text style={{ color: period === key ? Colors.primarySoft : Colors.subtext, fontSize: 12, fontWeight: '600' }}>
-              {label}
-            </Text>
           </Pressable>
         ))}
       </View>
@@ -1253,14 +1229,6 @@ export default function SocialScreen() {
           <Ionicons name="trophy-outline" size={48} color={Colors.subtext} />
           <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
             No one's on the leaderboard yet — finish a focus session to claim a spot
-          </Text>
-        </View>
-      )}
-
-      {scope === 'group' && !social.selectedGroupId && (
-        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
-          <Text style={{ color: Colors.subtext, fontSize: 14, textAlign: 'center' }}>
-            Select a study group to see group rankings
           </Text>
         </View>
       )}
