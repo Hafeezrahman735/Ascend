@@ -16,6 +16,7 @@ import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { getRank, RANK_META } from '../lib/rank';
 import { useCalendarStore } from '../stores/calendarStore';
 import { useTimerStore } from '../stores/timerStore';
+import FocusModeSheet from '../components/FocusModeSheet';
 import {
   requestCalendarPermission,
   listDeviceCalendars,
@@ -362,6 +363,7 @@ export default function SettingsScreen() {
   const [editDisplayName, setEditDisplayName] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState('');
   const [showReminderPicker, setShowReminderPicker] = useState(false);
+  const [showFocusSheet, setShowFocusSheet] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -639,6 +641,32 @@ export default function SettingsScreen() {
           />
         </SettingsCard>
 
+        {/* Focus Mode — silencing everything ELSE during a session. Sits with
+            Notifications because both are about what is allowed to interrupt,
+            and deliberately away from "Focus Goals", which is a different
+            feature and would read as related if adjacent. */}
+        <SectionTitle title="Focus Mode" />
+        <SettingsCard>
+          <SettingsRow
+            label="Set up Focus"
+            subtitle="Silence other apps while you focus"
+            onPress={() => setShowFocusSheet(true)}
+          />
+          <Divider />
+          <SettingsRow
+            label="Remind me at session start"
+            subtitle="A one-tap nudge, never a blocker"
+            rightComponent={
+              <Switch
+                value={settings.remindFocusMode}
+                onValueChange={(v) => { if (user) settings.update(user.id, { remindFocusMode: v }); }}
+                trackColor={{ false: Colors.inactive, true: Colors.primary }}
+                thumbColor="white"
+              />
+            }
+          />
+        </SettingsCard>
+
         {/* Appearance */}
         <SectionTitle title="Appearance" />
         <SettingsCard>
@@ -893,6 +921,7 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
+      <FocusModeSheet visible={showFocusSheet} onClose={() => setShowFocusSheet(false)} />
     </SafeAreaView>
   );
 }

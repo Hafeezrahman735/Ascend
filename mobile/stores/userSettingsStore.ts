@@ -20,6 +20,15 @@ export interface SettingsData {
   theme: 'dark' | 'light' | 'system';
   /** 0 = Sunday, 1 = Monday. Drives week ranges in the Calendar tab. */
   weekStartDay: 0 | 1;
+  /**
+   * Remind the user to switch on a Focus when a session starts.
+   *
+   * iOS gives no app the ability to turn Focus on, so this only gates a nudge —
+   * it never blocks starting a session. Local-only: deliberately absent from
+   * PRIVACY_KEYS / NOTIF_KEYS / REMINDER_KEYS so `update()` never ships it to
+   * the backend, same as `theme` and `weekStartDay`.
+   */
+  remindFocusMode: boolean;
 }
 
 interface UserSettingsState extends SettingsData {
@@ -42,6 +51,8 @@ const DEFAULTS: SettingsData = {
   dailyReminderMinute: 0,
   weekStartDay: 0,
   theme: 'dark',
+  // Off by default: an unprompted nudge on first session would read as nagging.
+  remindFocusMode: false,
 };
 
 // Which keys belong to each backend surface.
@@ -137,6 +148,7 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
       dailyReminderMinute: state.dailyReminderMinute,
       theme: state.theme,
       weekStartDay: state.weekStartDay,
+      remindFocusMode: state.remindFocusMode,
     };
 
     // Persist locally first (offline-safe, instant).
