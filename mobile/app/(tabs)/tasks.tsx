@@ -39,6 +39,12 @@ import { calcDaysUntilDue } from '../../store/selectors/tasks';
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
 // them from `Colors` (AMBER maps to Colors.warning to preserve the exact dark hue).
 const SCREEN_H = Dimensions.get('window').height;
+// No bottom sheet may grow past this. A sheet is anchored at bottom:0 and only
+// had a minHeight, so tall content (a recurring task carries a streak card, a
+// lifetime-focus card AND notes) grew it upward past the top of the screen. The
+// title, the close button, the drag handle and the tappable backdrop all live in
+// that overflow, so every way out of the sheet disappeared at once.
+const SHEET_MAX_H = SCREEN_H * 0.9;
 // Monospace family for stat numerals / section labels (matches the design's JetBrains Mono).
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const DAY_LABELS = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
@@ -221,7 +227,7 @@ function BottomSheet({ visible, onClose, children, sheetHeight }: {
           <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
         </TouchableWithoutFeedback>
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
-          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, minHeight: sheetHeight }}>
+          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, minHeight: Math.min(sheetHeight, SHEET_MAX_H), maxHeight: SHEET_MAX_H }}>
             <View {...panResponder.panHandlers} style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 38, height: 4, borderRadius: 3, backgroundColor: Colors.inactive }} />
             </View>
@@ -1127,6 +1133,65 @@ function getStyles(c: ThemeColors) {
     stepper: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' },
     card: { backgroundColor: c.surface, borderRadius: 16, borderWidth: 0.5, borderColor: c.border, padding: 16 },
   });
+}
+
+
+// ─── DailyTargetModal ─────────────────────────────────────────────────────────
+// Its own component because two screens open it: the Tasks tab pill strip and
+// the Goal Progress drill-down. It used to be written inline in the Tasks tab
+// return only, so tapping "Today's target" inside Goal Progress flipped the flag
+// with nothing mounted to render it. The sheet then appeared on the way back to
+// the Tasks tab, which reads as a dead tap followed by a stray modal.
+function DailyTargetModal({ visible, draft, onDraftChange, onCancel, onSave }: {
+  visible: boolean; draft: number; onDraftChange: (next: number) => void;
+  onCancel: () => void; onSave: () => void;
+}) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 }}>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Daily Session Goal</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 13, marginBottom: 24 }}>How many focus sessions do you want to complete each day?</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 32 }}>
+          <TouchableOpacity
+            onPress={() => onDraftChange(Math.max(1, draft - 1))}
+            disabled={draft <= 1}
+            accessibilityRole="button"
+            accessibilityLabel="Decrease daily session goal"
+            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft <= 1 ? 0.3 : 1 }]}
+          >
+            <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>−</Text>
+          </TouchableOpacity>
+          <View style={{ width: 100, alignItems: 'center' }}>
+            <Text style={{ color: Colors.textBright, fontSize: 48, fontWeight: '800' }}>{draft}</Text>
+            <Text style={{ color: Colors.subtext, fontSize: 12 }}>sessions</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => onDraftChange(Math.min(50, draft + 1))}
+            disabled={draft >= 50}
+            accessibilityRole="button"
+            accessibilityLabel="Increase daily session goal"
+            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft >= 50 ? 0.3 : 1 }]}
+          >
+            <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>+</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity onPress={onCancel} style={{ flex: 1, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' }}>
+            <Text style={{ color: Colors.subtext, fontWeight: '600' }}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onSave}
+            style={{ flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
 // ─── PillStrip ────────────────────────────────────────────────────────────────
@@ -2051,6 +2116,15 @@ export default function TasksScreen() {
         </ScrollView>
         <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
+        {/* Mounted here as well as in the Tasks tab: this screen owns a control
+            that opens it, so it has to be able to render it. */}
+        <DailyTargetModal
+          visible={showTargetPicker}
+          draft={draftTarget}
+          onDraftChange={setDraftTarget}
+          onCancel={() => setShowTargetPicker(false)}
+          onSave={() => { setDailySessionTarget(draftTarget); setShowTargetPicker(false); }}
+        />
       </SafeAreaView>
     );
   }
@@ -2259,45 +2333,13 @@ export default function TasksScreen() {
           onFocus={goToFocus}
         />
 
-        {/* Daily target picker modal */}
-        <Modal visible={showTargetPicker} transparent animationType="fade" onRequestClose={() => setShowTargetPicker(false)}>
-          <TouchableOpacity activeOpacity={1} onPress={() => setShowTargetPicker(false)} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
-          <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 }}>
-            <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Daily Session Goal</Text>
-            <Text style={{ color: Colors.subtext, fontSize: 13, marginBottom: 24 }}>How many focus sessions do you want to complete each day?</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 32 }}>
-              <TouchableOpacity
-                onPress={() => setDraftTarget((t) => Math.max(1, t - 1))}
-                disabled={draftTarget <= 1}
-                style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draftTarget <= 1 ? 0.3 : 1 }]}
-              >
-                <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>−</Text>
-              </TouchableOpacity>
-              <View style={{ width: 100, alignItems: 'center' }}>
-                <Text style={{ color: Colors.textBright, fontSize: 48, fontWeight: '800' }}>{draftTarget}</Text>
-                <Text style={{ color: Colors.subtext, fontSize: 12 }}>sessions</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setDraftTarget((t) => Math.min(50, t + 1))}
-                disabled={draftTarget >= 50}
-                style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draftTarget >= 50 ? 0.3 : 1 }]}
-              >
-                <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>+</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity onPress={() => setShowTargetPicker(false)} style={{ flex: 1, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' }}>
-                <Text style={{ color: Colors.subtext, fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => { setDailySessionTarget(draftTarget); setShowTargetPicker(false); }}
-                style={{ flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center' }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
+        <DailyTargetModal
+          visible={showTargetPicker}
+          draft={draftTarget}
+          onDraftChange={setDraftTarget}
+          onCancel={() => setShowTargetPicker(false)}
+          onSave={() => { setDailySessionTarget(draftTarget); setShowTargetPicker(false); }}
+        />
 
         {/* Zone 2 — Task List */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
