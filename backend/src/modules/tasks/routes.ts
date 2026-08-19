@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import { resolveLocalDate, dayNameFromLocalDate } from '../../lib/localDate';
+import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
 import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
@@ -161,7 +162,27 @@ export function setupTaskRoutes(router: Router): void {
         where: { userId, isRecurring: true, isArchived: false },
         orderBy: { createdAt: 'desc' },
       });
-      res.json({ success: true, data: templates });
+
+      // The schedule is answered here, not inferred on the client.
+      //
+      // The client used to decide "this habit is dormant" from the ABSENCE of an
+      // instance row, which is also what a failed spawn, a cold-start race and a
+      // deleted instance look like. In those states it rendered today's habit as
+      // dimmed and uncompletable while labelling it "Due today". Scheduling is a
+      // property of the template, so the server states it.
+      const today = resolveLocalDate(
+        typeof req.query.localDate === 'string' ? req.query.localDate : undefined,
+        new Date(),
+      );
+
+      res.json({
+        success: true,
+        data: templates.map((t) => ({
+          ...t,
+          scheduledToday: isScheduledOn(t.recurringDays, today),
+          nextOccurrence: nextOccurrence(t.recurringDays, today),
+        })),
+      });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('List recurring templates error:', err);

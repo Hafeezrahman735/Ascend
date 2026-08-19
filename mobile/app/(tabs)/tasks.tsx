@@ -16,6 +16,9 @@ import { useAppForeground } from '../../hooks/useAppState';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
+import {
+  composeTaskList, nextOccurrenceLabel, type RecurringTemplate,
+} from '../../lib/recurringDisplay';
 import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import RecentActivity from '../../components/RecentActivity';
@@ -107,6 +110,15 @@ function buildCategoryMap(sessions: SessionRecord[], tasks: Task[]): Record<stri
   }
   return map;
 }
+
+// How many not-scheduled-today recurring rows to show before collapsing behind
+// "Show N more". Three keeps the tail short for someone with many habits.
+const DORMANT_VISIBLE = 3;
+// The main tab's Tasks zone holds four rows total: three real tasks plus up to
+// one recurring, so a habit is visible without opening the drill-down and today's
+// work still leads.
+const ZONE_TASK_SLOTS = 3;
+const ZONE_DORMANT_SLOTS = 1;
 
 // ─── Date helpers for hero card / pill strip ─────────────────────────────────
 function isYesterdayLocal(ts: number): boolean {
@@ -873,6 +885,99 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
 }
 
 // ─── TaskRow ──────────────────────────────────────────────────────────────────
+/**
+ * The visual body of a task row, with no gesture wrapper.
+ *
+ * Split out so a dormant recurring row can reuse the exact chrome while sitting
+ * OUTSIDE Swipeable. Hiding the checkbox alone would not have been enough:
+ * swipe-left completes a task, so a dormant row rendered through TaskRow could
+ * still be completed by a gesture that leaves no visual trace.
+ */
+function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = false, subtitle }: {
+  task: Task; isActive: boolean; goals: TaskGoal[];
+  onTap: () => void; onLongPressTag?: (t: string) => void;
+  dormant?: boolean; subtitle?: string;
+}) {
+  const Colors = useTheme();
+  const isCompleted = task.isCompleted;
+  const barColor = dormant ? Colors.border : isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
+  // A template has no due date and no sessions, so these stay inert rather than
+  // rendering something untrue.
+  const chip = dormant ? null : getDueChip(task, Colors);
+  const prioColor = priorityColor(task.priority);
+  const categoryTag = task.tags.length > 0 ? task.tags[0] : null;
+  const tagStyle = useTagStyle(categoryTag ?? '');
+  const progressFrac = !dormant && task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
+  const linkedGoal = task.taskGoalId ? goals.find((g) => g.id === task.taskGoalId) : null;
+  // The recurring badge used to gate on parentTaskId, which templates do not
+  // have, so a dormant row lost every recurring signal and read as a broken task.
+  const isRecurringRow = !!task.parentTaskId || task.isRecurring;
+
+  return (
+    <TouchableOpacity activeOpacity={0.75} onPress={onTap} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
+      <View style={{ width: 3, backgroundColor: barColor }} />
+      <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: progressFrac !== null ? 10 : 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {dormant ? (
+            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primaryDim }}>
+              <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>{'\u21BA'}</Text>
+            </View>
+          ) : (
+            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isCompleted ? Colors.accent : 'transparent', borderWidth: isCompleted ? 0 : 1.5, borderColor: isCompleted ? Colors.accent : isActive ? Colors.primary : Colors.subtext }}>
+              {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
+            </View>
+          )}
+          <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
+          <View style={{ marginLeft: 6, alignItems: 'flex-end', gap: 4 }}>
+            {(isRecurringRow || categoryTag) && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {isRecurringRow && (
+                  <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 }}>
+                    <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
+                  </View>
+                )}
+                {categoryTag && (
+                  <TouchableOpacity
+                    onLongPress={() => onLongPressTag?.(categoryTag)} delayLongPress={400}
+                    style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: tagStyle.bg }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: prioColor + '22' }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
+            </View>
+          </View>
+        </View>
+        {subtitle && (
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 5 }} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
+        {linkedGoal && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5 }}>
+            <Ionicons name="flag-outline" size={10} color={Colors.primarySoft} style={{ marginRight: 4 }} />
+            <Text style={{ color: Colors.primarySoft, fontSize: 11 }} numberOfLines={1}>Goal: {linkedGoal.title}</Text>
+          </View>
+        )}
+        {(task.sessionsOnTask > 0 || chip) && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
+            {task.sessionsOnTask > 0 && <Text style={{ color: isActive ? Colors.primarySoft : Colors.subtext, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
+            {chip && <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
+          </View>
+        )}
+        {progressFrac !== null && (
+          <View style={{ height: 3, backgroundColor: Colors.inactive, borderRadius: 2, marginTop: 10, overflow: 'hidden' }}>
+            <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 2, backgroundColor: isCompleted ? Colors.accent : Colors.primary }} />
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPressTag }: {
   task: Task; isActive: boolean; goals: TaskGoal[];
   onTap: () => void; onEdit: () => void; onComplete: () => void; onLongPressTag?: (t: string) => void;
@@ -880,13 +985,6 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
   const Colors = useTheme();
   const { ROSE, ROSE_DIM } = Colors;
   const isCompleted = task.isCompleted;
-  const barColor = isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
-  const chip = getDueChip(task, Colors);
-  const prioColor = priorityColor(task.priority);
-  const categoryTag = task.tags.length > 0 ? task.tags[0] : null;
-  const tagStyle = useTagStyle(categoryTag ?? '');
-  const progressFrac = task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
-  const linkedGoal = task.taskGoalId ? goals.find((g) => g.id === task.taskGoalId) : null;
   const swipeRef = useRef<Swipeable>(null);
   const handleSwipeOpen = useCallback((direction: 'left' | 'right') => { swipeRef.current?.close(); if (direction === 'left') onComplete(); else onEdit(); }, [onComplete, onEdit]);
 
@@ -905,57 +1003,33 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
 
   return (
     <Swipeable ref={swipeRef} renderLeftActions={renderLeftActions} renderRightActions={renderRightActions} onSwipeableOpen={handleSwipeOpen} overshootLeft={false} overshootRight={false} friction={2}>
-      <TouchableOpacity activeOpacity={0.75} onPress={onTap} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
-        <View style={{ width: 3, backgroundColor: barColor }} />
-        <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: progressFrac !== null ? 10 : 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isCompleted ? Colors.accent : 'transparent', borderWidth: isCompleted ? 0 : 1.5, borderColor: isCompleted ? Colors.accent : isActive ? Colors.primary : Colors.subtext }}>
-              {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
-            </View>
-            <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
-            <View style={{ marginLeft: 6, alignItems: 'flex-end', gap: 4 }}>
-              {(task.parentTaskId || categoryTag) && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  {task.parentTaskId && (
-                    <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 }}>
-                      <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
-                    </View>
-                  )}
-                  {categoryTag && (
-                    <TouchableOpacity
-                      onLongPress={() => onLongPressTag?.(categoryTag)} delayLongPress={400}
-                      style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: tagStyle.bg }}
-                    >
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-              <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: prioColor + '22' }}>
-                <Text style={{ fontSize: 10, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
-              </View>
-            </View>
-          </View>
-          {linkedGoal && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5 }}>
-              <Ionicons name="flag-outline" size={10} color={Colors.primarySoft} style={{ marginRight: 4 }} />
-              <Text style={{ color: Colors.primarySoft, fontSize: 11 }} numberOfLines={1}>Goal: {linkedGoal.title}</Text>
-            </View>
-          )}
-          {(task.sessionsOnTask > 0 || chip) && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
-              {task.sessionsOnTask > 0 && <Text style={{ color: isActive ? Colors.primarySoft : Colors.subtext, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
-              {chip && <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
-            </View>
-          )}
-          {progressFrac !== null && (
-            <View style={{ height: 3, backgroundColor: Colors.inactive, borderRadius: 2, marginTop: 10, overflow: 'hidden' }}>
-              <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 2, backgroundColor: isCompleted ? Colors.accent : Colors.primary }} />
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
+      <TaskRowBody task={task} isActive={isActive} goals={goals} onTap={onTap} onLongPressTag={onLongPressTag} />
     </Swipeable>
+  );
+}
+
+/**
+ * A recurring task on a day it is not scheduled.
+ *
+ * No Swipeable, so it cannot be completed by gesture. Tapping opens the template
+ * editor rather than the stats modal, which exposes both completion and
+ * selectTask - and a template id in selectedTaskId leaves the Active filter
+ * empty and the focus tab holding a dangling id.
+ */
+function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag }: {
+  template: Task; goals: TaskGoal[]; subtitle: string;
+  onEdit: () => void; onLongPressTag?: (t: string) => void;
+}) {
+  return (
+    <TaskRowBody
+      task={template}
+      isActive={false}
+      goals={goals}
+      onTap={onEdit}
+      onLongPressTag={onLongPressTag}
+      dormant
+      subtitle={subtitle}
+    />
   );
 }
 
@@ -1617,6 +1691,12 @@ export default function TasksScreen() {
   const AMBER = Colors.warning;
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const tasks = useTasksList();
+  const recurringTemplates = useTaskStore((s) => s.recurringTemplates);
+
+  // Recurring tasks with no live instance today. GET /tasks omits templates and
+  // spawn-recurring archives every instance not due today, so on a day the
+  // template is not scheduled for, the task had no representation anywhere and
+  // silently vanished from the app.
   const selectedTaskId = useSelectedTaskId();
   const taskActions = useTaskActions();
   const settings = useSettings();
@@ -1646,6 +1726,7 @@ export default function TasksScreen() {
   const [activeView, setActiveView] = useState<ActiveView>(null);
   const [trackerPeriod, setTrackerPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
   const [taskFilter, setTaskFilter] = useState<'all' | 'active' | 'pending' | 'done'>('all');
+  const [showAllDormant, setShowAllDormant] = useState(false);
   const [statsTask, setStatsTask] = useState<Task | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
   const [formTask, setFormTask] = useState<Task | null>(null);
@@ -1694,6 +1775,9 @@ export default function TasksScreen() {
     useTaskStore.getState().fetchTasks(true);
     useGoalStore.getState().fetchGoals(true);
     useGamificationStore.getState().fetchActivity();
+    // Templates were only ever fetched after editing a recurring task, so the
+    // store was empty on a cold start and nothing could render them.
+    useTaskStore.getState().fetchRecurringTemplates();
     loadSessionHistory();
   }, [loadSessionHistory]));
 
@@ -1768,6 +1852,31 @@ export default function TasksScreen() {
     if (taskFilter === 'done') return doneTasks;
     return nonArchived;
   }, [taskFilter, activeTask, pendingTasks, doneTasks, nonArchived]);
+
+  // Composed for rendering only. Deliberately NOT merged into `nonArchived`:
+  // that array feeds totalActiveTasks and the PillStrip denominator, and adding
+  // habits there would show a completion count the user can never reach.
+  const listForFilter = useMemo(
+    () => composeTaskList({
+      tasks: filteredTasks,
+      templates: recurringTemplates as RecurringTemplate[],
+      filter: taskFilter,
+      limitDormant: showAllDormant ? undefined : DORMANT_VISIBLE,
+    }),
+    [filteredTasks, recurringTemplates, taskFilter, showAllDormant],
+  );
+
+  // The main tab reserves two slots so a recurring task is visible without
+  // opening the drill-down; the zone is capped at four rows total.
+  const zoneDormant = useMemo(
+    () => composeTaskList({
+      tasks: [],
+      templates: recurringTemplates as RecurringTemplate[],
+      filter: 'all',
+      limitDormant: ZONE_DORMANT_SLOTS,
+    }),
+    [recurringTemplates],
+  );
 
   // ── Handlers ──
   const openCreate = useCallback(() => { setFormTask(null); setShowFormModal(true); }, []);
@@ -2040,13 +2149,52 @@ export default function TasksScreen() {
           ))}
         </ScrollView>
         <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}>
-          {filteredTasks.length === 0 ? (
+          {/* Empty state stays keyed on REAL tasks: someone whose only items are
+              unscheduled habits still needs "Nothing planned yet" and the path
+              to create something. */}
+          {filteredTasks.length === 0 && (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
               <Text style={{ color: Colors.subtext, fontSize: 13 }}>Nothing planned yet. What has to move today?</Text>
             </View>
-          ) : filteredTasks.map((task) => (
+          )}
+          {filteredTasks.map((task) => (
             <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
           ))}
+
+          {/* Recurring tasks on a day they are not scheduled. Below a labelled
+              divider so the All filter visibly holds a second class of thing
+              rather than silently miscounting. */}
+          {listForFilter.dormantTotal > 0 && (
+            <View style={{ marginTop: 20 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
+                  Not scheduled today · {listForFilter.dormantTotal}
+                </Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+              </View>
+              {listForFilter.items.map((item) => (
+                item.kind === 'dormant' ? (
+                  <DormantRecurringRow
+                    key={item.template.id}
+                    template={item.template}
+                    goals={goals}
+                    subtitle={nextOccurrenceLabel(item.template)}
+                    onEdit={() => openEdit(item.template)}
+                    onLongPressTag={setOverrideTag}
+                  />
+                ) : null
+              ))}
+              {listForFilter.dormantHidden > 0 && (
+                <TouchableOpacity onPress={() => setShowAllDormant(true)} style={{ paddingVertical: 8, alignItems: 'center' }}>
+                  <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>
+                    Show {listForFilter.dormantHidden} more →
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
         </ScrollView>
         {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
         <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
@@ -2154,7 +2302,7 @@ export default function TasksScreen() {
         {/* Zone 2 — Task List */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
           <ZoneHeader title="Tasks" onSeeMore={() => setActiveView('task-list')} />
-          {nonArchived.length === 0 ? (
+          {nonArchived.length === 0 && zoneDormant.items.length === 0 ? (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36 }]}>
               <Ionicons name="checkbox-outline" size={32} color={Colors.subtext} />
               <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 10 }}>Nothing planned yet. What has to move today?</Text>
@@ -2162,13 +2310,33 @@ export default function TasksScreen() {
           ) : (<>
             {(() => {
               const combined = activeTask ? [activeTask, ...pendingTasks] : pendingTasks;
-              if (combined.length === 0) return null;
+              const dormant = zoneDormant.items;
+              if (combined.length === 0 && dormant.length === 0) return null;
+              // Reserved slots: a recurring task stays visible here even when
+              // there are more than enough real tasks to fill the zone. Sorting
+              // it to the bottom of a four-row cap would have kept it invisible
+              // on the screen the user actually opens, which is the bug.
+              const taskSlots = dormant.length > 0 ? ZONE_TASK_SLOTS : ZONE_TASK_SLOTS + ZONE_DORMANT_SLOTS;
+              const shownTasks = combined.slice(0, taskSlots);
+              const overflow = combined.length - shownTasks.length;
               return (
                 <View style={{ marginBottom: 12 }}>
-                  {combined.slice(0, 4).map((task) => (
+                  {shownTasks.map((task) => (
                     <TaskRow key={task.id} task={task} isActive={task.id === activeTask?.id} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
                   ))}
-                  {combined.length > 4 && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{combined.length - 4} more →</Text></TouchableOpacity>}
+                  {dormant.map((item) => (
+                    item.kind === 'dormant' ? (
+                      <DormantRecurringRow
+                        key={item.template.id}
+                        template={item.template}
+                        goals={goals}
+                        subtitle={nextOccurrenceLabel(item.template)}
+                        onEdit={() => openEdit(item.template)}
+                        onLongPressTag={setOverrideTag}
+                      />
+                    ) : null
+                  ))}
+                  {(overflow > 0 || zoneDormant.dormantHidden > 0) && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{overflow + zoneDormant.dormantHidden} more →</Text></TouchableOpacity>}
                 </View>
               );
             })()}

@@ -30,7 +30,10 @@ export const TYPE_META: Record<
   CalendarItemType,
   { icon: keyof typeof Ionicons.glyphMap; label: string }
 > = {
-  habit_instance:  { icon: 'repeat',           label: 'Habits' },
+  // The wire value stays `habit_instance` (backend contract); only the
+  // user-facing label changes. These are recurring tasks, not a separate
+  // "habits" feature — nothing in the app creates a "habit".
+  habit_instance:  { icon: 'repeat',           label: 'Recurring tasks' },
   task:            { icon: 'checkbox-outline', label: 'Tasks' },
   goal_deadline:   { icon: 'flag',             label: 'Goal deadlines' },
   external_google: { icon: 'logo-google',      label: 'Google Calendar' },

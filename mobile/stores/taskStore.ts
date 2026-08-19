@@ -405,7 +405,12 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
 
   fetchRecurringTemplates: async () => {
     try {
-      const res = await api.get<Task[]>('/tasks/recurring');
+      // localDate so the server decides scheduledToday against the user calendar
+      // day. Without it the server falls back to its own UTC date, and a user
+      // west of UTC sees the wrong schedule for several hours each night.
+      const res = await api.get<Task[]>(
+        `/tasks/recurring?localDate=${encodeURIComponent(getLocalDateString())}`,
+      );
       if (res.success && res.data) {
         set({ recurringTemplates: normalizeTasks(res.data) });
       }
