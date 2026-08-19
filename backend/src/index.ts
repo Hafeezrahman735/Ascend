@@ -75,12 +75,20 @@ if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
 }
 
+// The integration suite drives every request from 127.0.0.1, so the whole
+// suite shares ONE rate-limit bucket. At 30 registrations per 15 minutes it
+// started failing whichever test file happened to run last, which is a
+// non-deterministic failure that has nothing to do with the code under test.
+// Gated strictly on NODE_ENV === 'test', which only src/test/env.ts sets.
+const skipInTests = () => process.env.NODE_ENV === 'test';
+
 // Throttle credential endpoints against brute-force / enumeration.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTests,
   message: { success: false, error: 'Too many attempts. Please try again later.' },
 });
 app.use(['/auth/login', '/auth/register'], authLimiter);
@@ -95,6 +103,7 @@ const refreshLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTests,
   message: { success: false, error: 'Too many refresh attempts. Please try again later.' },
 });
 app.use('/auth/refresh', refreshLimiter);

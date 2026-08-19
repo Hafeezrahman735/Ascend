@@ -278,6 +278,7 @@ export default function RootLayout() {
         <Stack.Screen name="search" />
         <Stack.Screen name="user/[id]" />
         <Stack.Screen name="groups" />
+        <Stack.Screen name="group/[id]" />
       </Stack>
       {/* App-level so an unlock is celebrated wherever the user is — sessions
           complete on the Timer tab, not the profile. */}

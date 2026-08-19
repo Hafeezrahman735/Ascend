@@ -8,50 +8,50 @@ datasource db {
 }
 
 model User {
-  id                String             @id @default(uuid()) @db.Uuid
-  username          String             @unique @db.VarChar(50)
-  email             String             @unique @db.VarChar(255)
-  passwordHash      String             @map("password_hash") @db.VarChar(255)
-  avatarUrl         String?            @map("avatar_url")
-  avatarEmoji       String?            @map("avatar_emoji")
-  privacySetting    PrivacySetting     @default(public) @map("privacy_setting")
-  pushToken         String?            @map("push_token")
-  createdAt         DateTime           @default(now()) @map("created_at")
-  updatedAt         DateTime           @updatedAt @map("updated_at")
-  notificationPrefs String?            @map("notification_prefs")
-  publicProfile         Boolean        @default(true) @map("public_profile")
-  showOnLeaderboard     Boolean        @default(true) @map("show_on_leaderboard")
-  shareFocusStats       Boolean        @default(true) @map("share_focus_stats")
-  friendsCanSeeActivity Boolean        @default(true) @map("friends_can_see_activity")
-  currentStreak     Int                @default(0) @map("current_streak")
-  lastActiveDate    DateTime?          @map("last_active_date")
-  level             Int                @default(1)
-  longestStreak     Int                @default(0) @map("longest_streak")
-  totalFocusTime    Int                @default(0) @map("total_focus_time")
-  totalSessions     Int                @default(0) @map("total_sessions")
+  id                    String                       @id @default(uuid()) @db.Uuid
+  username              String                       @unique @db.VarChar(50)
+  email                 String                       @unique @db.VarChar(255)
+  passwordHash          String                       @map("password_hash") @db.VarChar(255)
+  avatarUrl             String?                      @map("avatar_url")
+  avatarEmoji           String?                      @map("avatar_emoji")
+  privacySetting        PrivacySetting               @default(public) @map("privacy_setting")
+  pushToken             String?                      @map("push_token")
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  notificationPrefs     String?                      @map("notification_prefs")
+  publicProfile         Boolean                      @default(true) @map("public_profile")
+  showOnLeaderboard     Boolean                      @default(true) @map("show_on_leaderboard")
+  shareFocusStats       Boolean                      @default(true) @map("share_focus_stats")
+  friendsCanSeeActivity Boolean                      @default(true) @map("friends_can_see_activity")
+  currentStreak         Int                          @default(0) @map("current_streak")
+  lastActiveDate        DateTime?                    @map("last_active_date")
+  level                 Int                          @default(1)
+  longestStreak         Int                          @default(0) @map("longest_streak")
+  totalFocusTime        Int                          @default(0) @map("total_focus_time")
+  totalSessions         Int                          @default(0) @map("total_sessions")
   // Running count of tasks completed, maintained alongside the XP award in
   // modules/tasks/routes.ts. Denormalized rather than COUNTed on read because
   // it is checked on every achievement evaluation.
-  tasksCompleted    Int                @default(0) @map("tasks_completed")
-  xp                Int                @default(0)
-  feedEvents        FeedEvent[]
-  following         Follow[]           @relation("UserFollower")
-  followers         Follow[]           @relation("UserFollowing")
-  friendshipsAddr   Friendship[]       @relation("Addressee")
-  friendshipsReq    Friendship[]       @relation("Requester")
-  notes             Note[]
-  calendarLinks     ExternalCalendarConnection[]
-  notifications     Notification[]
-  refreshTokens     RefreshToken[]
-  sessions          Session[]
-  socialPosts       SocialPost[]       @relation("PostAuthor")
-  streaks           Streak?
-  groupMemberships  StudyGroupMember[]
-  createdGroups     StudyGroup[]       @relation("GroupCreator")
-  taskGoals         TaskGoal[]
-  tasks             Task[]
-  timerState        TimerState?
-  userAchievs       UserAchievement[]
+  tasksCompleted        Int                          @default(0) @map("tasks_completed")
+  xp                    Int                          @default(0)
+  feedEvents            FeedEvent[]
+  following             Follow[]                     @relation("UserFollower")
+  followers             Follow[]                     @relation("UserFollowing")
+  friendshipsAddr       Friendship[]                 @relation("Addressee")
+  friendshipsReq        Friendship[]                 @relation("Requester")
+  notes                 Note[]
+  calendarLinks         ExternalCalendarConnection[]
+  notifications         Notification[]
+  refreshTokens         RefreshToken[]
+  sessions              Session[]
+  socialPosts           SocialPost[]                 @relation("PostAuthor")
+  streaks               Streak?
+  groupMemberships      StudyGroupMember[]
+  createdGroups         StudyGroup[]                 @relation("GroupCreator")
+  taskGoals             TaskGoal[]
+  tasks                 Task[]
+  timerState            TimerState?
+  userAchievs           UserAchievement[]
 
   @@map("users")
 }
@@ -187,31 +187,31 @@ model Task {
   taskGoalId       String?   @map("task_goal_id")
 
   // Recurring task fields
-  isRecurring      Boolean   @default(false) @map("is_recurring")
-  recurringDays    String[]  @default([]) @map("recurring_days")
+  isRecurring     Boolean  @default(false) @map("is_recurring")
+  recurringDays   String[] @default([]) @map("recurring_days")
   // Valid values: 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'. Empty array means every day.
-  lastSpawnedDate  String?   @map("last_spawned_date")
+  lastSpawnedDate String?  @map("last_spawned_date")
   // ISO date string 'YYYY-MM-DD' — the last date an instance was spawned (lives on the template)
-  parentTaskId     String?   @map("parent_task_id")
+  parentTaskId    String?  @map("parent_task_id")
   // If set, this task is an instance spawned from the template with this ID
 
   // ── Habit-tracker lifetime stats — live on the TEMPLATE ──
   // currentStreak keeps the existing `recurring_streak` column (renamed field only)
   // so production data is preserved with a purely additive db push. It resets to 0
   // immediately at spawn time when a day is missed (see spawn-recurring route).
-  currentStreak    Int       @default(0) @map("recurring_streak")
-  longestStreak            Int @default(0) @map("longest_streak")
-  totalCompletions         Int @default(0) @map("total_completions")
-  totalFocusTimeMs         Int @default(0) @map("total_focus_time_ms")
+  currentStreak    Int @default(0) @map("recurring_streak")
+  longestStreak    Int @default(0) @map("longest_streak")
+  totalCompletions Int @default(0) @map("total_completions")
+  totalFocusTimeMs Int @default(0) @map("total_focus_time_ms")
 
   // ── Denormalized onto INSTANCES at spawn time — read-only display copies ──
   lifetimeStreak           Int @default(0) @map("lifetime_streak")
   lifetimeTotalCompletions Int @default(0) @map("lifetime_total_completions")
   lifetimeTotalFocusTime   Int @default(0) @map("lifetime_total_focus_time")
 
-  sessions         Session[] @relation("TaskSessions")
-  taskGoal         TaskGoal? @relation(fields: [taskGoalId], references: [id])
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions Session[] @relation("TaskSessions")
+  taskGoal TaskGoal? @relation(fields: [taskGoalId], references: [id])
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([parentTaskId])
@@ -219,11 +219,11 @@ model Task {
 }
 
 model TaskGoal {
-  id             String    @id @default(cuid())
-  userId         String    @map("user_id") @db.Uuid
-  title          String    @db.VarChar(80)
-  tag            String?   @db.VarChar(30)
-  targetSessions Int?      @map("target_sessions")
+  id             String       @id @default(cuid())
+  userId         String       @map("user_id") @db.Uuid
+  title          String       @db.VarChar(80)
+  tag            String?      @db.VarChar(30)
+  targetSessions Int?         @map("target_sessions")
   // Which components count toward this goal's progress. Defaults to 'tasks';
   // creating a goal with targetSessions > 0 defaults it to 'both' instead.
   // A goal with no targetSessions is always treated as 'tasks' at read time,
@@ -232,13 +232,13 @@ model TaskGoal {
   // A deadline is a CALENDAR DAY, not an instant. Stored as @db.Date so it
   // carries no time or timezone: picking "Aug 10" means Aug 10 wherever the user
   // is, and travelling or crossing DST cannot shift it.
-  deadline       DateTime? @db.Date
-  isCompleted    Boolean   @default(false) @map("is_completed")
-  completedAt    DateTime? @map("completed_at")
-  isArchived     Boolean   @default(false) @map("is_archived")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deadline       DateTime?    @db.Date
+  isCompleted    Boolean      @default(false) @map("is_completed")
+  completedAt    DateTime?    @map("completed_at")
+  isArchived     Boolean      @default(false) @map("is_archived")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   tasks          Task[]
 
   @@index([userId])
@@ -290,18 +290,21 @@ model Follow {
 /// name is left alone deliberately: renaming it is a table rename with no
 /// product benefit, so code and copy diverge on this one noun by design.
 model StudyGroup {
-  id        String             @id @default(uuid()) @db.Uuid
-  name      String             @db.VarChar(100)
-  emoji     String             @db.VarChar(10)
-  color     String             @default("purple") @db.VarChar(20)
-  isPrivate Boolean            @default(false) @map("is_private")
-  createdBy String             @map("created_by") @db.Uuid
-  createdAt DateTime           @default(now()) @map("created_at")
-  members   StudyGroupMember[]
+  id          String             @id @default(uuid()) @db.Uuid
+  name        String             @db.VarChar(100)
+  // What the group is for, shown on the group detail screen. Optional because
+  // every group created before this column existed has none.
+  description String?            @db.VarChar(500)
+  emoji       String             @db.VarChar(10)
+  color       String             @default("purple") @db.VarChar(20)
+  isPrivate   Boolean            @default(false) @map("is_private")
+  createdBy   String             @map("created_by") @db.Uuid
+  createdAt   DateTime           @default(now()) @map("created_at")
+  members     StudyGroupMember[]
   // Cascade: without it this relation defaults to Restrict, so deleting a user
   // who ever created a group failed with a foreign-key error — breaking account
   // deletion (App Store Guideline 5.1.1(v)) for that whole class of users.
-  creator   User               @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  creator     User               @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
 
   @@index([createdBy])
   @@map("study_groups")

@@ -411,6 +411,8 @@ export interface SocialPost {
 export interface StudyGroup {
   id: string;
   name: string;
+  /** Optional: groups created before the column existed have none. */
+  description?: string | null;
   emoji: string;
   color: GroupColor;
   memberIds: string[];
@@ -420,6 +422,37 @@ export interface StudyGroup {
   isPrivate: boolean;
   isMember?: boolean;
   hasRecentActivity?: boolean;
+}
+
+/**
+ * Why a group detail fetch failed. `unavailable` means the request never got a
+ * real answer (offline, timeout, 5xx, or a route the deployed backend does not
+ * have yet) and is worth retrying; `not-found` means the server answered and
+ * the group is genuinely gone or private. Collapsing the two into one null was
+ * a real debugging cost: an undeployed route reported itself as a missing group.
+ */
+export type GroupDetailResult =
+  | { ok: true; detail: GroupDetail }
+  | { ok: false; reason: 'not-found' | 'unavailable'; message?: string };
+
+/** One row of a group's member list, as returned by GET /social/groups/:id. */
+export interface GroupMember {
+  id: string;
+  username: string;
+  avatarEmoji: string;
+  avatarUrl: string | null;
+  level: number;
+  joinedAt: string;
+  isCreator: boolean;
+}
+
+/**
+ * A group plus its member list. Only the creator may add or remove people, so
+ * `isCreator` is what the detail screen gates its management controls on.
+ */
+export interface GroupDetail extends StudyGroup {
+  isCreator: boolean;
+  members: GroupMember[];
 }
 
 export interface GroupChallenge {

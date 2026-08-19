@@ -12,10 +12,11 @@ import type { StudyGroup } from '../types';
 
 const EMOJI_OPTIONS = ['📚','🧠','💡','🔥','⚡','🎯','🏆','🌙','🚀','🎓','✏️','🧮'];
 
-function GroupCard({ group, onJoin, onLeave }: {
+function GroupCard({ group, onJoin, onLeave, onOpen }: {
   group: StudyGroup;
   onJoin: (id: string) => void;
   onLeave: (id: string) => void;
+  onOpen: (id: string) => void;
 }) {
   const Colors = useTheme();
   const [loading, setLoading] = useState(false);
@@ -39,11 +40,17 @@ function GroupCard({ group, onJoin, onLeave }: {
   };
 
   return (
-    <View style={{
-      backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.BORDER_SOFT,
-      marginHorizontal: 16, marginBottom: 10, padding: 14,
-      flexDirection: 'row', alignItems: 'center',
-    }}>
+    // The whole card opens the group. The Join/Leave button below is a nested
+    // Pressable, so it handles its own press without also opening the screen.
+    <Pressable
+      onPress={() => onOpen(group.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${group.name}`}
+      style={{
+        backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.BORDER_SOFT,
+        marginHorizontal: 16, marginBottom: 10, padding: 14,
+        flexDirection: 'row', alignItems: 'center',
+      }}>
       <View style={{
         width: 48, height: 48, borderRadius: 14, backgroundColor: bg,
         borderWidth: 1.5, borderColor: border,
@@ -51,8 +58,13 @@ function GroupCard({ group, onJoin, onLeave }: {
       }}>
         <Text style={{ fontSize: 26 }}>{group.emoji}</Text>
       </View>
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, marginRight: 10 }}>
         <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 15 }}>{group.name}</Text>
+        {!!group.description && (
+          <Text numberOfLines={1} style={{ color: Colors.text, fontSize: 12, marginTop: 2 }}>
+            {group.description}
+          </Text>
+        )}
         <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>
           {group.memberCount ?? group.memberIds.length} member{(group.memberCount ?? group.memberIds.length) !== 1 ? 's' : ''}
           {group.isPrivate ? ' · Private' : ''}
@@ -77,14 +89,14 @@ function GroupCard({ group, onJoin, onLeave }: {
             </Text>
         }
       </Pressable>
-    </View>
+    </Pressable>
   );
 }
 
 function CreateGroupModal({ visible, onClose, onCreate }: {
   visible: boolean;
   onClose: () => void;
-  onCreate: (data: { name: string; emoji: string; color: string; isPrivate: boolean }) => Promise<void>;
+  onCreate: (data: { name: string; description: string | null; emoji: string; color: string; isPrivate: boolean }) => Promise<void>;
 }) {
   const Colors = useTheme();
   const COLOR_OPTIONS = [
@@ -94,17 +106,18 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
     { key: 'rose', color: Colors.ROSE },
   ] as const;
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [emoji, setEmoji] = useState('📚');
   const [color, setColor] = useState<'purple' | 'teal' | 'amber' | 'rose'>('purple');
   const [isPrivate, setIsPrivate] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const reset = () => { setName(''); setEmoji('📚'); setColor('purple'); setIsPrivate(false); };
+  const reset = () => { setName(''); setDescription(''); setEmoji('📚'); setColor('purple'); setIsPrivate(false); };
 
   const handleCreate = async () => {
     if (!name.trim()) return;
     setLoading(true);
-    await onCreate({ name: name.trim(), emoji, color, isPrivate });
+    await onCreate({ name: name.trim(), description: description.trim() || null, emoji, color, isPrivate });
     setLoading(false);
     reset();
     onClose();
@@ -135,6 +148,21 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
                 backgroundColor: Colors.raised, borderRadius: 12, borderWidth: 1,
                 borderColor: Colors.BORDER_SOFT, padding: 12, color: Colors.textBright,
                 fontSize: 15, marginBottom: 20,
+              }}
+            />
+
+            <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Description</Text>
+            <TextInput
+              value={description}
+              onChangeText={setDescription}
+              placeholder="What is this group for? (optional)"
+              placeholderTextColor={Colors.subtext}
+              multiline
+              maxLength={500}
+              style={{
+                backgroundColor: Colors.raised, borderRadius: 12, borderWidth: 1,
+                borderColor: Colors.BORDER_SOFT, padding: 12, color: Colors.textBright,
+                fontSize: 15, marginBottom: 20, minHeight: 74, textAlignVertical: 'top',
               }}
             />
 
@@ -218,11 +246,19 @@ export default function GroupsScreen() {
 
   const loadGroups = useCallback(async () => {
     setLoading(true);
-    const groups = await social.fetchAllGroups();
-    const myGroupIds = new Set(social.studyGroups.map((g) => g.id));
-    setAllGroups(groups.map((g) => ({ ...g, isMember: myGroupIds.has(g.id) })));
+    // The public directory omits private groups, so a private group the user
+    // just created disappeared from this screen on the next load. Their own
+    // memberships are fetched alongside it and merged, own-groups first.
+    await social.fetchStudyGroups();
+    const [directory, mine] = [await social.fetchAllGroups(), useSocialStore.getState().studyGroups];
+    const myGroupIds = new Set(mine.map((g) => g.id));
+    const merged = [
+      ...mine.map((g) => ({ ...g, isMember: true })),
+      ...directory.filter((g) => !myGroupIds.has(g.id)).map((g) => ({ ...g, isMember: false })),
+    ];
+    setAllGroups(merged);
     setLoading(false);
-  }, [social.studyGroups]);
+  }, []);
 
   useEffect(() => {
     loadGroups();
@@ -242,7 +278,7 @@ export default function GroupsScreen() {
     }
   }, []);
 
-  const handleCreate = useCallback(async (data: { name: string; emoji: string; color: string; isPrivate: boolean }) => {
+  const handleCreate = useCallback(async (data: { name: string; description: string | null; emoji: string; color: string; isPrivate: boolean }) => {
     const group = await social.createGroup(data);
     if (group) {
       setAllGroups((prev) => [{ ...group, isMember: true }, ...prev]);
@@ -296,7 +332,12 @@ export default function GroupsScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingTop: 8, paddingBottom: 40 }}
           renderItem={({ item }) => (
-            <GroupCard group={item} onJoin={handleJoin} onLeave={handleLeave} />
+            <GroupCard
+              group={item}
+              onJoin={handleJoin}
+              onLeave={handleLeave}
+              onOpen={(id) => router.push(`/group/${id}` as never)}
+            />
           )}
         />
       )}

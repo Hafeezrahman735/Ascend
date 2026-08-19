@@ -111,12 +111,14 @@ async function resolveGroupAccess(
   groupId: string,
   userId: string,
 ): Promise<
-  | { ok: true; group: { id: string; name: string; isPrivate: boolean }; isMember: boolean }
+  | { ok: true; group: { id: string; name: string; isPrivate: boolean; createdBy: string }; isMember: boolean }
   | { ok: false; status: 404 | 403; error: string }
 > {
   const group = await prisma.studyGroup.findUnique({
     where: { id: groupId },
-    select: { id: true, name: true, isPrivate: true },
+    // createdBy comes back so callers can gate member management on ownership
+    // without a second query.
+    select: { id: true, name: true, isPrivate: true, createdBy: true },
   });
   if (!group) return { ok: false, status: 404, error: 'Group not found' };
 
@@ -1497,6 +1499,7 @@ socialRouter.get('/social/groups', async (req: Request, res: Response) => {
     const data = memberships.map((m) => ({
       id: m.group.id,
       name: m.group.name,
+      description: m.group.description,
       emoji: m.group.emoji,
       color: m.group.color,
       isPrivate: m.group.isPrivate,
@@ -1536,6 +1539,7 @@ socialRouter.get('/social/groups/all', async (req: Request, res: Response) => {
     const data = groups.map((g) => ({
       id: g.id,
       name: g.name,
+      description: g.description,
       emoji: g.emoji,
       color: g.color,
       isPrivate: g.isPrivate,
@@ -1555,16 +1559,186 @@ socialRouter.get('/social/groups/all', async (req: Request, res: Response) => {
   }
 });
 
+// ─── Group detail + member management ────────────────────────────────────────
+//
+//   GET    /social/groups/:id                  detail + member list  (members)
+//   POST   /social/groups/:id/members          add a member          (creator)
+//   DELETE /social/groups/:id/members/:userId  remove a member       (creator)
+//
+// Ownership model: the creator manages membership. Everyone else may only join
+// a public group or leave one. Registered AFTER /social/groups/all so the
+// literal path is not swallowed by the :id parameter.
+
+const GROUP_MEMBER_SELECT = {
+  id: true, username: true, avatarEmoji: true, avatarUrl: true, level: true,
+} as const;
+
+/** Shapes a membership row for the client, with the shared avatar fallback. */
+function serializeMember(m: {
+  joinedAt: Date;
+  user: { id: string; username: string; avatarEmoji: string | null; avatarUrl: string | null; level: number };
+}, createdBy: string) {
+  return {
+    id: m.user.id,
+    username: m.user.username,
+    avatarEmoji: resolveAvatar(m.user.avatarEmoji, m.user.id),
+    avatarUrl: m.user.avatarUrl,
+    level: m.user.level,
+    joinedAt: m.joinedAt.toISOString(),
+    isCreator: m.user.id === createdBy,
+  };
+}
+
+socialRouter.get('/social/groups/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id: groupId } = req.params;
+
+    const access = await resolveGroupAccess(groupId, userId);
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, error: access.error });
+      return;
+    }
+
+    const group = await prisma.studyGroup.findUnique({
+      where: { id: groupId },
+      include: {
+        members: {
+          orderBy: { joinedAt: 'asc' },
+          include: { user: { select: GROUP_MEMBER_SELECT } },
+        },
+      },
+    });
+    if (!group) {
+      res.status(404).json({ success: false, error: 'Group not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        emoji: group.emoji,
+        color: group.color,
+        isPrivate: group.isPrivate,
+        createdBy: group.createdBy,
+        createdAt: group.createdAt.toISOString(),
+        memberIds: group.members.map((m) => m.userId),
+        memberCount: group.members.length,
+        isMember: access.isMember,
+        isCreator: group.createdBy === userId,
+        members: group.members.map((m) => serializeMember(m, group.createdBy)),
+      },
+    });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('[social/groups/:id] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+socialRouter.post('/social/groups/:id/members', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id: groupId } = req.params;
+    const { userId: targetId } = z.object({ userId: z.string().uuid() }).parse(req.body);
+
+    const access = await resolveGroupAccess(groupId, userId);
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, error: access.error });
+      return;
+    }
+    if (access.group.createdBy !== userId) {
+      res.status(403).json({ success: false, error: 'Only the group creator can add members' });
+      return;
+    }
+
+    // A block in either direction hides these two people from each other
+    // everywhere else; adding past it would put them in the same room.
+    const hidden = await getHiddenUserIds(userId);
+    if (hidden.includes(targetId)) {
+      res.status(403).json({ success: false, error: 'You cannot add this person' });
+      return;
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: targetId },
+      select: GROUP_MEMBER_SELECT,
+    });
+    if (!target) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
+
+    const membership = await prisma.studyGroupMember.upsert({
+      where: { groupId_userId: { groupId, userId: targetId } },
+      create: { groupId, userId: targetId },
+      update: {},
+      include: { user: { select: GROUP_MEMBER_SELECT } },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: serializeMember(membership, access.group.createdBy),
+    });
+  } catch (error) {
+    if (handleZodError(res, error)) return;
+    if (handleAuthError(res, error)) return;
+    console.error('[social/groups/:id/members POST] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+socialRouter.delete('/social/groups/:id/members/:userId', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id: groupId, userId: targetId } = req.params;
+
+    const access = await resolveGroupAccess(groupId, userId);
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, error: access.error });
+      return;
+    }
+    if (access.group.createdBy !== userId) {
+      res.status(403).json({ success: false, error: 'Only the group creator can remove members' });
+      return;
+    }
+    // Removing the creator would leave the group with nobody able to manage it.
+    // Leaving is blocked for the same reason.
+    if (targetId === access.group.createdBy) {
+      res.status(400).json({ success: false, error: 'The group creator cannot be removed' });
+      return;
+    }
+
+    const { count } = await prisma.studyGroupMember.deleteMany({
+      where: { groupId, userId: targetId },
+    });
+    if (count === 0) {
+      res.status(404).json({ success: false, error: 'That person is not in this group' });
+      return;
+    }
+
+    res.json({ success: true, data: { removedUserId: targetId } });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('[social/groups/:id/members DELETE] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 socialRouter.post('/social/groups', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
     const schema = z.object({
       name: z.string().min(1).max(100),
+      description: z.string().max(500).nullable().optional(),
       emoji: z.string().max(10),
       color: z.enum(['purple', 'teal', 'amber', 'rose']).default('purple'),
       isPrivate: z.boolean().default(false),
     });
-    const { name, emoji, color, isPrivate } = schema.parse(req.body);
+    const { name, description, emoji, color, isPrivate } = schema.parse(req.body);
 
     // Group names are user-generated content shown to other people, so they get
     // the same moderation gate as post captions (Guideline 1.2). Previously only
@@ -1573,16 +1747,23 @@ socialRouter.post('/social/groups', async (req: Request, res: Response) => {
       res.status(400).json({ success: false, error: "That group name isn't allowed." });
       return;
     }
+    // The description is user-generated content shown to other members, so it
+    // goes through the same moderation gate as the name and post captions.
+    if (containsBlockedContent(description)) {
+      res.status(400).json({ success: false, error: "That description isn't allowed." });
+      return;
+    }
 
     const group = await prisma.studyGroup.create({
-      data: { name, emoji, color, isPrivate, createdBy: userId },
+      data: { name, description: description ?? null, emoji, color, isPrivate, createdBy: userId },
     });
     await prisma.studyGroupMember.create({ data: { groupId: group.id, userId } });
 
     res.status(201).json({
       success: true,
       data: {
-        id: group.id, name: group.name, emoji: group.emoji, color: group.color,
+        id: group.id, name: group.name, description: group.description,
+        emoji: group.emoji, color: group.color,
         isPrivate: group.isPrivate, createdBy: group.createdBy,
         createdAt: group.createdAt.toISOString(),
         memberIds: [userId], memberCount: 1, isMember: true, hasRecentActivity: false,
@@ -1628,6 +1809,20 @@ socialRouter.post('/social/groups/:id/leave', async (req: Request, res: Response
   try {
     const userId = authenticate(req);
     const { id: groupId } = req.params;
+
+    // The creator is the only account that can manage members, so letting them
+    // walk out would strand the group: nobody left could add or remove anyone.
+    const owned = await prisma.studyGroup.findUnique({
+      where: { id: groupId },
+      select: { createdBy: true },
+    });
+    if (owned && owned.createdBy === userId) {
+      res.status(400).json({
+        success: false,
+        error: 'You created this group, so you cannot leave it.',
+      });
+      return;
+    }
 
     await prisma.studyGroupMember.deleteMany({ where: { groupId, userId } });
     res.json({ success: true, data: { isMember: false } });

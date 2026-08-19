@@ -8,6 +8,9 @@ import {
   UserSearchResult,
   SocialPost,
   StudyGroup,
+  GroupDetail,
+  GroupDetailResult,
+  GroupMember,
   FocusLeaderboardEntry,
   InAppNotification,
   UserSocialStats,
@@ -66,7 +69,10 @@ interface SocialState {
   fetchAllGroups: () => Promise<StudyGroup[]>;
   joinGroup: (groupId: string) => Promise<boolean>;
   leaveGroup: (groupId: string) => Promise<boolean>;
-  createGroup: (data: { name: string; emoji: string; color: string; isPrivate: boolean }) => Promise<StudyGroup | null>;
+  createGroup: (data: { name: string; description?: string | null; emoji: string; color: string; isPrivate: boolean }) => Promise<StudyGroup | null>;
+  fetchGroupDetail: (groupId: string) => Promise<GroupDetailResult>;
+  addGroupMember: (groupId: string, userId: string) => Promise<GroupMember | null>;
+  removeGroupMember: (groupId: string, userId: string) => Promise<boolean>;
   setSelectedGroup: (groupId: string | null) => void;
   fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
   markNotificationsRead: () => Promise<void>;
@@ -457,6 +463,41 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       return null;
     } catch {
       return null;
+    }
+  },
+
+  // Group detail is deliberately NOT cached in the store. The detail screen owns
+  // it in local state so navigating there cannot clobber `studyGroups`, which the
+  // Social tab's chip strip renders from.
+  fetchGroupDetail: async (groupId: string) => {
+    try {
+      const response = await api.get<GroupDetail>(`/social/groups/${groupId}`);
+      if (response.success && response.data) return { ok: true, detail: response.data };
+      // errorKind is set for offline / timeout / 5xx / auth. Those are all
+      // "we never got a real answer", not "no such group".
+      if (response.errorKind) {
+        return { ok: false, reason: 'unavailable', message: response.error };
+      }
+      return { ok: false, reason: 'not-found', message: response.error };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+  },
+
+  addGroupMember: async (groupId: string, userId: string) => {
+    try {
+      const response = await api.post<GroupMember>(`/social/groups/${groupId}/members`, { userId });
+      if (response.success && response.data) return response.data;
+    } catch {}
+    return null;
+  },
+
+  removeGroupMember: async (groupId: string, userId: string) => {
+    try {
+      const response = await api.delete(`/social/groups/${groupId}/members/${userId}`);
+      return !!response.success;
+    } catch {
+      return false;
     }
   },
 
