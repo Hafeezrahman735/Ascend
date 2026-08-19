@@ -1006,12 +1006,11 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
       });
       const followingIds = following.map((f) => f.followingId);
       const feedUserIds = [...followingIds, userId];
-      whereClause = {
-        OR: [
-          { visibility: 'public', authorId: { in: feedUserIds } },
-          { authorId: userId },
-        ],
-      };
+      // Public feed means PUBLIC. This used to OR in `{ authorId: userId }`
+      // unconditionally, which pulled the caller's own group-only posts into it —
+      // so something written to a private focus group surfaced on the open feed.
+      // Own public posts still appear: userId is in feedUserIds.
+      whereClause = { visibility: 'public', authorId: { in: feedUserIds } };
     }
     if (cursor) whereClause.createdAt = { lt: new Date(cursor) };
 

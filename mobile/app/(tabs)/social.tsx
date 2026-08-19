@@ -95,6 +95,43 @@ function GroupChip({ group, selected, onPress }: {
   );
 }
 
+/**
+ * The public feed as a chip, sitting first in the same row as the groups.
+ * Where a post goes and where you read it are the same set of destinations, so
+ * they belong in one strip. "No group selected" used to mean the public feed
+ * implicitly, with nothing on screen saying so.
+ */
+function PublicFeedChip({ selected, onPress }: { selected: boolean; onPress: () => void }) {
+  const Colors = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel="Public feed"
+      style={{ alignItems: 'center', marginRight: 12, width: 64 }}
+    >
+      <View style={{
+        width: 44, height: 44, borderRadius: 14,
+        backgroundColor: selected ? Colors.primary : Colors.surface,
+        borderWidth: selected ? 2 : 1,
+        borderColor: selected ? Colors.primary : Colors.border,
+        alignItems: 'center', justifyContent: 'center',
+        ...(selected ? { shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 8, elevation: 4 } : {}),
+      }}>
+        <Ionicons name="earth" size={22} color={selected ? '#fff' : Colors.subtext} />
+      </View>
+      <Text numberOfLines={1} style={{
+        color: selected ? Colors.primarySoft : Colors.subtext,
+        fontSize: 10, marginTop: 4, textAlign: 'center', width: 60,
+        fontWeight: selected ? '700' : '400',
+      }}>
+        Public
+      </Text>
+    </Pressable>
+  );
+}
+
 function JoinChip({ onPress }: { onPress: () => void }) {
   const Colors = useTheme();
   return (
@@ -643,6 +680,16 @@ function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId
           </Pressable>
         ))}
       </View>
+      {visibility === 'group' && studyGroups.length === 0 && (
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>
+          You are not in any focus groups yet. Join one to post there.
+        </Text>
+      )}
+      {visibility === 'group' && studyGroups.length > 0 && !targetGroupId && (
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 8 }}>
+          Pick a group to post in.
+        </Text>
+      )}
       {visibility === 'group' && studyGroups.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
           {studyGroups.map((g) => (
@@ -666,11 +713,13 @@ function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId
   );
 }
 
-function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
+function CreatePostSheet({ visible, onClose, onPost, studyGroups, defaultGroupId }: {
   visible: boolean;
   onClose: () => void;
   onPost: (draft: Partial<SocialPost>) => void;
   studyGroups: StudyGroup[];
+  /** The group being read right now, if any. Becomes the default destination. */
+  defaultGroupId: string | null;
 }) {
   const Colors = useTheme();
   const SURFACE = Colors.surface;
@@ -684,6 +733,14 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
   const [caption,       setCaption]       = useState('');
   const [visibility,    setVisibility]    = useState<'public' | 'group'>('public');
   const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
+
+  // Opening the composer while reading a group means you almost certainly want
+  // to post there. Preselect it, but leave both destinations switchable.
+  useEffect(() => {
+    if (!visible) return;
+    setVisibility(defaultGroupId ? 'group' : 'public');
+    setTargetGroupId(defaultGroupId);
+  }, [visible, defaultGroupId]);
 
   // Free post state
   const [freeText,             setFreeText]             = useState('');
@@ -720,9 +777,13 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
     }
   }, [visible, selectedType]);
 
+  // Choosing "Focus Group" without picking one sent groupId:null and the server
+  // answered 400. Block it in the composer instead of surfacing a raw failure.
+  const destinationMissing = visibility === 'group' && !targetGroupId;
+
   const reset = () => {
     setStep(1); setSelectedType(null); setCaption('');
-    setVisibility('public'); setTargetGroupId(null);
+    setVisibility(defaultGroupId ? 'group' : 'public'); setTargetGroupId(defaultGroupId);
     setFreeText(''); setSelectedTag(null); setPhotoUri(null);
     setShowStats(false); setCheckedStats([]);
     setTextError(false); setStatsError(false);
@@ -743,6 +804,7 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
   };
 
   const handlePost = () => {
+    if (destinationMissing) return;
     if (selectedType === 'free_post') {
       if (!freeText.trim()) { setTextError(true); return; }
       if (showStats && checkedStats.length === 0) { setStatsError(true); return; }
@@ -769,11 +831,11 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
     }
   };
 
-  const canPost = selectedType === 'free_post'
+  const canPost = !destinationMissing && (selectedType === 'free_post'
     ? freeText.trim().length > 0 && (!showStats || checkedStats.length > 0)
     : selectedType === 'achievement_unlock'
     ? !!selectedAchievementId
-    : true;
+    : true);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
@@ -1020,9 +1082,15 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups }: {
 
                 <Pressable
                   onPress={handlePost}
-                  style={{ backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}
+                  disabled={destinationMissing}
+                  style={{
+                    backgroundColor: destinationMissing ? Colors.inactive : Colors.primary,
+                    borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+                  }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Post</Text>
+                  <Text style={{
+                    color: destinationMissing ? Colors.subtext : '#fff', fontWeight: '700', fontSize: 15,
+                  }}>Post</Text>
                 </Pressable>
               </>
             )}
@@ -1083,6 +1151,11 @@ export default function SocialScreen() {
     social.fetchPosts(groupId ?? undefined);
   };
 
+  // Drives the context bar under the destination strip.
+  const selectedGroup = social.selectedGroupId
+    ? social.studyGroups.find((g) => g.id === social.selectedGroupId) ?? null
+    : null;
+
   const handleToggleReaction = useCallback((postId: string, emoji: string) => {
     social.toggleReaction(postId, emoji, currentUserId);
   }, [currentUserId]);
@@ -1118,22 +1191,50 @@ export default function SocialScreen() {
 
   const renderFeed = () => (
     <View style={{ flex: 1 }}>
-      {/* Study groups strip */}
-      <View style={{ paddingTop: 8, paddingBottom: 4 }}>
-        <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
-          <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>Focus Groups</Text>
-        </View>
+      {/* Destination strip: where you read is the same set of places you post to.
+          The heading is gone because the row is no longer only groups. */}
+      <View style={{ paddingTop: 12, paddingBottom: 4 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+          <PublicFeedChip
+            selected={social.selectedGroupId === null}
+            onPress={() => handleGroupSelect(null)}
+          />
           {social.studyGroups.map((g) => (
             <GroupChip
               key={g.id} group={g}
               selected={social.selectedGroupId === g.id}
-              onPress={() => handleGroupSelect(social.selectedGroupId === g.id ? null : g.id)}
+              onPress={() => handleGroupSelect(g.id)}
             />
           ))}
           <JoinChip onPress={() => router.push('/groups' as never)} />
         </ScrollView>
       </View>
+
+      {/* With a group selected, name it and offer the way into its details.
+          Tapping the chip filters; this is how you reach members and settings. */}
+      {selectedGroup && (
+        <Pressable
+          onPress={() => router.push(`/group/${selectedGroup.id}` as never)}
+          accessibilityRole="button"
+          accessibilityLabel={`Open details for ${selectedGroup.name}`}
+          style={{
+            flexDirection: 'row', alignItems: 'center',
+            marginHorizontal: 16, marginTop: 10, marginBottom: 2,
+            backgroundColor: SURFACE, borderRadius: 12,
+            borderWidth: 1, borderColor: BORDER_SOFT,
+            paddingHorizontal: 12, paddingVertical: 9,
+          }}
+        >
+          <Text style={{ fontSize: 15, marginRight: 8 }}>{selectedGroup.emoji}</Text>
+          <Text numberOfLines={1} style={{ flex: 1, color: Colors.textBright, fontSize: 13, fontWeight: '600' }}>
+            {selectedGroup.name}
+          </Text>
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginRight: 6 }}>
+            {selectedGroup.memberCount ?? selectedGroup.memberIds.length} members
+          </Text>
+          <Ionicons name="chevron-forward" size={15} color={Colors.subtext} />
+        </Pressable>
+      )}
 
       <FlatList
         data={social.posts}
@@ -1160,7 +1261,7 @@ export default function SocialScreen() {
               <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
                 {social.selectedGroupId
                   ? 'No posts in this group yet — be the first to share'
-                  : 'Follow people or join a group to see posts here'}
+                  : 'Follow people to see their public posts here'}
               </Text>
               {!social.selectedGroupId && (
                 <Pressable
@@ -1376,6 +1477,7 @@ export default function SocialScreen() {
         onClose={() => setShowCreatePost(false)}
         onPost={handleCreatePost}
         studyGroups={social.studyGroups}
+        defaultGroupId={social.selectedGroupId}
       />
     </SafeAreaView>
   );
