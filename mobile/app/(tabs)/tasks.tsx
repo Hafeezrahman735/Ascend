@@ -224,7 +224,7 @@ function BottomSheet({ visible, onClose, children, sheetHeight }: {
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
       <View style={{ flex: 1 }}>
         <TouchableWithoutFeedback onPress={onClose}>
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
         </TouchableWithoutFeedback>
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
           <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, minHeight: Math.min(sheetHeight, SHEET_MAX_H), maxHeight: SHEET_MAX_H }}>
@@ -423,7 +423,7 @@ function GoalPickerModal({ visible, goals, selectedGoalId, onSelect, onClose }: 
   const Colors = useTheme();
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40 }}>
         <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
           <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
@@ -568,7 +568,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
       <View style={{ flex: 1 }}>
         <TouchableWithoutFeedback onPress={onClose}>
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(2,2,12,0.62)' }]} />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(2,2,12,0.62)' }]} />
         </TouchableWithoutFeedback>
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           {/* marginBottom lifts the sheet to rest on top of the keyboard; the matching
@@ -820,7 +820,7 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
 
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'center' }} pointerEvents="box-none">
         <TouchableOpacity activeOpacity={1} style={{ marginHorizontal: 20 }}>
           <View style={{ backgroundColor: Colors.surface, borderRadius: 20, overflow: 'hidden' }}>
@@ -1150,7 +1150,7 @@ function DailyTargetModal({ visible, draft, onDraftChange, onCancel, onSave }: {
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 }}>
         <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Daily Session Goal</Text>
         <Text style={{ color: Colors.subtext, fontSize: 13, marginBottom: 24 }}>How many focus sessions do you want to complete each day?</Text>

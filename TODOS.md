@@ -30,3 +30,22 @@ Deferred work, with the context that produced it. Written by gstack plan reviews
       `_prisma_migrations` does not exist in the Railway database.
 - [ ] **Sentry + structured logging.** `morgan` is disabled in production; 84 route-level
       catch blocks swallow errors into `console.error`.
+
+## Carried from the Expo SDK 54 -> 57 upgrade
+
+- [ ] **Fix the 21 React Compiler findings and restore the rules to `error`.**
+      `eslint-config-expo@57` (React 19.2) added compiler-aware hook rules that flag
+      pre-existing patterns: `set-state-in-effect` (12), `refs` read during render (7),
+      `purity` / `Date.now()` during render (1), `immutability` (1). Concentrated in
+      `app/(tabs)/tasks.tsx` (10), `app/group/[id].tsx` (4), `app/(tabs)/social.tsx` (2),
+      `components/profile/AchievementsRow.tsx` (2). Held at `warn` in
+      `mobile/eslint.config.js` so the SDK bump stayed attributable; none are new
+      breakage. Restore to `error` once fixed.
+- [ ] **Bump Node to >= 24.3.0.** `react-native@0.86.2` and `@react-native/codegen@0.86.2`
+      declare `node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0`; the dev machine is on
+      v24.2.0 and npm prints EBADENGINE on every install.
+- [ ] **`@expo/vector-icons` is deprecated as of SDK 56.** Still on 15.0.3 and imported in
+      27 files. Migrate to the scoped `@react-native-vector-icons/*` packages via the
+      codemod. Not urgent — it still resolves on 57 — but it will not survive forever.
+- [ ] **iOS minimum is now 16.4** (was 15.1). Anyone still on iOS 15 drops off at the next
+      App Store build. Product call, not a technical one.
