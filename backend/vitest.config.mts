@@ -29,6 +29,11 @@ export default defineConfig({
           globalSetup: ['src/test/globalSetup.integration.ts'],
           pool: 'forks',
           poolOptions: { forks: { singleFork: true } },
+          // Files must not interleave: every test truncates shared tables in
+          // beforeEach, so a second file running concurrently wipes the first
+          // file's fixtures mid-test. singleFork limits processes, not file
+          // concurrency, so this is the flag that actually serialises them.
+          fileParallelism: false,
           // Schema push on the first run plus bcrypt hashing make these slower
           // than unit tests by an order of magnitude.
           testTimeout: 30_000,

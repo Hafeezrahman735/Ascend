@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { projectRecurring } from './recurringProjection';
 import { config } from '../../config';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError, handleZodError } from '../../lib/errors';
@@ -133,7 +134,7 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
     const { start, end } = parseRange(req);
     const bounds = rangeBounds(start, end);
 
-    const [tasks, habitInstances, goals, notes, connection] = await Promise.all([
+    const [tasks, recurringInstances, recurringTemplates, goals, notes, connection] = await Promise.all([
       // Standalone tasks: not recurring templates, not spawned instances.
       prisma.task.findMany({
         where: {
@@ -144,14 +145,22 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
           dueDate: bounds,
         },
       }),
-      // Habit instances spawned from a recurring template.
+      // Recurring instances in range. Archived ones are INCLUDED on purpose:
+      // spawn-recurring archives every instance that is not due today, so
+      // filtering them out erased all completed history from the calendar.
+      // They carry the completion state for days already past.
       prisma.task.findMany({
         where: {
           userId,
-          isArchived: false,
           parentTaskId: { not: null },
           dueDate: bounds,
         },
+      }),
+      // The recurring templates themselves, so the range can be projected onto
+      // days that have no instance row yet (future days, and non-scheduled days
+      // that were never spawned).
+      prisma.task.findMany({
+        where: { userId, isRecurring: true, isArchived: false },
       }),
       // TaskGoal deadlines. (The old session-target Goal model was removed; goals
       // are TaskGoal now, and `deadline` is a plain @db.Date calendar day.)
@@ -172,7 +181,36 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
 
     const items: { type: string; date: string; data: unknown }[] = [
       ...tasks.map((t) => ({ type: 'task', date: toDateKey(t.dueDate!), data: t })),
-      ...habitInstances.map((t) => ({ type: 'habit_instance', date: toDateKey(t.dueDate!), data: t })),
+      // Recurring tasks are projected across the range rather than read
+      // straight from the instance rows: a real row exists only for days
+      // already spawned, so the calendar could otherwise only ever show them
+      // on today. A day with no row yet is reported from the template, flagged
+      // isProjected so the client can tell "scheduled" from "actually done".
+      ...projectRecurring({
+        templates: recurringTemplates,
+        instances: recurringInstances,
+        start,
+        end,
+      }).map(({ date, template, instance }) => ({
+        type: 'habit_instance',
+        date,
+        data: instance
+          ? { ...instance, isProjected: false }
+          : {
+              // Deliberately narrow. A projected day has no row, so spreading the
+              // whole template shipped its description, tags and lifetime stats
+              // once per scheduled day — a 400-day range across 20 templates is
+              // 8000 of these. The calendar only reads title and isCompleted.
+              // Synthetic id is prefixed so it can never be mistaken for a real
+              // task id in a later write.
+              id: `projected:${template!.id}:${date}`,
+              title: template!.title,
+              parentTaskId: template!.id,
+              dueDate: new Date(`${date}T00:00:00.000Z`),
+              isCompleted: false,
+              isProjected: true,
+            },
+      })),
       ...goals.map((g) => ({ type: 'goal_deadline', date: toDateKey(g.deadline!), data: g })),
       ...notes.map((n) => ({ type: 'note', date: n.date as string, data: n })),
     ];
