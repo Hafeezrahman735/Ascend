@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
@@ -33,7 +34,12 @@ export function signAccessToken(payload: { userId: string; username: string }): 
 }
 
 export function signRefreshToken(payload: { userId: string; username: string }): string {
-  return jwt.sign(payload, config.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+  // jti makes every issued token unique. JWT iat is second-granularity, so
+  // without it two tokens signed in the same second are byte-identical: refresh
+  // rotation became a no-op (the old token IS the new one), and because
+  // RefreshToken.token is unique, two logins in the same second collided on
+  // insert and returned a 500. Found by the integration suite on its first run.
+  return jwt.sign({ ...payload, jti: randomUUID() }, config.JWT_REFRESH_SECRET, { expiresIn: '7d' });
 }
 
 export function verifyRefreshToken(token: string): JwtPayload {
