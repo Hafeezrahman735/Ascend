@@ -49,3 +49,19 @@ Deferred work, with the context that produced it. Written by gstack plan reviews
       codemod. Not urgent — it still resolves on 57 — but it will not survive forever.
 - [ ] **iOS minimum is now 16.4** (was 15.1). Anyone still on iOS 15 drops off at the next
       App Store build. Product call, not a technical one.
+
+## Carried from the dev-build migration
+
+- [ ] **Local Android loop is deferred, not rejected.** `npx expo run:android` would give
+      free, queue-less, ~2-5 minute native rebuilds, but the machine is not close: `java
+      -version` is **14.0.2** (Gradle needs JDK 17+) and both `ANDROID_HOME` and
+      `ANDROID_SDK_ROOT` are unset. Realistically Android Studio + JDK + env setup is half
+      a day for ~8-12 GB on disk. Worth doing if iOS build-queue waits become the
+      bottleneck; it buys nothing for Live Activities, which are iPhone-only.
+- [ ] **`docs/README.md` still has stale references** beyond the ones fixed here: it
+      mentions `mobile/app.config.ts`, `tsconfig.base.json`, `turbo.json`, a root
+      `package.json` and `.eslintrc.js` (none exist), and states the bundle id is
+      `com.ascend.app` (actual: `com.hafeezrahman.ascend`). Wrong but inert — a doc audit,
+      not part of the build work.
+- [ ] **`eas-cli` is 20.3.0 locally; 22.2.0 is current.** `eas.json` only requires
+      `>= 20.3.0`, so this is not blocking.

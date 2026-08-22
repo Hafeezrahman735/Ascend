@@ -6,7 +6,7 @@ A full-stack focus & accountability app. Track focus sessions with a Pomodoro ti
 
 | Layer | Technology |
 |-------|-----------|
-| Mobile framework | React Native 0.81.5 + Expo SDK 54 |
+| Mobile framework | React Native 0.86.2 + Expo SDK 57 |
 | Navigation | Expo Router 6 (file-based, React Navigation 7 under the hood) |
 | Styling | NativeWind v4 (Tailwind CSS for React Native) |
 | Animations | React Native Reanimated 4 with Worklets |
@@ -271,8 +271,10 @@ Timer state lives in a **server-side in-memory Map** (`Map<userId, TimerState>`)
 - Node.js 20+
 - PostgreSQL 14+ running locally
 - npm or pnpm
-- Expo CLI: `npm install -g expo-cli`
-- Expo Go app on phone (for testing)
+- EAS CLI: `npm install -g eas-cli`
+- A **development build** installed on your device (see Mobile below). Expo Go
+  will not work: it cannot run notifications for this app, and the Live Activity
+  work adds custom native code Expo Go cannot host.
 
 ### Database
 
@@ -307,10 +309,39 @@ npm run dev              # starts on port 3001
 ```bash
 cd mobile
 npm install
-npx expo start           # starts Metro bundler
+npm run dev              # Metro, targeting the development build
 ```
 
-Mobile env variables can be set in `mobile/.env` or will default to `http://192.168.1.100:3001` (update `constants/Config.ts` defaults for your LAN IP).
+The app runs in a **development build**, not Expo Go. Build one once per native
+change:
+
+```bash
+npm run build:dev:ios        # eas build --platform ios --profile development
+npm run build:dev:android    # eas build --platform android --profile development
+```
+
+Register a device with `eas device:create` BEFORE the first iOS build — the
+ad-hoc provisioning profile pins a UDID allowlist at build time.
+
+Rebuild only when native things change: adding or removing a native dependency,
+editing `app.json` plugins / `infoPlist` / permissions / bundle id, or bumping
+the Expo SDK. Everything else is Metro fast refresh.
+
+### Environment variables
+
+`EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_WS_URL` and `EXPO_PUBLIC_SOCIAL_WS_URL` are
+required — `constants/Config.ts` throws at startup if any is missing, naming the
+variable. There are no fallbacks by design; the previous defaults silently routed
+`preview` builds at the production backend.
+
+- **Local dev** reads `mobile/.env` / `mobile/.env.local`.
+- **EAS build and update** read the EAS environment named by the build profile in
+  `eas.json` (`development` and `preview` -> staging, `production` -> production).
+  `.env` files are never uploaded to EAS. Inspect them with
+  `eas env:list --environment development`.
+
+Because `EXPO_PUBLIC_*` are inlined at bundle time, changing a value needs a Metro
+restart with a cleared cache: `npm run dev:clear`.
 
 ## Placeholders Checklist
 
@@ -332,10 +363,10 @@ npm run dev
 
 # Terminal 2: Mobile
 cd mobile
-npx expo start --clear
+npm run dev:clear
 
 # On code change, the backend auto-restarts via tsx watch.
-# The mobile hot-reloads via Metro.
+# The mobile hot-reloads via Metro into the development build.
 ```
 
 ### Database changes
