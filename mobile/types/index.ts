@@ -175,6 +175,12 @@ export interface Task {
   dueDate?: string | null;
   tags: string[];
   estimatedMinutes?: number | null;
+  // Scheduled time of day, as minutes from LOCAL midnight (0-1439). Both set or
+  // both null — the backend rejects a half-open pair. Not an instant on purpose:
+  // 09:00 must stay 09:00 across a timezone change, matching dueDate’s
+  // “a day is a day” contract. Untimed tasks are the common case.
+  startMinutes?: number | null;
+  endMinutes?: number | null;
   priority: 'low' | 'medium' | 'high' | 'urgent';
   isArchived: boolean;
   isCompleted: boolean;

@@ -84,6 +84,76 @@ export function itemIsDone(item: CalendarItem): boolean {
   return false;
 }
 
+// ── Time of day ───────────────────────────────────────────────
+
+export const MINUTES_IN_DAY = 1440;
+
+/** A block on the day grid: minutes from local midnight, end exclusive. */
+export interface TimeRange { start: number; end: number }
+
+/** Minutes from local midnight for an instant, in the device’s own timezone. */
+function localMinutes(d: Date): number {
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+/**
+ * The slot an item occupies on the day grid, or null when it has no time and
+ * therefore belongs in the agenda below rather than on the timeline.
+ *
+ * Two clocks meet here. Tasks carry minutes-from-local-midnight, which are
+ * already wall-clock. External calendar events carry real ISO instants, so they
+ * are converted through the device’s timezone — which is right for them: a
+ * meeting at 14:00 UTC genuinely moves when you fly.
+ */
+export function itemTimeRange(item: CalendarItem): TimeRange | null {
+  if (item.type === 'task' || item.type === 'habit_instance') {
+    const task = item.data as Task;
+    if (task.startMinutes == null || task.endMinutes == null) return null;
+    return { start: task.startMinutes, end: task.endMinutes };
+  }
+
+  if (item.type === 'external_google' || item.type === 'external_apple') {
+    const event = item.data as GoogleCalendarEvent;
+    if (event.isAllDay || !event.startTime) return null;
+
+    const startedAt = new Date(event.startTime);
+    const start = localMinutes(startedAt);
+    const endedAt = event.endTime ? new Date(event.endTime) : null;
+
+    // An event running past midnight is clamped to the end of this day rather
+    // than drawn taller than the grid it sits in.
+    let end = endedAt && isSameLocalDay(endedAt, startedAt)
+      ? localMinutes(endedAt)
+      : MINUTES_IN_DAY;
+    // Zero-length and inverted events still need something visible to tap.
+    if (end <= start) end = Math.min(start + 30, MINUTES_IN_DAY);
+    return { start, end };
+  }
+
+  return null;
+}
+
+/**
+ * '9:00 AM' in the user’s locale. Built on a fixed calendar date so it stays a
+ * pure function — formatting must not depend on when it is called.
+ */
+export function formatMinutes(minutes: number): string {
+  const clamped = Math.max(0, Math.min(MINUTES_IN_DAY - 1, Math.round(minutes)));
+  const d = new Date(2000, 0, 1, Math.floor(clamped / 60), clamped % 60);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/** '9:00 AM – 10:30 AM', for a row that has room for the whole span. */
+export function formatTimeRange(range: TimeRange): string {
+  return `${formatMinutes(range.start)} – ${formatMinutes(range.end)}`;
+}
+
 export function formatSeconds(total: number): string {
   const h = Math.floor(total / 3600);
   const m = Math.round((total % 3600) / 60);

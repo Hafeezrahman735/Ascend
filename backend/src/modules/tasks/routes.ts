@@ -21,12 +21,47 @@ function dayBounds(isoDate: string): { start: Date; end: Date } {
   return { start, end };
 }
 
+/** Minutes from local midnight. 0 = 00:00, 1439 = 23:59. */
+const timeOfDay = z.number().int().min(0).max(1439);
+
+/**
+ * Validates a task’s scheduled time-of-day pair. Returns an error message, or
+ * null when the pair is valid.
+ *
+ * Three rules, each for a reason:
+ *  - a time needs a day   — 09:00 with no dueDate cannot be placed anywhere
+ *  - both ends or neither — the timeline draws blocks, and a block needs a height
+ *  - end after start      — a zero or negative interval has nothing to draw
+ *
+ * Recurring TEMPLATES are exempt from the first rule. A template is never drawn
+ * on a calendar — it is hidden from GET /tasks and the calendar projects its
+ * instances instead — so its schedule is the recurrence, not a single day. The
+ * instances it spawns each get their own dueDate, and inherit the time slot.
+ */
+function validateSchedule(
+  startMinutes: number | null | undefined,
+  endMinutes: number | null | undefined,
+  dueDate: Date | null,
+  isRecurringTemplate = false,
+): string | null {
+  const start = startMinutes ?? null;
+  const end = endMinutes ?? null;
+  if (start === null && end === null) return null;
+  if (!dueDate && !isRecurringTemplate) return 'A scheduled time needs a due date';
+  if (start === null || end === null) return 'A scheduled task needs both a start and an end time';
+  if (end <= start) return 'End time must be after start time';
+  return null;
+}
+
 const createTaskSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   tags: z.array(z.string().max(30)).max(10).optional().default([]),
   estimatedMinutes: z.number().int().min(1).optional().nullable(),
+  // Minutes from local midnight. Both or neither — see validateSchedule.
+  startMinutes: timeOfDay.optional().nullable(),
+  endMinutes: timeOfDay.optional().nullable(),
   priority: z.enum(PRIORITY_VALUES).optional().default('medium'),
   isRecurring: z.boolean().optional().default(false),
   recurringDays: z.array(z.enum(DAY_VALUES)).max(7).optional().default([]),
@@ -44,6 +79,9 @@ const updateTaskSchema = z.object({
   dueDate: z.string().optional().nullable(),
   tags: z.array(z.string().max(30)).max(10).optional(),
   estimatedMinutes: z.number().int().min(1).optional().nullable(),
+  // Minutes from local midnight. Both or neither — see validateSchedule.
+  startMinutes: timeOfDay.optional().nullable(),
+  endMinutes: timeOfDay.optional().nullable(),
   priority: z.enum(PRIORITY_VALUES).optional(),
   isCompleted: z.boolean().optional(),
   completedAt: z.string().optional().nullable(),
@@ -67,6 +105,17 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
+      const scheduleError = validateSchedule(
+        data.startMinutes,
+        data.endMinutes,
+        data.dueDate ? new Date(data.dueDate) : null,
+        data.isRecurring,
+      );
+      if (scheduleError) {
+        res.status(400).json({ success: false, error: scheduleError });
+        return;
+      }
+
       const task = await prisma.task.create({
         data: {
           userId,
@@ -75,6 +124,8 @@ export function setupTaskRoutes(router: Router): void {
           dueDate: data.dueDate ? new Date(data.dueDate) : null,
           tags: data.tags,
           estimatedMinutes: data.estimatedMinutes || null,
+          startMinutes: data.startMinutes ?? null,
+          endMinutes: data.endMinutes ?? null,
           priority: data.priority,
           isRecurring: data.isRecurring,
           recurringDays: data.recurringDays,
@@ -97,6 +148,8 @@ export function setupTaskRoutes(router: Router): void {
               description: data.description || null,
               tags: data.tags,
               estimatedMinutes: data.estimatedMinutes || null,
+              startMinutes: data.startMinutes ?? null,
+              endMinutes: data.endMinutes ?? null,
               priority: data.priority,
               dueDate: new Date(today),
               parentTaskId: task.id,
@@ -293,6 +346,9 @@ export function setupTaskRoutes(router: Router): void {
             description: template.description,
             tags: template.tags,
             estimatedMinutes: template.estimatedMinutes,
+            // The time slot is part of the habit: "gym at 07:00" must spawn at 07:00.
+            startMinutes: template.startMinutes,
+            endMinutes: template.endMinutes,
             priority: template.priority,
             dueDate: new Date(today),
             parentTaskId: template.id,
@@ -481,12 +537,29 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
+      // Validated against the MERGED row rather than the patch alone: a PATCH
+      // that only clears dueDate would otherwise leave a 09:00-10:00 task
+      // floating on no day, and one that clears only startMinutes would leave a
+      // block with an end but no beginning.
+      const scheduleError = validateSchedule(
+        data.startMinutes !== undefined ? data.startMinutes : existing.startMinutes,
+        data.endMinutes !== undefined ? data.endMinutes : existing.endMinutes,
+        data.dueDate !== undefined ? (data.dueDate ? new Date(data.dueDate) : null) : existing.dueDate,
+        data.isRecurring !== undefined ? data.isRecurring : existing.isRecurring,
+      );
+      if (scheduleError) {
+        res.status(400).json({ success: false, error: scheduleError });
+        return;
+      }
+
       const updateData: Record<string, unknown> = {};
       if (data.title !== undefined) updateData.title = data.title;
       if (data.description !== undefined) updateData.description = data.description;
       if (data.dueDate !== undefined) updateData.dueDate = data.dueDate ? new Date(data.dueDate) : null;
       if (data.tags !== undefined) updateData.tags = data.tags;
       if (data.estimatedMinutes !== undefined) updateData.estimatedMinutes = data.estimatedMinutes;
+      if (data.startMinutes !== undefined) updateData.startMinutes = data.startMinutes ?? null;
+      if (data.endMinutes   !== undefined) updateData.endMinutes   = data.endMinutes ?? null;
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.isCompleted !== undefined) updateData.isCompleted = data.isCompleted;
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;

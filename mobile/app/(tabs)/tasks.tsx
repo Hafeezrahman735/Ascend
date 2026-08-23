@@ -456,6 +456,8 @@ function GoalPickerModal({ visible, goals, selectedGoalId, onSelect, onClose }: 
 type FormSaveData = {
   title: string; description?: string | null; dueDate?: string | null;
   tags?: string[]; estimatedMinutes?: number | null;
+  // Minutes from local midnight, or null for an untimed task.
+  startMinutes?: number | null; endMinutes?: number | null;
   priority?: 'low' | 'medium' | 'high' | 'urgent'; taskGoalId?: string | null;
   isRecurring?: boolean; recurringDays?: DayOfWeek[];
 };
@@ -478,6 +480,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGoalPicker, setShowGoalPicker] = useState(false);
+  const [startMinutes, setStartMinutes] = useState<number | null>(null);
+  const [endMinutes, setEndMinutes] = useState<number | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
   const [titleError, setTitleError] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringDays, setRecurringDays] = useState<DayOfWeek[]>([]); // empty = every day
@@ -510,6 +515,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       setIsRecurring(task?.isRecurring ?? false);
       setRecurringDays(task?.recurringDays ?? []);
       setEditingTemplate(null);
+      setStartMinutes(task?.startMinutes ?? null);
+      setEndMinutes(task?.endMinutes ?? null);
+      setShowTimePicker(null);
     }
   }, [visible, task]);
 
@@ -535,6 +543,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
 
   const handleSave = () => {
     if (!title.trim()) { setTitleError(true); return; }
+    // The backend rejects these too; catching it here keeps the sheet open
+    // with the offending field in view instead of failing after it closes.
+    if (timeError) return;
     if (task) {
       const update: FormSaveData = { title: title.trim() };
       const newDesc = description.trim() || null;
@@ -544,6 +555,8 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       if (JSON.stringify([...tags].sort()) !== JSON.stringify([...(task.tags ?? [])].sort())) update.tags = tags;
       const newEst = estimatedMinutes > 0 ? estimatedMinutes : null;
       if (newEst !== (task.estimatedMinutes ?? null)) update.estimatedMinutes = newEst;
+      if (startMinutes !== (task.startMinutes ?? null)) update.startMinutes = startMinutes;
+      if (endMinutes !== (task.endMinutes ?? null)) update.endMinutes = endMinutes;
       if (priority !== task.priority) update.priority = priority;
       if (taskGoalId !== (task.taskGoalId ?? null)) update.taskGoalId = taskGoalId;
       // Always carry recurring settings — the screen routes them to the template.
@@ -551,7 +564,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       update.recurringDays = recurringDays;
       onSave(update);
     } else {
-      onSave({ title: title.trim(), description: description.trim() || undefined, dueDate: dueDate || undefined, tags, estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : undefined, priority, taskGoalId, isRecurring, recurringDays });
+      onSave({ title: title.trim(), description: description.trim() || undefined, dueDate: dueDate || undefined, tags, estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : undefined, startMinutes, endMinutes, priority, taskGoalId, isRecurring, recurringDays });
     }
   };
 
@@ -560,6 +573,37 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const handleDateChange = (_event: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === 'android') setShowDatePicker(false);
     if (date) setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
+  };
+
+  // Both ends or neither, and the block must move forwards — the same rules the
+  // server enforces, mirrored here so the sheet can explain itself.
+  const timeError = startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes
+    ? 'End time must be after the start time'
+    : null;
+
+  /** A fixed calendar date carrying the time, which is all the picker reads. */
+  const minutesToDate = (minutes: number | null) => {
+    const m = minutes ?? 9 * 60; // an unset picker opens at 9am, not midnight
+    return new Date(2000, 0, 1, Math.floor(m / 60), m % 60);
+  };
+
+  const formatClock = (minutes: number) =>
+    minutesToDate(minutes).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  const clearSchedule = () => { setStartMinutes(null); setEndMinutes(null); setShowTimePicker(null); };
+
+  const handleTimeChange = (_event: DateTimePickerEvent, date?: Date) => {
+    const editing = showTimePicker;
+    if (Platform.OS === 'android') setShowTimePicker(null);
+    if (!date || !editing) return;
+    const picked = date.getHours() * 60 + date.getMinutes();
+    if (editing === 'end') { setEndMinutes(picked); return; }
+    setStartMinutes(picked);
+    // First time only: derive an end so a single tap already yields a valid
+    // block. Uses the estimate when there is one, an hour when there is not.
+    setEndMinutes((prev) => prev === null
+      ? Math.min(1439, picked + (estimatedMinutes > 0 ? estimatedMinutes : 60))
+      : prev);
   };
 
   const estSessions = estimatedMinutes > 0 && sessionLengthMinutes > 0 ? Math.max(1, Math.round(estimatedMinutes / sessionLengthMinutes)) : 0;
@@ -677,7 +721,8 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                         <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
                         <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => setDueDate('')}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
+                      {/* A time cannot outlive its day — the server rejects that pair. */}
+                      <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
                     </View>
                   ) : (
                     <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
@@ -701,6 +746,87 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                 </View>
               </View>
 
+              {/* scheduled time — drives the Day timeline in the calendar */}
+              <View style={{ marginBottom: 18 }}>
+                <Text style={monoLabel}>TIME</Text>
+                {!dueDate ? (
+                  <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+                    Pick a due date first — a time needs a day to sit on.
+                  </Text>
+                ) : (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => setShowTimePicker('start')}
+                        accessibilityRole="button"
+                        accessibilityLabel={startMinutes === null ? 'Set start time' : `Start time, ${formatClock(startMinutes)}`}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
+                          paddingHorizontal: 12, paddingVertical: 9,
+                          backgroundColor: startMinutes === null ? Colors.raised : Colors.primaryDim,
+                        }}
+                      >
+                        <Ionicons name="time-outline" size={14} color={startMinutes === null ? Colors.subtext : Colors.primarySoft} />
+                        <Text style={{ fontSize: 12.5, fontWeight: '600', color: startMinutes === null ? Colors.subtext : Colors.primarySoft }}>
+                          {startMinutes === null ? 'Start' : formatClock(startMinutes)}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <Ionicons name="arrow-forward" size={13} color={Colors.subtext} />
+
+                      <TouchableOpacity
+                        disabled={startMinutes === null}
+                        onPress={() => setShowTimePicker('end')}
+                        accessibilityRole="button"
+                        accessibilityLabel={endMinutes === null ? 'Set end time' : `End time, ${formatClock(endMinutes)}`}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
+                          paddingHorizontal: 12, paddingVertical: 9,
+                          backgroundColor: endMinutes === null ? Colors.raised : Colors.primaryDim,
+                          opacity: startMinutes === null ? 0.4 : 1,
+                        }}
+                      >
+                        <Ionicons name="time-outline" size={14} color={endMinutes === null ? Colors.subtext : Colors.primarySoft} />
+                        <Text style={{ fontSize: 12.5, fontWeight: '600', color: endMinutes === null ? Colors.subtext : Colors.primarySoft }}>
+                          {endMinutes === null ? 'End' : formatClock(endMinutes)}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {(startMinutes !== null || endMinutes !== null) && (
+                        <TouchableOpacity onPress={clearSchedule} accessibilityRole="button" accessibilityLabel="Clear time">
+                          <Ionicons name="close-circle" size={16} color={Colors.subtext} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {timeError && (
+                      <Text style={{ color: ROSE, fontSize: 11.5, marginTop: 7 }}>{timeError}</Text>
+                    )}
+
+                    {showTimePicker && (
+                      <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginTop: 10, alignItems: 'center', overflow: 'hidden' }}>
+                        <DateTimePicker
+                          value={minutesToDate(showTimePicker === 'start' ? startMinutes : endMinutes)}
+                          mode="time"
+                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                          onChange={handleTimeChange}
+                          themeVariant={isDark ? 'dark' : 'light'}
+                          accentColor={Colors.primary}
+                        />
+                        {Platform.OS === 'ios' && (
+                          <TouchableOpacity
+                            onPress={() => setShowTimePicker(null)}
+                            accessibilityRole="button"
+                            style={{ paddingVertical: 10, alignSelf: 'stretch', alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '700' }}>Done</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
               {/* category editor (revealed by "+ Add") */}
               {tagEditorOpen && (
                 <View style={{ marginBottom: 18 }}>
@@ -753,7 +879,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
               <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="Any notes for this task…" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
 
               {/* create / save */}
-              <TouchableOpacity onPress={handleSave} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15 }}>
+              <TouchableOpacity onPress={handleSave} disabled={!!timeError} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: timeError ? 0.5 : 1 }}>
                 <Ionicons name={task ? 'checkmark' : 'add'} size={16} color="#fff" />
                 <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{task ? 'Save changes' : 'Create task'}</Text>
               </TouchableOpacity>
@@ -1960,6 +2086,10 @@ export default function TasksScreen() {
           estimatedMinutes: rest.estimatedMinutes,
           priority: rest.priority,
           tags: rest.tags,
+          // The time slot belongs to the habit, so future spawns inherit the
+          // change rather than only today’s instance moving.
+          startMinutes: rest.startMinutes,
+          endMinutes: rest.endMinutes,
         });
         await useTaskStore.getState().fetchRecurringTemplates();
         // Still apply edits to the visible instance itself.

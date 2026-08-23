@@ -3,12 +3,17 @@ import { View, Text, TouchableOpacity, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem, CalendarItemType, Note } from '../../types';
-import { getCalendarStyles, DAY_GROUP_ORDER, TYPE_META, typeColor } from './shared';
+import { getCalendarStyles, DAY_GROUP_ORDER, TYPE_META, typeColor, itemTimeRange } from './shared';
 import ItemRow from './ItemRow';
+import TimelineView from './TimelineView';
 
 /**
- * Full agenda for one day, grouped by item type, with the notes/to-do section
- * at the bottom — schedule first, then what you jotted down about it.
+ * Full agenda for one day: the hour grid first, then everything that has no time
+ * on it, then the notes/to-do section — schedule, backlog, then what you jotted
+ * down about it.
+ *
+ * The split is by whether an item carries a time, not by its type, so an item
+ * appears in exactly one of the two places and never in both.
  */
 export default function DayView({
   dateKey,
@@ -31,111 +36,137 @@ export default function DayView({
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
   const dayItems = useMemo(() => itemsByDate.get(dateKey) ?? [], [itemsByDate, dateKey]);
 
+  // Anything with a time is drawn on the grid; the agenda below takes the rest.
+  const untimedItems = useMemo(
+    () => dayItems.filter((item) => itemTimeRange(item) === null),
+    [dayItems],
+  );
+
   const grouped = useMemo(() => {
     const map = new Map<CalendarItemType, CalendarItem[]>();
-    for (const item of dayItems) {
+    for (const item of untimedItems) {
       const bucket = map.get(item.type);
       if (bucket) bucket.push(item);
       else map.set(item.type, [item]);
     }
     return map;
-  }, [dayItems]);
+  }, [untimedItems]);
 
   const notes = grouped.get('note') ?? [];
-  const hasScheduled = dayItems.some((i) => i.type !== 'note');
+  const hasTimed = useMemo(() => dayItems.some((item) => itemTimeRange(item) !== null), [dayItems]);
+  // Notes are not "on the day" in the scheduling sense — a day holding only notes
+  // still reads as empty.
+  const hasAnything = useMemo(() => dayItems.some((item) => item.type !== 'note'), [dayItems]);
+  const hasUnscheduled = untimedItems.some((item) => item.type !== 'note');
 
   return (
-    <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-      {!hasScheduled && (
-        <View style={styles.emptyBox}>
-          <Ionicons name="calendar-clear-outline" size={26} color={Colors.subtext} />
-          <Text style={{ color: Colors.subtext, marginTop: 6, fontSize: 13 }}>
-            Nothing on this day. Good day to get ahead.
-          </Text>
-        </View>
-      )}
+    <View style={{ paddingTop: 6 }}>
+      {/* When the day is completely empty the box below says so; a second empty
+          prompt from the timeline would just be noise. */}
+      {hasAnything && <TimelineView dateKey={dateKey} items={dayItems} />}
 
-      {DAY_GROUP_ORDER.filter((t) => t !== 'note').map((type) => {
-        const group = grouped.get(type);
-        if (!group || group.length === 0) return null;
-        return (
-          <View key={type} style={{ marginBottom: 18 }}>
-            <View style={styles.groupHeader}>
-              <Ionicons name={TYPE_META[type].icon} size={14} color={typeColor(type, Colors)} />
-              <Text style={styles.groupTitle}>{TYPE_META[type].label}</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 11 }}>{group.length}</Text>
-            </View>
-            {group.map((item, idx) => <ItemRow key={`${type}-${idx}`} item={item} />)}
+      <View style={{ paddingHorizontal: 16 }}>
+        {!hasAnything && (
+          <View style={styles.emptyBox}>
+            <Ionicons name="calendar-clear-outline" size={26} color={Colors.subtext} />
+            <Text style={{ color: Colors.subtext, marginTop: 6, fontSize: 13 }}>
+              Nothing on this day. Good day to get ahead.
+            </Text>
           </View>
-        );
-      })}
+        )}
 
-      <View style={{ marginTop: 4 }}>
-        <View style={styles.groupHeader}>
-          <Ionicons name={TYPE_META.note.icon} size={14} color={Colors.subtext} />
-          <Text style={styles.groupTitle}>{TYPE_META.note.label}</Text>
-        </View>
+        {/* Only worth a heading when there is a grid above to distinguish it from. */}
+        {hasTimed && hasUnscheduled && (
+          <Text style={{
+            color: Colors.subtext, fontSize: 10, fontWeight: '700',
+            letterSpacing: 1, marginBottom: 10,
+          }}>
+            UNSCHEDULED
+          </Text>
+        )}
 
-        <View style={styles.addRow}>
-          <TextInput
-            value={noteDraft}
-            onChangeText={onNoteDraftChange}
-            placeholder="Add a note or to-do…"
-            placeholderTextColor={Colors.subtext}
-            style={styles.addInput}
-            onSubmitEditing={onAddNote}
-            returnKeyType="done"
-            accessibilityLabel="New note"
-          />
-          <TouchableOpacity
-            onPress={onAddNote}
-            disabled={!noteDraft.trim()}
-            style={[styles.addBtn, { opacity: noteDraft.trim() ? 1 : 0.4 }]}
-            accessibilityRole="button"
-            accessibilityLabel="Add note"
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Add</Text>
-          </TouchableOpacity>
-        </View>
-
-        {notes.map((item) => {
-          const note = item.data as Note;
+        {DAY_GROUP_ORDER.filter((t) => t !== 'note').map((type) => {
+          const group = grouped.get(type);
+          if (!group || group.length === 0) return null;
           return (
-            <TouchableOpacity
-              key={note.id}
-              onPress={() => note.isTodo && onToggleNote(note)}
-              onLongPress={() => onDeleteNote(note)}
-              delayLongPress={400}
-              style={styles.noteRow}
-              accessibilityRole={note.isTodo ? 'checkbox' : 'text'}
-              accessibilityState={note.isTodo ? { checked: note.isCompleted } : undefined}
-            >
-              {note.isTodo && (
-                <Ionicons
-                  name={note.isCompleted ? 'checkbox' : 'square-outline'}
-                  size={17}
-                  color={note.isCompleted ? Colors.accent : Colors.subtext}
-                />
-              )}
-              <Text
-                style={{
-                  color: note.isCompleted ? Colors.subtext : Colors.text,
-                  fontSize: 13,
-                  flex: 1,
-                  textDecorationLine: note.isCompleted ? 'line-through' : 'none',
-                }}
-              >
-                {note.content}
-              </Text>
-            </TouchableOpacity>
+            <View key={type} style={{ marginBottom: 18 }}>
+              <View style={styles.groupHeader}>
+                <Ionicons name={TYPE_META[type].icon} size={14} color={typeColor(type, Colors)} />
+                <Text style={styles.groupTitle}>{TYPE_META[type].label}</Text>
+                <Text style={{ color: Colors.subtext, fontSize: 11 }}>{group.length}</Text>
+              </View>
+              {group.map((item, idx) => <ItemRow key={`${type}-${idx}`} item={item} />)}
+            </View>
           );
         })}
 
-        {notes.length > 0 && (
-          <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 6 }}>
-            Long-press a note to delete
-          </Text>
-        )}
+        <View style={{ marginTop: 4 }}>
+          <View style={styles.groupHeader}>
+            <Ionicons name={TYPE_META.note.icon} size={14} color={Colors.subtext} />
+            <Text style={styles.groupTitle}>{TYPE_META.note.label}</Text>
+          </View>
+
+          <View style={styles.addRow}>
+            <TextInput
+              value={noteDraft}
+              onChangeText={onNoteDraftChange}
+              placeholder="Add a note or to-do…"
+              placeholderTextColor={Colors.subtext}
+              style={styles.addInput}
+              onSubmitEditing={onAddNote}
+              returnKeyType="done"
+              accessibilityLabel="New note"
+            />
+            <TouchableOpacity
+              onPress={onAddNote}
+              disabled={!noteDraft.trim()}
+              style={[styles.addBtn, { opacity: noteDraft.trim() ? 1 : 0.4 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Add note"
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Add</Text>
+            </TouchableOpacity>
+          </View>
+
+          {notes.map((item) => {
+            const note = item.data as Note;
+            return (
+              <TouchableOpacity
+                key={note.id}
+                onPress={() => note.isTodo && onToggleNote(note)}
+                onLongPress={() => onDeleteNote(note)}
+                delayLongPress={400}
+                style={styles.noteRow}
+                accessibilityRole={note.isTodo ? 'checkbox' : 'text'}
+                accessibilityState={note.isTodo ? { checked: note.isCompleted } : undefined}
+              >
+                {note.isTodo && (
+                  <Ionicons
+                    name={note.isCompleted ? 'checkbox' : 'square-outline'}
+                    size={17}
+                    color={note.isCompleted ? Colors.accent : Colors.subtext}
+                  />
+                )}
+                <Text
+                  style={{
+                    color: note.isCompleted ? Colors.subtext : Colors.text,
+                    fontSize: 13,
+                    flex: 1,
+                    textDecorationLine: note.isCompleted ? 'line-through' : 'none',
+                  }}
+                >
+                  {note.content}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {notes.length > 0 && (
+            <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 6 }}>
+              Long-press a note to delete
+            </Text>
+          )}
+        </View>
       </View>
     </View>
   );

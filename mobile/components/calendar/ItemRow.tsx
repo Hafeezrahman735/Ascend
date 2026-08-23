@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import { View, Text } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
-import type { CalendarItem, GoogleCalendarEvent, TaskGoal } from '../../types';
+import type { CalendarItem, TaskGoal } from '../../types';
 import { formatDeadlineLabel } from '../../utils/date';
-import { getCalendarStyles, itemIsDone, itemTitle, typeColor } from './shared';
+import {
+  getCalendarStyles, itemIsDone, itemTimeRange, itemTitle, formatMinutes, typeColor,
+} from './shared';
 
 /**
  * A single calendar entry. Used by every view so a task, habit or external event
@@ -15,13 +17,15 @@ export default function ItemRow({ item, compact }: { item: CalendarItem; compact
   const done = itemIsDone(item);
   const color = typeColor(item.type, Colors);
 
-  // External events show their start time; goal deadlines show urgency instead.
+  // Anything with a slot shows when it starts — a scheduled task and an external
+  // event read the same way. Untimed items fall back to whatever else is worth
+  // saying: all-day for external events, urgency for a goal deadline.
   let meta: string | null = null;
-  if (item.type === 'external_google' || item.type === 'external_apple') {
-    const event = item.data as GoogleCalendarEvent;
-    meta = event.isAllDay || !event.startTime
-      ? 'All day'
-      : new Date(event.startTime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const range = itemTimeRange(item);
+  if (range) {
+    meta = formatMinutes(range.start);
+  } else if (item.type === 'external_google' || item.type === 'external_apple') {
+    meta = 'All day';
   } else if (item.type === 'goal_deadline') {
     meta = formatDeadlineLabel((item.data as TaskGoal).deadline);
   }

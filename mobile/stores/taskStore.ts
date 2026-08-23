@@ -42,6 +42,9 @@ function normalizeTask(t: Task): Task {
     recurringDays: t.recurringDays ?? [],
     lastSpawnedDate: t.lastSpawnedDate ?? null,
     parentTaskId: t.parentTaskId ?? null,
+    // Tasks cached by an older build predate these, so undefined is expected.
+    startMinutes: t.startMinutes ?? null,
+    endMinutes: t.endMinutes ?? null,
     // Template lifetime stats:
     currentStreak: t.currentStreak ?? 0,
     longestStreak: t.longestStreak ?? 0,
@@ -90,6 +93,10 @@ export interface TaskCreateInput {
   dueDate?: string | null;
   tags?: string[];
   estimatedMinutes?: number | null;
+  // Minutes from local midnight. Send both or neither — the backend rejects a
+  // half-open pair, and null on either clears the slot.
+  startMinutes?: number | null;
+  endMinutes?: number | null;
   priority?: 'low' | 'medium' | 'high' | 'urgent';
   isRecurring?: boolean;
   recurringDays?: DayOfWeek[];
@@ -102,6 +109,10 @@ export interface TaskUpdateInput {
   dueDate?: string | null;
   tags?: string[];
   estimatedMinutes?: number | null;
+  // Minutes from local midnight. Send both or neither — the backend rejects a
+  // half-open pair, and null on either clears the slot.
+  startMinutes?: number | null;
+  endMinutes?: number | null;
   priority?: 'low' | 'medium' | 'high' | 'urgent';
   isCompleted?: boolean;
   completedAt?: string | null;
@@ -201,6 +212,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       dueDate: data.dueDate || undefined,
       tags: data.tags || [],
       estimatedMinutes: data.estimatedMinutes || undefined,
+      startMinutes: data.startMinutes ?? null,
+      endMinutes: data.endMinutes ?? null,
       priority: data.priority ?? 'medium',
       isArchived: false,
       isCompleted: false,
