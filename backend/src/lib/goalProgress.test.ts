@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { computeProgress, resolveProgressMode } from './goalProgress';
 
-const counts = (linked: number, done: number, sessions: number) => ({
+const counts = (linked: number, done: number, sessions: number, focusSeconds = 0) => ({
   linkedTaskCount: linked,
   completedTaskCount: done,
   actualSessions: sessions,
+  totalFocusSeconds: focusSeconds,
 });
 
 describe('resolveProgressMode', () => {
@@ -83,5 +84,23 @@ describe('auto-completion threshold', () => {
 
   it('completes at exactly 1', () => {
     expect(computeProgress('tasks', null, counts(100, 100, 0)).overallProgress).toBe(1);
+  });
+});
+
+describe('computeProgress — the time stat is reporting only', () => {
+  // D3 settled that goal progress is task-denominated. Focus time is a stat
+  // beside it, never a denominator. This guards against the new field quietly
+  // becoming one during a later refactor.
+  it('ignores totalFocusSeconds entirely', () => {
+    const withoutTime = computeProgress('tasks', null, counts(4, 2, 6, 0));
+    const withTime = computeProgress('tasks', null, counts(4, 2, 6, 99_999));
+
+    expect(withTime.overallProgress).toBe(withoutTime.overallProgress);
+    expect(withTime.taskProgress).toBe(withoutTime.taskProgress);
+    expect(withTime.sessionProgress).toBe(withoutTime.sessionProgress);
+  });
+
+  it('passes the stat through untouched', () => {
+    expect(computeProgress('tasks', null, counts(1, 1, 3, 5_400)).totalFocusSeconds).toBe(5_400);
   });
 });

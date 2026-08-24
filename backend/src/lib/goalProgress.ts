@@ -15,6 +15,13 @@ export interface TaskGoalCounts {
   linkedTaskCount: number;
   completedTaskCount: number;
   actualSessions: number;
+  /**
+   * Credited focus seconds across every session logged against this goal’s
+   * tasks. A session COUNT stopped being a usable measure of effort once
+   * blocks could differ in length, so time is tracked beside it. Reporting
+   * only, never a progress denominator — see computeProgress.
+   */
+  totalFocusSeconds: number;
 }
 
 export interface TaskGoalProgress extends TaskGoalCounts {
@@ -78,7 +85,7 @@ export async function loadGoalCounts(
 ): Promise<Map<string, TaskGoalCounts>> {
   const counts = new Map<string, TaskGoalCounts>();
   for (const id of goalIds) {
-    counts.set(id, { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0 });
+    counts.set(id, { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 });
   }
   if (goalIds.length === 0) return counts;
 
@@ -98,14 +105,24 @@ export async function loadGoalCounts(
   }
 
   // Focus sessions logged against any task currently linked to each goal.
+  // NOTE: no `isArchived` filter here, unlike the task-count query above.
+  // Recurring habits archive yesterday’s instance every day (see
+  // POST /tasks/spawn-recurring), and each instance inherits the template’s
+  // taskGoalId. Filtering archived tasks out therefore hid every session
+  // older than today, so a goal linked to a habit reported near-zero
+  // progress forever. Time already spent does not become un-spent when the
+  // row it belongs to is archived. The task-count query keeps its filter,
+  // where excluding archived instances is correct — they should not inflate
+  // linkedTaskCount.
   const sessionGroups = await prisma.session.groupBy({
     by: ['taskId'],
     where: {
       userId,
       type: 'focus',
-      task: { userId, taskGoalId: { in: goalIds }, isArchived: false },
+      task: { userId, taskGoalId: { in: goalIds } },
     },
     _count: { _all: true },
+    _sum: { durationSeconds: true },
   });
 
   if (sessionGroups.length > 0) {
@@ -123,6 +140,8 @@ export async function loadGoalCounts(
       const entry = counts.get(goalId);
       if (!entry) continue;
       entry.actualSessions += s._count._all;
+      // Prisma types _sum as nullable when a group could be empty.
+      entry.totalFocusSeconds += s._sum.durationSeconds ?? 0;
     }
   }
 
@@ -166,6 +185,7 @@ export async function syncGoalCompletion(userId: string, goalIds: string[]): Pro
       linkedTaskCount: 0,
       completedTaskCount: 0,
       actualSessions: 0,
+      totalFocusSeconds: 0,
     };
 
     // A goal with nothing linked and no session target is at 0%, not 100% —

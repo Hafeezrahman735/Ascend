@@ -63,7 +63,7 @@ function serializeGoal(
     isArchived: boolean;
     createdAt: Date;
   },
-  counts: { linkedTaskCount: number; completedTaskCount: number; actualSessions: number },
+  counts: { linkedTaskCount: number; completedTaskCount: number; actualSessions: number; totalFocusSeconds: number },
 ) {
   const progress = computeProgress(goal.progressMode, goal.targetSessions, counts);
   return {
@@ -80,6 +80,13 @@ function serializeGoal(
     linkedTaskCount:    progress.linkedTaskCount,
     completedTaskCount: progress.completedTaskCount,
     actualSessions:     progress.actualSessions,
+    totalFocusSeconds:  progress.totalFocusSeconds,
+    // Wall-clock days from creation to completion, or to now while still open.
+    // Clamped at 0 because completedAt is client-supplied and unvalidated for
+    // ordering, so a bad clock could otherwise render a negative age.
+    elapsedDays:        Math.max(0, Math.round(
+      ((goal.completedAt ?? new Date()).getTime() - goal.createdAt.getTime()) / 86_400_000,
+    )),
     taskProgress:       progress.taskProgress,
     sessionProgress:    progress.sessionProgress,
     overallProgress:    progress.overallProgress,
@@ -110,7 +117,7 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
 
     res.status(201).json({
       success: true,
-      data: serializeGoal(goal, { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0 }),
+      data: serializeGoal(goal, { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 }),
     });
   } catch (err) {
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
@@ -134,7 +141,7 @@ taskGoalsRouter.get('/task-goals', async (req: Request, res: Response) => {
     const counts = await loadGoalCounts(userId, goals.map((g) => g.id));
 
     const data = goals.map((g) =>
-      serializeGoal(g, counts.get(g.id) ?? { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0 }),
+      serializeGoal(g, counts.get(g.id) ?? { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 }),
     );
 
     res.json({ success: true, data });
@@ -179,7 +186,7 @@ taskGoalsRouter.patch('/task-goals/:id', async (req: Request, res: Response) => 
     const counts = await loadGoalCounts(userId, [goal.id]);
     res.json({
       success: true,
-      data: serializeGoal(goal, counts.get(goal.id) ?? { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0 }),
+      data: serializeGoal(goal, counts.get(goal.id) ?? { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 }),
     });
   } catch (err) {
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
