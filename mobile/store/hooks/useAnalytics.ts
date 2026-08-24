@@ -3,6 +3,7 @@ import { useGamificationStore } from '../../stores/gamificationStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useShallow } from 'zustand/react/shallow';
+import { getPhaseDuration } from '../../lib/phaseDuration';
 import { calcFocusStats, type FocusStatSnapshot } from '../selectors/analytics';
 
 export function useFocusStats(): FocusStatSnapshot {
@@ -46,13 +47,18 @@ export function useTimerStats() {
 
 export function useLiveTotalFocusMinutes(): number {
   const storedMinutes = useGamificationStore((s) => s.totalFocusMinutes);
-  const workDuration = useTimerStore((s) => s.settings.workDuration);
+  const settings = useTimerStore((s) => s.settings);
+  const currentPhase = useTimerStore((s) => s.currentPhase);
   const timeLeft = useTimerStore((s) => s.timeLeft);
   const status = useTimerStore((s) => s.status);
 
   return useMemo(() => {
     if (status === 'idle') return storedMinutes;
-    const elapsedSeconds = Math.max(0, workDuration - timeLeft);
+    // Only focus time is focus time. This previously measured every phase
+    // against workDuration, so starting a 5-minute break added (25 - 5) = 20
+    // phantom minutes to the live total the instant the break began.
+    if (currentPhase !== 'focus') return storedMinutes;
+    const elapsedSeconds = Math.max(0, getPhaseDuration(currentPhase, settings) - timeLeft);
     return storedMinutes + Math.floor(elapsedSeconds / 60);
-  }, [storedMinutes, workDuration, timeLeft, status]);
+  }, [storedMinutes, settings, currentPhase, timeLeft, status]);
 }

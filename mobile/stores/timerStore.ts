@@ -7,9 +7,10 @@ import { useGamificationStore } from './gamificationStore';
 import { recordCompletedSession, generateSessionId } from '../store/sync';
 import { getLocalDateString } from '../utils/date';
 import type { SessionReward } from '../types';
+import { getPhaseDuration, type TimerPhase } from '../lib/phaseDuration';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
-type TimerPhase = 'focus' | 'shortBreak' | 'longBreak';
+export type { TimerPhase };
 
 interface Settings {
   workDuration: number;
@@ -108,11 +109,6 @@ const DEFAULT_SETTINGS: Settings = {
 // Single definition of the local-date convention lives in utils/date.ts.
 const getTodayString = () => getLocalDateString();
 
-function getPhaseDuration(phase: TimerPhase, settings: Settings): number {
-  if (phase === 'longBreak') return settings.longBreakDuration;
-  if (phase === 'shortBreak') return settings.shortBreakDuration;
-  return settings.workDuration;
-}
 
 export const useTimerStore = create<TimerState>((set, get) => ({
   status: 'idle',

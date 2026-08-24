@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
+import { getPhaseDuration } from '../../lib/phaseDuration';
 import { cancelAllTimerNotifications } from '../../services/notifications';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -213,12 +214,7 @@ export default function TimerScreen() {
     prevPhaseRef.current = currentPhase;
   }, [status, currentPhase]);
 
-  const currentPhaseDuration =
-    currentPhase === 'longBreak'
-      ? settings.longBreakDuration
-      : currentPhase === 'shortBreak'
-      ? settings.shortBreakDuration
-      : settings.workDuration;
+  const currentPhaseDuration = getPhaseDuration(currentPhase, settings);
 
   const progress = useSharedValue(currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1);
 
