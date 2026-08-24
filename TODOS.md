@@ -65,3 +65,31 @@ Deferred work, with the context that produced it. Written by gstack plan reviews
       not part of the build work.
 - [ ] **`eas-cli` is 20.3.0 locally; 22.2.0 is current.** `eas.json` only requires
       `>= 20.3.0`, so this is not blocking.
+
+## Deferred from /autoplan — adaptive session duration (2026-08-24)
+
+Full plan: `docs/plans/adaptive-session-plan.md`
+
+### Pre-existing bug, found during review (not caused by this feature)
+
+- **Goals linked to recurring habits under-count sessions and focus time.**
+  `backend/src/lib/goalProgress.ts:106` filters `isArchived: false` on the
+  SESSION groupBy, and `POST /tasks/spawn-recurring` archives every non-today
+  instance (`tasks/routes.ts:288-292`). So such a goal can only ever see today
+  instance. Fix: drop `isArchived` from the *session* filter only; keep it on
+  the task-count groupBy, where excluding archived instances is correct.
+  Time already spent does not become un-spent when a row is archived.
+
+### Deferred scope
+
+- Telemetry on estimate fill-rate. Premise P1 (that enough tasks carry an
+  estimate) is unverified, and nothing in the repo measures it. Two queries:
+  coverage, and the distribution of actual/estimate.
+- Reconcile the two existing estimate-progress bars before adding a third
+  representation: `tasks.tsx:388-393` (8px, raised/primary, captioned) vs
+  `index.tsx:573-598` (6px, inactive/accent, bare %).
+- Verify the contrast ratios flagged in Phase 2 (subtext ~3.5:1 dark /
+  ~3.7:1 light; CURRENT TASK eyebrow ~3.4:1 via opacity 0.5). Measured by a
+  review agent, NOT independently confirmed.
+- jest-expo + AsyncStorage mocks so `timerStore` freeze/persist/reconstruct
+  can be tested automatically instead of by hand.

@@ -765,3 +765,273 @@ decision, and the fourth (where `getSessionPlan` lives) is a file-path choice.
 **PHASE 2 COMPLETE.** Codex: unavailable. Claude subagent: 3 critical/high
 structural findings, 2 of which overrode the primary review. Consensus: 0/7
 CONFIRMED (single voice), 7/7 FLAGGED. Passing to Phase 3 (Eng).
+
+---
+
+# GSTACK REVIEW — Phase 3: Eng
+
+Codex: dropped at user request. Single-voice review throughout this phase.
+
+## Step 0 — Scope challenge (grounded in the code)
+
+| Sub-problem | Existing code | Verdict |
+|---|---|---|
+| Phase chaining focus -> break | `TimerPhase`, `complete()` `:208`/`:305` | Reuse unchanged |
+| Where a phase's length comes from | `getPhaseDuration(phase, settings)` `:111` | **Single seam. One function to change** |
+| Session count from an estimate | `tasks.tsx:609` | Replace with `getSessionPlan` |
+| Configured block length | `tasks.tsx:1894` from `settings.workDuration` | Feed in as `W` |
+| Sequence indicator | `index.tsx:414-438` | Becomes the plan row |
+| Crash/background restore | `PersistedSession` + `reconstructSession` `:695` | **Defect — see A1** |
+| Goal time stats | `loadGoalCounts` groupBy | Add one `_sum` |
+| Credit cap | `sessionCredit.ts` | Must change (F3) |
+
+Genuinely new code: one pure function, one optional state field, one render
+change. Everything else is a seam that already exists.
+
+## Section 1 — Architecture
+
+```
+  taskStore                          settings (persisted, user-owned)
+  selectedTaskId                     workDuration = W
+  tasks[].estimatedMinutes                 |
+  tasks[].totalTimeOnTask                  |
+        |                                  |
+        +-------------> getSessionPlan(remaining, W)   [PURE]
+                                 |
+                                 v
+                        activePlan (timer state, NOT persisted)
+                        { sessions:[25,20,20], breaks:[...], index }
+                                 |
+                                 v
+             getPhaseDuration(phase, settings, activePlan)  <-- the ONLY seam
+                                 |
+              +------------------+------------------+
+              v                                     v
+        start() / complete()                  reconstructSession()
+        (tick logic untouched)                (rehydrate after kill)
+```
+
+Rule, inherited from the existing cycle discipline: `timerStore` reads
+`useTaskStore.getState()` **at call time**, never at module scope. The static
+import already exists (`timerStore.ts:4`), so no new cycle is introduced — but a
+top-level read would convert a working cycle into a crash on load.
+
+### A1 — CRITICAL: D4's "never persist" breaks restore
+
+`reconstructSession` (`:695-716`) recomputes a running phase's length with
+`getPhaseDuration(snap.currentPhase, settings)` — from **settings alone**.
+`PersistedSession` carries `status`, `currentPhase`, `mode`, `startedAt`,
+`elapsedAtPause`, `stopwatchElapsed`, `timeLeft`. It has no concept of a plan.
+
+So with a 20-minute plan block running, a force-quit and relaunch reconstructs
+it against `settings.workDuration` (25 min) and the timer **silently gains five
+minutes**. The user is mid-session; the length changes under them.
+
+D4 was right that the *plan* should be derived rather than stored. It does not
+follow that the *currently running block's duration* can be derived — that value
+is part of the running session's identity, exactly like `timeLeft`, which is
+already persisted.
+
+Fix (small, and NOT a reintroduction of the deleted plan index):
+
+```ts
+interface PersistedSession {
+  ...
+  phaseDurationSeconds: number | null;  // the running block's length
+}
+```
+
+`reconstructSession` prefers `snap.phaseDurationSeconds` and falls back to
+`getPhaseDuration(...)` when null, so every existing persisted snapshot keeps
+working. One number, no index, no plan copy, no stale-plan class of bug.
+
+Re-deriving instead was rejected: rehydration order between `taskStore` and
+`timerStore` is not guaranteed, and a plan derived from a task list that has not
+loaded yet yields a null plan and the same silent length change.
+
+## Section 3 — Test diagram
+
+`getSessionPlan` is pure, so its whole surface is unit-testable with no I/O.
+
+| Codepath | Type | Exists? |
+|---|---|---|
+| Worked examples 20/30/40/50/65/100 | unit | **NO** |
+| Invariant `sum(sessions) === roundedRemaining` | unit (property) | **NO** |
+| Every session a multiple of 5 | unit (property) | **NO** |
+| `W` = 50 -> 50-min task is 1 block, not 2x25 | unit | **NO** |
+| `W` = 1 and `W` = 480 (modal bounds) | unit | **NO** |
+| `remaining <= 0` -> no plan | unit | **NO** |
+| `0 < remaining < 5` -> one short block, no padding | unit | **NO** |
+| Floor reachable from below (est < W) | unit | **NO** |
+| `getPhaseDuration` prefers plan over settings | unit | **NO** |
+| `getPhaseDuration` falls back when plan null | unit | **NO** |
+| Rehydrate mid-plan keeps block length (A1) | unit | **NO** |
+| `creditedSeconds` with a plan shorter than W | unit | exists for the old shape; **needs new cases** |
+| Session logged with plan length as `plannedDurationSeconds` | **integration, real Postgres** | **NO** |
+| Goal `_sum` focus time, sessions of differing length | **integration, real Postgres** | **NO** |
+| Goal stats exclude archived / other users' tasks | **integration, real Postgres** | **NO** |
+
+Two backend routes change behaviour (session logging payload, goal counts), so
+per the repo's Testing Standard both need integration tests against a real
+database. Neither is optional and neither is a follow-up.
+
+## Step 0.5 — Eng voice (single; Codex dropped at user request)
+
+Three critical findings, all verified against the code.
+
+### E1 — The credit bug is at `timerStore.ts:205`, and F3 proposed the wrong fix
+
+VERIFIED, `timerStore.ts:205`:
+
+```ts
+const sessionDuration = Math.min(settings.workDuration, Math.max(0, elapsed));
+```
+
+This clamps **before anything is recorded**. `sessionDuration` then feeds
+`globalTotalTime`, `incrementTaskSession`, `recordCompletedSession`, and
+`actualElapsedSeconds`. The server never sees the lost time, so **no backend
+change can recover it**.
+
+F3 named `:272` and proposed raising the cap in `sessionCredit.ts`. That is
+wrong twice over: it misses the line that destroys the data, and raising the cap
+would weaken a deliberate forgery bound for zero benefit. `creditedSeconds` is
+`min(actual, planned)` and is **correct as written** once the client sends the
+right `planned`.
+
+Why it always fires: with W-parameterization the grace zone is `[W, W+10]`, so a
+block can exceed W by up to 10 minutes. A 35-minute grace block at W = 25
+credits 25 — and since `remaining = estimate - totalTimeOnTask` reads the
+under-credited value, **the plan never converges**. A 35-minute task reports 10
+minutes remaining after the user finished it, and offers another block. The
+feature's headline promise fails on its most common path.
+
+Corrected F3: change `timerStore.ts:141`, `:205`, `:272`. Change nothing in
+`sessionCredit.ts`. Forward-only; historical rows stay internally consistent.
+
+### E2 — Audit finding A2 was FALSE: 14 write sites, not one seam
+
+The original audit claimed this was "a substitution at `getPhaseDuration`, not
+new machinery." In fact `settings.workDuration` is written straight into
+`timeLeft` all over the store, bypassing `getPhaseDuration` entirely:
+`timerStore.ts` lines 140, 141, 205, 272, 288, 326, 338, 380, 418, 457, 555, 742.
+
+Worse, VERIFIED — there are two **verbatim duplicates** of the function outside
+the store:
+
+- `index.tsx:216-221` — `currentPhaseDuration`, drives the hero progress ring.
+  A 20-minute plan starts the ring already 20 percent consumed.
+- `useAnalytics.ts:55` — `elapsedSeconds = workDuration - timeLeft`. Live focus
+  minutes jump +5 the instant Start is pressed.
+
+Neither appears anywhere in the plan. **Prerequisite refactor, now in scope:**
+collapse all three copies onto one exported function before threading the
+overlay. This is the gap between the 0C-bis estimate ("one call site, ~40 min
+CC") and reality.
+
+### E3 — Freeze the overlay at `start()`; "derived on read" must not reach the running timer
+
+D4 ("derived, never stored") is right for the *preview* and unsafe for the
+*running timer*, because `getPhaseDuration` is called by `tick()` every second
+(`:186`), by `pause()` (`:155`) and by `reconstructSession()` (`:708`). Deriving
+there makes a running session's length a function of inputs that mutate
+underneath it: `fetchTasks(true)` replaces the task array at arbitrary moments,
+the user can edit the estimate or deselect the task mid-run, and a recurring
+instance is archived at day rollover and vanishes from `GET /tasks`.
+
+This supersedes my A1, which was directionally right (persist the running
+block's length) but scoped too narrowly — it treated restore as the only
+problem, when tick and pause have it too.
+
+Shape:
+
+- `planPreview` — **not state.** A `useMemo` in `index.tsx` over `selectedTask`
+  and W. Drives the breakdown UI only.
+- `plannedFocusSeconds: number | null` — the only new field in `TimerState`.
+  Written by `start()` and by the break-to-focus branch of `complete()`; cleared
+  by `reset()`, `setMode()`, `skip()`-to-idle, and the idle subscription. Added
+  to `PersistedSession`, and passed into the duration call in
+  `reconstructSession`.
+
+`getPhaseDuration(phase, settings, plannedFocusSeconds)` returns
+`plannedFocusSeconds ?? settings.workDuration` for focus. Tick logic untouched.
+
+**This deletes machinery the plan budgeted for.** Because `remaining` shrinks by
+the credited amount, re-deriving at each break-to-focus transition reproduces
+the tail on its own: 65 gives [25,20,20]; after block 1, remaining 40 gives
+[20,20]. **No plan queue, no sessions array in state, no active index.**
+
+Also: "queue the remainder to auto-advance" cannot be built without changing the
+state machine — `complete()` sets `status: 'break'` and `start()` is a required
+tap. **Auto-advance is dropped**; each block is simply the next focus phase,
+tapped as today.
+
+## Failure modes registry
+
+| # | Failure | Severity | Verified by | Fix |
+|---|---|---|---|---|
+| FM1 | W below 5 gives zero-length blocks, then a runaway `complete()` loop each POSTing to the server | critical | math: W=1, r=60 gives n=60, base=0 | `n = clamp(ceil(r/W), 1, floor(roundedR/5))`; assert every block >= 5 |
+| FM2 | Block longer than MAX_SESSION_SECONDS makes the POST 400 and the **whole session is lost** | high | `MAX_SESSION_SECONDS = 21600` (6h); estimate stepper maxes at 480 min | Cap a block at 360 min and clamp client-side |
+| FM3 | Credit clamp destroys overtime before recording; the plan never converges | critical | `timerStore.ts:205` | E1 |
+| FM4 | Force-quit mid-plan restores the wrong block length; the OS alarm has already fired | critical | `PersistedSession` has no plan field | E3 |
+| FM5 | Progress ring and live analytics disagree with the plan | high | `index.tsx:216-221`, `useAnalytics.ts:55` | E2 |
+| FM6 | `breaks` in the return type is **uncomputable** from a two-argument signature, because the long-break rule is global (`:207-209`) | high | reasoning | Drop `breaks`; the UI reads break type from the store's own rule |
+| FM7 | Goal focus time reads near-zero for any goal linked to a recurring habit | high | `goalProgress.ts:106` filters `isArchived: false` on the SESSION groupBy; spawn-recurring archives stale instances (`tasks/routes.ts:288-292`) | Drop `isArchived` from the *session* filter only |
+| FM8 | Task swapped mid-run credits the time to the wrong task, poisoning its `remaining` | medium | `complete()` reads `selectedTaskId` at completion (`:245`) | Freeze `taskId` at `start()` beside `plannedFocusSeconds` |
+| FM9 | Goal "elapsed days" can render negative or blank | medium | `PATCH /task-goals/:id` accepts a client `completedAt`, unvalidated | Clamp at 0; fall back to createdAt-to-now |
+
+**FM7 is a pre-existing bug, not one this feature introduces.** Goals linked to
+recurring habits already under-count `actualSessions` today. The new time stat
+makes it loud rather than causing it.
+
+## Sections 2 and 4 — code quality, performance
+
+Code quality: the three duplicate duration implementations (E2) are the finding;
+everything else in the seam is small. `TaskGoalCounts` is constructed as an
+object literal in five places (`goalProgress.ts:164`, `taskgoals/routes.ts:112`,
+`:136`, `:181`, and the `serializeGoal` parameter at `:66`), so adding a
+required field is a five-file compile-time change — caught by the compiler,
+which is good, but it is not "one line".
+
+Performance: `getSessionPlan` is pure and O(n) in block count, n at most ~96.
+`planPreview` as a `useMemo` recomputes only when the task or W changes. The
+goal `_sum` rides the `groupBy` that already runs — no new query, no N+1.
+Nothing here is a performance concern.
+
+## ENG CONSENSUS
+
+```
+  Dimension                     Primary   Subagent   Consensus
+  ----------------------------- --------- ---------- ---------------------------
+  1. Architecture sound?        NO        NO         AGREED - overlay must freeze
+  2. Test coverage sufficient?  NO        NO         AGREED - 15 of 16 uncovered
+  3. Performance risks?         OK        OK         AGREED - none
+  4. Security threats?          OK        NO         SUBAGENT - F3 weakened a bound
+  5. Error paths handled?       NO        NO         AGREED - FM1 through FM9
+  6. Deployment risk?           LOW       LOW        AGREED - forward-only
+```
+
+## Where `getSessionPlan` lives
+
+`mobile/lib/sessionPlan.ts`. `mobile/lib/` already houses tested pure logic
+(`achievementOrder`, `rank`, `recurringDisplay`, each shipping a `.test.ts`),
+and `mobile/vitest.config.mts` requires zero react-native imports — which a pure
+function satisfies and a store does not. That answers the last of the plan's
+four original open questions.
+
+## Honest testing limit
+
+`timerStore.ts` imports AsyncStorage, `api`, and three other stores, so the
+*riskiest* part of this change — freeze at start, persist, reconstruct — cannot
+run under the current mobile vitest config. Two options: accept manual
+verification and keep the store change as thin as possible, or stand up
+jest-expo with AsyncStorage mocks, which is its own project.
+
+Decision: accept manual verification, and let that constraint argue for the
+scalar-not-queue design in E3. Stated here rather than left as an implied gap.
+
+## PHASE 3 COMPLETE
+
+Codex: dropped at user request. Claude subagent: 3 critical findings, all
+verified. Two overturned earlier work in this document (A2 and F3), one
+superseded my A1. Consensus: 4 of 6 AGREED negative, 1 subagent-only, 1 agreed
+positive. Passing to Phase 4 (final gate).
