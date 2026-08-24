@@ -466,3 +466,302 @@ Stat line the goal detail should be able to render:
 
 That reads correctly whether the sessions were 25 minutes each or a mix of 20s
 and 30s, which is exactly the property the user asked for.
+
+---
+
+# GSTACK REVIEW — Phase 2: Design
+
+UI scope: CONFIRMED (Focus screen breakdown, override control, creation preview).
+
+## Step 0 — Design scope
+
+**Initial design completeness of the plan: 4/10.** It names one copy string
+("Session 1 of 2 — 25 min, then a 5 min break") and one instruction ("reuse
+existing UI patterns rather than introducing a new component style"). Everything
+else — placement, hierarchy, the override control, every non-happy state — is
+left to the implementer.
+
+### There is no design system to align to
+
+`DESIGN.md`: absent. `docs/designs/`: absent. `mobile/components/` holds twelve
+feature components (`FeedCard`, `LevelBadge`, `XPBar`, `LeaderboardRow`, …) and
+**no primitives** — no `Button`, `Card`, `Sheet`, or `Chip`. Every screen styles
+inline against theme tokens from `useTheme()`.
+
+Consequence: "reuse the existing pattern" is not enforceable by import, only by
+imitation. The plan must name the exact precedent to copy, or the breakdown UI
+will drift into a fourth style.
+
+### Patterns the breakdown must match (cited, not invented)
+
+| Need | Existing precedent | Strength |
+|---|---|---|
+| Small-caps field label | `monoLabel` in `tasks.tsx` (`TIME`, `DUE DATE`, `SUBJECT`) | Strong — used throughout the create sheet |
+| Segmented switch | `styles.segment` / `segmentItem`, `components/calendar/shared.tsx` | Strong — Day/Week/Month/Stats and the Circle tab both use it |
+| Explanatory info box (icon + subtext on `Colors.raised`) | `FocusModeSheet.tsx:102-112` | **Weak — exactly one instance, written this same session.** Not yet a convention |
+| Estimate progress vs actual | `index.tsx:573-598`, already on the Focus screen | Strong, and directly adjacent to this feature |
+| Inline secondary metric | `≈ N sessions` beside the stepper, `tasks.tsx:711` | Strong — this is the creation-side half of the same idea |
+
+The last row matters most: the creation preview and the Focus-screen breakdown
+are two views of one fact. They should read as siblings, not as separate
+inventions. The plan already requires them to share `getSessionPlan`; they
+should share phrasing too.
+
+### The hero problem
+
+The Focus screen's hero is the countdown. Anything added for a multi-session
+plan competes with it for the same vertical space, directly above the primary
+action. The estimate progress bar at `index.tsx:573-598` already occupies that
+region when a task is selected — so the breakdown is not landing on empty
+canvas, and the plan does not acknowledge the neighbour it has to live beside.
+
+## Passes 1-7 (primary review)
+
+### Pass 1 — Information hierarchy · 3/10
+
+The plan puts a breakdown line on the Focus screen without saying where. The
+screen already has a hierarchy when a task is selected: task title, then
+estimate progress bar (`index.tsx:573-598`), then the countdown, then Start.
+
+Decision (structural, auto-fixed — P5 explicit over clever): the breakdown is
+**secondary to the countdown and subordinate to the task title**, rendered as a
+single line under the task title, in `Colors.subtext` at the same 11-12px the
+estimate bar's label already uses. It must not gain a card, a border, or its own
+background — those read as a competing hero.
+
+> Deep work
+> Session 1 of 2 · 25 min, then a 5 min break
+> ▓▓▓▓▓░░░░░ 48%
+>
+> **25:00**
+> [ Start ]
+
+### Pass 2 — Missing states · 2/10 (the plan specifies ONE)
+
+Structural gap, auto-fixed. Every row below is reachable in normal use and none
+are described in the brief.
+
+| State | Trigger | Required behaviour |
+|---|---|---|
+| No estimate (**majority case**) | Task has `estimatedMinutes == null` | No breakdown line at all. Duration untouched. Silence, not "no plan available" |
+| Single-session plan | Grace zone or under 25 | Duration set; **no** "Session 1 of 1" — that reads as broken |
+| Multi-session, not started | Plan loaded, `status === 'idle'` | Breakdown + override affordance |
+| Mid-plan | Session 2 of 3 in progress | "Session 2 of 3" — index must come from state, not recomputation |
+| Plan half-finished yesterday | App reopened, `timer:activeSession` rehydrated | **Unspecified in the brief.** Decision: a plan does not survive a day boundary; it re-derives from remaining estimate. Show "Session 1 of 2" fresh rather than resuming a stale index |
+| Backgrounded mid-plan | OS suspends app | Index persists via the existing `timer:activeSession` snapshot — extend it, do not add a second key |
+| Task deselected mid-setup | User clears selection before Start | Duration reverts to `settings.workDuration`. This is exactly why F5 (overlay, never a settings write) is load-bearing |
+| Task swapped mid-setup | Different task chosen before Start | Plan recomputes |
+| Task swapped **after** Start | Selection changes while running | Running timer unchanged. Brief already scopes this; the UI must not imply otherwise |
+| Estimate edited mid-plan | User edits the task while a plan is active | Running session unchanged; plan re-derives on next selection |
+
+### Pass 3 — Override affordance · 4/10
+
+The premise gate (D1) settled that the plan is a suggestion, not a decree. The
+plan file never says where that control lives.
+
+Decision (structural, auto-fixed): **no modal, no two-button prompt.** A
+"Use plan / Keep 25:00" dialog on every task selection is a tax on the most
+common interaction on the screen. Instead the breakdown line carries a single
+inline dismissal:
+
+> Session 1 of 2 · 25 min, then a 5 min break · **Use 25:00 instead**
+
+Tapping it drops the overlay and reverts to `settings.workDuration` for this
+selection only. The existing Timer Duration modal (`index.tsx:770-870`) stays
+the way to set a number by hand, and should show the overlay value with its
+source attributed ("20 min — from *Write essay*") so the two never disagree
+silently. That attribution is the fix for the "two sources of truth" risk.
+
+### Pass 4 — Grace-zone cliff · 3/10
+
+35 min → one 35-min block. 40 min → two 20-min blocks. One tap on the +5 stepper
+halves session length. This is a consequence of the user's confirmed algorithm
+(D2), so it is communicated, not removed.
+
+Decision: the creation sheet's `≈ N sessions` preview (`tasks.tsx:711`) becomes
+the honest version — it already sits beside the stepper, so the change is
+visible *as the user taps*: `≈ 1 × 35 min` → `≈ 2 × 20 min`. Seeing it move at
+the moment of the tap converts a surprise into an explanation. No warning copy,
+no asterisk.
+
+### Pass 5 — Specificity · 4/10
+
+Underspecified and now decided above: placement (Pass 1), all ten states
+(Pass 2), the override control (Pass 3), the cliff (Pass 4). Still open and
+deferred as a taste call: exact copy wording, and whether breaks appear as
+discrete items in the breakdown or only as "then a 5 min break".
+
+### Pass 6 — Consistency · 5/10
+
+The plan says "reuse existing UI patterns" without naming one. Named now in
+Step 0. Binding decision: the Focus-screen breakdown and the creation preview
+share `getSessionPlan` **and** their phrasing — `2 × 20 min` in both places, so
+the promise at creation and the plan at execution are visibly the same fact.
+
+Risk flagged: the info-box pattern in `FocusModeSheet.tsx` is a single instance
+written this same session. Treating it as an established convention would be
+cargo-culting my own recent code. Not used here.
+
+### Pass 7 — Accessibility · 1/10 (absent from the plan)
+
+Structural, auto-fixed:
+- The inline override is a real control: minimum 44×44pt target, which a bare
+  text link in a 12px line does not meet without padding.
+- `accessibilityRole="button"` + label "Use your own 25 minute duration instead
+  of the suggested plan" — the visible text alone is not self-describing.
+- The breakdown line needs one `accessibilityLabel` on the container reading as
+  a sentence, not four fragments a screen reader stitches badly.
+- Contrast: `Colors.subtext` on `Colors.bg` must clear 4.5:1 in **both** themes;
+  it is currently used for decorative meta, and this line is load-bearing.
+- Dynamic Type: "Session 1 of 2 · 25 min, then a 5 min break" is long. It must
+  wrap to two lines rather than truncate, or the break duration is lost first.
+
+## Step 0.5 — Dual voices (design)
+
+`[codex-unavailable]`. Single voice; Codex column reads N/A.
+
+### CLAUDE SUBAGENT (design — independent review)
+
+Three findings, the first two verified against the code before acceptance.
+
+**D-C1 — The Focus screen ALREADY has a session-sequence indicator.** VERIFIED
+at `index.tsx:414-438`: a row of blocks, filled `28×6` in `Colors.accent` with a
+glow, empty `20×6` in `Colors.inactive`, commented "BREAK PROGRESS BLOCKS —
+pomodoro cycle only", sitting directly above the control buttons.
+
+With a 3-block plan loaded, that row still renders the *global* pomodoro cycle,
+so the screen shows two disagreeing answers to "how many blocks am I doing" —
+and the plan's proposed sentence lands *below* the start button, where it is
+read after the user has already tapped.
+
+Decision (structural, auto-fixed): when a plan is active the dots row **becomes
+the plan row** — one segment per block, width proportional to block length,
+same tokens and glow. No new component style, no extra vertical space, and it
+sits above the control it informs. **This supersedes my Pass 1 decision**, which
+put a text line under the task title without noticing the row existed.
+
+**D-C2 — Hardcoding 25 regresses an existing personalization.** VERIFIED:
+`tasks.tsx:1894` — `const sessionLengthMinutes = Math.round(settings.workDuration / 60)`.
+The existing preview already divides by the user's own configured length. The
+new algorithm hardcodes 25 in both the grace zone and `ceil(est / 25)`, so a
+user who deliberately set 50-minute blocks selects a 50-minute task and is
+handed 2 × 25 — the app overruling a setting they went and changed.
+
+Decision (structural, auto-fixed): parameterize on `W = settings.workDuration`.
+Grace zone becomes `[W, W + 10]`, `n = ceil(est / W)`. This is required by the
+user's own direction ("users are able to change focus timer settings"), so it is
+not a challenge to the brief — it is the brief applied consistently.
+
+**D-C3 — The 15-minute floor IS reachable, from below.** My earlier note called
+it unreachable. That is wrong: it only holds for `est > 35`. The estimate
+stepper floors at 5 minutes, so `est < 25` yields a 5-minute focus block that
+still counts as a full session. Correction accepted; the floor needs a real
+branch on the low side, not an assertion.
+
+### DESIGN LITMUS SCORECARD
+
+```
+  Dimension                     Primary  Subagent  Codex  Consensus
+  ----------------------------- -------- --------- ------ ----------
+  1. Information hierarchy       3/10     4/10      N/A    FLAGGED
+  2. Missing states              2/10     3/10      N/A    FLAGGED
+  3. Override affordance         4/10     2/10      N/A    FLAGGED
+  4. Grace-zone cliff            3/10     3/10      N/A    FLAGGED
+  5. Specificity                 4/10     2/10      N/A    FLAGGED
+  6. Consistency                 5/10     4/10      N/A    FLAGGED
+  7. Accessibility               1/10     0/10      N/A    FLAGGED
+```
+
+Both voices independently scored accessibility lowest and specificity near the
+floor. Verdict: **an engineering plan wearing a design section** — the algorithm
+is over-specified, the interface is one line of placeholder copy.
+
+### Where the two voices disagreed
+
+- **Override affordance.** Primary proposed an inline "Use 25:00 instead" link
+  on the breakdown line. Subagent argues for silent application with the escape
+  hatch on the existing duration button (`Colors.accent` dot when a plan is
+  active) plus attribution inside the Duration modal. Subagent wins on evidence:
+  it found that with F5's overlay in place, working the existing Focus stepper
+  would silently do nothing — a control that appears to work and does not is
+  worse than no control. Resolution: silent apply, escape hatch on the existing
+  button, and touching the stepper drops the overlay for that task.
+
+### Additional states the primary review missed
+
+- **Estimate exhausted** (`totalTimeOnTask >= estimatedMinutes`): rail clamps to
+  100%, remaining ≤ 0, plan undefined. Needs copy plus a `+30 min` affordance.
+- **Tiny estimates**: see D-C3.
+- **Stopwatch mode**: `mode === 'stopwatch'` makes a plan meaningless. Undefined.
+- **Loading**: `selectedTask` is `tasks.find(...)`; before hydration it resolves
+  null and the card reads "Select a task" — the plan UI will flash.
+
+### Consistency: two estimate-progress bars already disagree
+
+`tasks.tsx:388-393` (8px rail, `raised` track, `primary` fill, "X of Ym
+estimated") versus `index.tsx:573-598` (6px rail, `inactive` track, `accent`
+fill, bare %). The plan would add a third representation of the same concept.
+Decision: reconcile the two that exist rather than add a third.
+
+### Accessibility — concrete, not aspirational
+
+- `StepperRow` buttons are 36×36 with no `hitSlop`; estimate stepper 42×42. Both
+  under 44pt. Fix pattern already in the codebase: `hitSlop={8}` at
+  `calendar.tsx:157`.
+- `subtext` on `surface` is reported at ~3.5:1 dark / ~3.7:1 light, and the
+  `CURRENT TASK` eyebrow composites to ~3.4:1 via `opacity: 0.5`. **These
+  specific ratios are the subagent's measurement and are NOT independently
+  verified** — treat as a strong lead to check, not as settled fact. If they
+  hold, plan copy must use `Colors.text` at full opacity, 12px minimum.
+- Segmented plan row must be `accessibilityRole="progressbar"` with
+  `accessibilityValue={{min:0, max:n, now:index}}`, or it announces as N
+  unlabeled views.
+
+## D4 RESOLVED — plan from remaining
+
+Decided: `getSessionPlan(remainingMinutes, sessionLengthMinutes)`.
+
+`remaining = estimatedMinutes - round(totalTimeOnTask / 60)`, clamped at 0.
+
+Both arguments changed from the brief, for reasons the brief did not have:
+`remaining` (D4) so the plan agrees with the progress rail already on the card,
+and `sessionLengthMinutes` (D-C2) so a user's configured block length is not
+silently overruled.
+
+### Scope this DELETES
+
+| Dropped | Why it disappears |
+|---|---|
+| Persisted active plan index | The plan is derived on read, never stored |
+| `timer:{userId}:planIndex` AsyncStorage key | Nothing to persist |
+| "Resume at session 2, or restart at 1?" | Re-derives from remaining every time |
+| "What happens when the estimate is edited mid-plan?" | Re-derives; no stale copy exists |
+| Day-boundary resume semantics | Same |
+
+Three of the plan's four original open questions are answered by this one
+decision, and the fourth (where `getSessionPlan` lives) is a file-path choice.
+
+### Newly required states
+
+| State | Condition | Behaviour |
+|---|---|---|
+| Estimate exhausted | `remaining <= 0` | No plan. Rail clamps 100%. Offer `+30 min` rather than showing "0 blocks" |
+| Tiny remainder | `0 < remaining < floor` | One block of `remaining`; do NOT pad up to the floor |
+| No estimate | `estimatedMinutes == null` | No plan, duration untouched, provenance line reads "Your default" |
+
+## Phase 2 — completion summary
+
+| Item | Result |
+|---|---|
+| Design completeness at intake | 4/10 |
+| Dimensions reviewed | 7 of 7 |
+| Voices | Primary + Claude subagent. Codex `[codex-unavailable]` |
+| Structural issues auto-fixed | 6 (hierarchy via the existing dots row, states matrix, override affordance, cliff communication, W-parameterization, a11y requirements) |
+| Corrections to the primary review | 2 (Pass 1 superseded by D-C1; the "unreachable floor" claim was wrong) |
+| Taste decisions deferred to the gate | 2 (exact copy wording; whether breaks render as discrete segments) |
+| User decisions taken | 1 (D4) |
+| Unverified claim carried forward | Contrast ratios — flagged as a lead to measure, not fact |
+
+**PHASE 2 COMPLETE.** Codex: unavailable. Claude subagent: 3 critical/high
+structural findings, 2 of which overrode the primary review. Consensus: 0/7
+CONFIRMED (single voice), 7/7 FLAGGED. Passing to Phase 3 (Eng).
