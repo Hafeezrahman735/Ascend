@@ -8,6 +8,7 @@ import { recordCompletedSession, generateSessionId } from '../store/sync';
 import { getLocalDateString } from '../utils/date';
 import type { SessionReward } from '../types';
 import { getPhaseDuration, type TimerPhase } from '../lib/phaseDuration';
+import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
 export type { TimerPhase };
@@ -57,6 +58,11 @@ interface PersistedSession {
   elapsedAtPause: number;
   stopwatchElapsed: number;
   timeLeft: number;
+  // The running focus block’s length. Persisted because it is part of the
+  // running session’s identity, exactly like timeLeft: without it a force-quit
+  // would reconstruct a 20-minute block against the 25-minute default and the
+  // timer would silently gain five minutes mid-session.
+  plannedFocusSeconds: number | null;
 }
 
 interface TimerState {
@@ -78,6 +84,11 @@ interface TimerState {
   // through the exact same path complete() uses (globalTotalTime + POST /timer/complete).
   mode: TimerMode;
   stopwatchElapsed: number;
+  // Per-task plan overlay, frozen when a focus block starts. null = no plan,
+  // use the user’s configured workDuration. Never written into settings:
+  // workDuration is a deliberate user preference and a derived value must not
+  // overwrite it.
+  plannedFocusSeconds: number | null;
 
   start: () => void;
   pause: () => void;
@@ -110,6 +121,29 @@ const DEFAULT_SETTINGS: Settings = {
 const getTodayString = () => getLocalDateString();
 
 
+/**
+ * The focus length the currently selected task calls for, in seconds, or null
+ * when it has no usable plan.
+ *
+ * Planned from what is LEFT, not the original estimate, so a task that is
+ * mostly done stops offering a full fresh plan every time it is selected.
+ *
+ * Reads taskStore through getState() at call time rather than at module scope.
+ * timerStore and taskStore already import each other; deferring the read is what
+ * keeps that cycle harmless, and a top-level read would turn it into a crash on
+ * app load.
+ */
+function plannedFocusForSelectedTask(settings: Settings): number | null {
+  const { tasks, selectedTaskId } = useTaskStore.getState();
+  if (!selectedTaskId) return null;
+  const task = tasks.find((t) => t.id === selectedTaskId);
+  if (!task?.estimatedMinutes) return null;
+
+  const loggedMinutes = Math.round((task.totalTimeOnTask ?? 0) / 60);
+  const remainingMinutes = task.estimatedMinutes - loggedMinutes;
+  return nextPlannedFocusSeconds(remainingMinutes, Math.round(settings.workDuration / 60));
+}
+
 export const useTimerStore = create<TimerState>((set, get) => ({
   status: 'idle',
   currentPhase: 'focus',
@@ -126,6 +160,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   elapsedAtPause: 0,
   mode: 'pomodoro',
   stopwatchElapsed: 0,
+  plannedFocusSeconds: null,
 
   start: () => {
     const { status, currentPhase, settings } = get();
@@ -133,8 +168,13 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
     const now = Date.now();
     if (currentPhase === 'focus') {
-      set({ status: 'running', timeLeft: settings.workDuration, startedAt: now, elapsedAtPause: 0 });
-      api.post('/timer/start', { durationSeconds: settings.workDuration, startedAt: now })
+      // Frozen here and nowhere else. Deriving this on every read would let a
+      // background task refresh, an edited estimate, or a deselected task change
+      // the length of a session already in flight.
+      const planned = plannedFocusForSelectedTask(settings);
+      const focusSeconds = planned ?? settings.workDuration;
+      set({ status: 'running', timeLeft: focusSeconds, startedAt: now, elapsedAtPause: 0, plannedFocusSeconds: planned });
+      api.post('/timer/start', { durationSeconds: focusSeconds, startedAt: now })
         .catch((err) => console.warn('[timer] start sync failed:', err));
     } else {
       // Break phase: timeLeft already set by complete(), start the clock fresh
@@ -198,7 +238,14 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       const elapsed = startedAt
         ? elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000)
         : elapsedAtPause;
-      const sessionDuration = Math.min(settings.workDuration, Math.max(0, elapsed));
+      // Clamp against the block that actually ran, not the global default. This
+      // line runs BEFORE anything is recorded, so a wrong bound here destroys the
+      // time permanently — no later backend change can recover it. With a plan,
+      // a grace-zone block can legitimately exceed workDuration by up to 10
+      // minutes, and clamping to the default would under-credit every one of
+      // them, leaving the task short of its estimate and re-planning forever.
+      const plannedDuration = get().plannedFocusSeconds ?? settings.workDuration;
+      const sessionDuration = Math.min(plannedDuration, Math.max(0, elapsed));
       const newRounds = pomodoroRounds + 1;
       const isLongBreak = newRounds % settings.sessionsUntilLong === 0;
       const nextPhase: TimerPhase = isLongBreak ? 'longBreak' : 'shortBreak';
@@ -265,7 +312,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
           taskId: selectedTaskId ?? null,
           taskLabel,
           clientSessionId: sessionId,
-          plannedDurationSeconds: settings.workDuration,
+          plannedDurationSeconds: plannedDuration,
         })
         .then((res) => {
           if (res.success && res.data) {
@@ -277,13 +324,19 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         .catch((err) => console.warn('[timer] complete sync failed:', err));
       }
     } else {
-      // Break completed — return to focus idle, no stats update
+      // Break completed — return to focus idle, no stats update.
+      // Re-derived rather than read from a stored queue: the task’s logged time
+      // has just grown by the block that finished, so the remainder produces the
+      // tail of the plan on its own. That is why no plan array or active index
+      // is stored anywhere.
+      const nextPlanned = plannedFocusForSelectedTask(settings);
       set({
         status: 'idle',
         currentPhase: 'focus',
-        timeLeft: settings.workDuration,
+        timeLeft: nextPlanned ?? settings.workDuration,
         startedAt: null,
         elapsedAtPause: 0,
+        plannedFocusSeconds: nextPlanned,
       });
       persistActiveSession();
     }
@@ -316,12 +369,14 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       }
     } else {
       // Skip break: return to focus idle
+      const nextPlanned = plannedFocusForSelectedTask(settings);
       set({
         status: 'idle',
         currentPhase: 'focus',
-        timeLeft: settings.workDuration,
+        timeLeft: nextPlanned ?? settings.workDuration,
         startedAt: null,
         elapsedAtPause: 0,
+        plannedFocusSeconds: nextPlanned,
       });
     }
     persistActiveSession();
@@ -334,6 +389,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       timeLeft: get().settings.workDuration,
       startedAt: null,
       elapsedAtPause: 0,
+      plannedFocusSeconds: null,
     });
     persistActiveSession();
   },
@@ -405,7 +461,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   setMode: (mode: TimerMode) => {
     // Switching modes always lands on a clean idle state for the target mode.
     if (mode === 'stopwatch') {
-      set({ mode, status: 'idle', stopwatchElapsed: 0, startedAt: null, elapsedAtPause: 0 });
+      set({ mode, status: 'idle', stopwatchElapsed: 0, startedAt: null, elapsedAtPause: 0, plannedFocusSeconds: null });
     } else {
       set({
         mode,
@@ -415,6 +471,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         stopwatchElapsed: 0,
         startedAt: null,
         elapsedAtPause: 0,
+        plannedFocusSeconds: null,
       });
     }
     persistActiveSession();
@@ -454,6 +511,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
           pomodoroRounds: 0,
           startedAt: null,
           elapsedAtPause: 0,
+          plannedFocusSeconds: null,
         });
       } catch (err) {
         console.warn('[timerStore] hydrate settings failed:', err);
@@ -549,6 +607,9 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         status: 'idle',
         currentPhase: 'focus',
         timeLeft: settings.workDuration,
+        // Cleared before `restored` is spread below, so a snapshot that carries
+        // an overlay still wins, but a stale one can never leak across a day.
+        plannedFocusSeconds: null,
         globalSessions,
         globalTotalTime,
         lastSessionDate: isNewDay ? today : (lastSessionDate ?? today),
@@ -679,6 +740,7 @@ function persistActiveSession(): void {
     elapsedAtPause: s.elapsedAtPause,
     stopwatchElapsed: s.stopwatchElapsed,
     timeLeft: s.timeLeft,
+    plannedFocusSeconds: s.plannedFocusSeconds,
   };
   AsyncStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(snapshot))
     .catch((err) => console.warn('[timer] persist active session failed:', err));
@@ -701,7 +763,10 @@ function reconstructSession(snap: PersistedSession, settings: Settings): Partial
         stopwatchElapsed: elapsed,
       };
     }
-    const phaseDuration = getPhaseDuration(snap.currentPhase, settings);
+    // Snapshots written before this field existed have it undefined, which falls
+    // back to settings — exactly the old behaviour, so old snapshots keep working.
+    const planned = snap.plannedFocusSeconds ?? null;
+    const phaseDuration = getPhaseDuration(snap.currentPhase, settings, planned);
     return {
       status: 'running',
       mode: 'pomodoro',
@@ -709,6 +774,7 @@ function reconstructSession(snap: PersistedSession, settings: Settings): Partial
       startedAt: snap.startedAt,
       elapsedAtPause: snap.elapsedAtPause,
       timeLeft: Math.max(0, phaseDuration - elapsed),
+      plannedFocusSeconds: planned,
     };
   }
   // paused, or 'break' waiting to be started (startedAt null) — no clock advances.
@@ -720,6 +786,7 @@ function reconstructSession(snap: PersistedSession, settings: Settings): Partial
     elapsedAtPause: snap.elapsedAtPause,
     stopwatchElapsed: snap.stopwatchElapsed,
     timeLeft: snap.timeLeft,
+    plannedFocusSeconds: snap.plannedFocusSeconds ?? null,
   };
 }
 
@@ -733,9 +800,11 @@ export function initTimerStore(): void {
       // Only reset the timer display when idle — never interrupt a running/paused session.
       // pomodoroRounds is intentionally preserved so the long-break cycle isn't lost.
       if (status === 'idle') {
+        const planned = plannedFocusForSelectedTask(settings);
         useTimerStore.setState({
           currentPhase: 'focus',
-          timeLeft: settings.workDuration,
+          timeLeft: planned ?? settings.workDuration,
+          plannedFocusSeconds: planned,
         });
       }
     }
