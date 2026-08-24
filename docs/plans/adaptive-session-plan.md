@@ -395,3 +395,74 @@ Three further spec defects, auto-decided (P5, explicit over clever):
 - Phase 2 (Design): not started — UI scope confirmed.
 - Phase 3 (Eng): not started — F1/F2 migration is the main risk to review.
 - Phase 3.5 (DX): skipped, no developer-facing scope.
+
+---
+
+## D3 — Goal accounting clarified (user direction)
+
+User direction: goal progress tracks **tasks** (how many linked, how many
+completed). Sessions and time are **stats**, not the progress denominator. Goals
+should report how long they took, how many sessions it took — *even when those
+sessions were different lengths* — and how many tasks were involved.
+
+Two verifications change the plan materially.
+
+### V1 — Session length is ALREADY variable. C1 overstated the novelty.
+
+`setWorkDuration` (`timerStore.ts:376-383`) accepts **1 to 480 minutes**, exposed
+in the Timer Duration modal (`index.tsx:787-788`). Any user can set a 1-minute
+focus session today and farm session counts against a session-denominated goal.
+
+The CEO review framed variable session length as *introducing* a scoring
+exploit. It does not introduce it — the exploit ships today, through a
+deliberate settings control. The adaptive splitter makes non-uniform lengths
+**more common**, not newly possible. That is a real but much smaller concern,
+and it argues for exactly what the user asked for: stop treating session COUNT
+as a proxy for effort, and track time alongside it.
+
+### V2 — Goal progress already defaults to tasks.
+
+`resolveProgressMode` (`goalProgress.ts:32-38`) returns `'tasks'` unless the goal
+has `targetSessions > 0`. `computeProgress` then uses `completedTaskCount /
+linkedTaskCount`. The session component only engages when a user explicitly sets
+a session target.
+
+So the user's stated preference is **already the shipped default**. No formula
+change is required for the common case.
+
+### Consequence: F1 and F2 are dropped
+
+| # | Was | Now |
+|---|---|---|
+| F1 | Weight goal progress by session length | **DROPPED** — progress is task-denominated by default; weighting would change a formula that is already correct for the common case |
+| F2 | Live goal data migration | **DROPPED** — no formula change means no migration. This was the highest-risk item in the plan |
+| F3 | Credit cap at `sessionCredit.ts` | **STANDS** — a 20-min block still credits a 25-min effort as 20 |
+| F4 | Fix the false "Based on {N}m session length" label | **STANDS** — and V1 means it is *already* misleading for anyone who changed their duration |
+| F5 | Plan overlay, never a `settings` write | **STANDS** — and is now the single most important fix |
+
+Goals that DO set `targetSessions` keep counting sessions. That is the user's
+explicit opt-in, it already tolerates variable lengths because of V1, and the
+new time stats give it the honest denominator it was missing.
+
+### New scope — goal stats
+
+`TaskGoalCounts` today carries `linkedTaskCount`, `completedTaskCount`,
+`actualSessions`. It has **no time**. Add:
+
+| Stat | Source | Cost |
+|---|---|---|
+| Total focus time | `_sum: { durationSeconds: true }` on the EXISTING `session.groupBy` in `loadGoalCounts` | ~free, same query |
+| Sessions taken | `actualSessions` — already there | none |
+| Tasks involved / completed | already there | none |
+| Elapsed time to accomplish | `TaskGoal.createdAt` -> `completedAt` — both already stored | none |
+
+`Session.durationSeconds` and `plannedDurationSeconds` both exist on the model,
+so honest per-goal time needs no schema change and no new query — one `_sum`
+added to a `groupBy` that already runs.
+
+Stat line the goal detail should be able to render:
+
+> **12 of 15 tasks · 34 sessions · 14h 20m focus · 9 days**
+
+That reads correctly whether the sessions were 25 minutes each or a mix of 20s
+and 30s, which is exactly the property the user asked for.
