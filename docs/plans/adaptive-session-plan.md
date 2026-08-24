@@ -1035,3 +1035,132 @@ Codex: dropped at user request. Claude subagent: 3 critical findings, all
 verified. Two overturned earlier work in this document (A2 and F3), one
 superseded my A1. Consensus: 4 of 6 AGREED negative, 1 subagent-only, 1 agreed
 positive. Passing to Phase 4 (final gate).
+
+---
+
+# GSTACK REVIEW — Phase 4: Final gate
+
+## Pre-gate verification — gaps found and filled
+
+Three Phase 1 artifacts were skipped when the CEO phase halted early at the user
+challenge. Produced here rather than ticked off.
+
+### Error and Rescue Registry (CEO gap-fill)
+
+What the user sees when it goes wrong, and how they get out. "Rescue" is the
+part usually missing: an error the user cannot act on is a dead end.
+
+| Error | User sees | Rescue |
+|---|---|---|
+| Estimate reached, plan empty | "Estimate reached — using your 25 min default" | `+30 min` chip on the task card, which raises the estimate in place |
+| Block longer than the 6h server cap (FM2) | Nothing today — the POST 400s and the session vanishes | Clamp client-side BEFORE the timer starts, so the session can never be un-loggable. Never a post-hoc error |
+| Plan disagrees with the running timer after a force-quit (FM4) | A block of the wrong length, silently | Prevented by the frozen scalar. There is no recovery UI because there must be no failure |
+| Task deselected mid-run | Running timer continues unchanged | Nothing to rescue — the frozen scalar makes this a non-event. Documented so nobody "fixes" it |
+| `W` set below 5 (FM1) | Runaway completion loop | Structural clamp inside `getSessionPlan`. Not a warning, a bound |
+| Offline at block completion | Existing fire-and-forget queue handles it | Unchanged. The plan adds no new network dependency |
+| Estimate edited mid-run | Running block unchanged; next block re-derives | This is the D4 property. No error state exists |
+
+Design rule taken from this table: **every row is either prevented structurally
+or recoverable in one tap.** No row is left as "show an error".
+
+### Dream state delta (CEO gap-fill)
+
+```
+  CURRENT            You pick a task. The timer ignores it. You set a
+                     duration by hand, or accept whatever you used last.
+                     The estimate you typed shows a progress bar and
+                     nothing else.
+
+  THIS PLAN          You pick a task. The timer knows how much work is
+                     left and sizes the block to it. The promise made at
+                     creation time is the block you actually get.
+
+  12-MONTH IDEAL     The day is the object. Ascend knows what you
+                     committed to, what is left, and whether it fits the
+                     hours you have — and tells you before you overcommit,
+                     not after.
+```
+
+Delta: this plan is a step toward the ideal and does not reach it. It makes a
+single task self-sizing; it does not make the day self-aware. The one piece it
+deliberately leaves on the table is the projected finish time (offered as D4
+option C, not taken), which is the bridge between the two.
+
+### CEO completion summary (gap-fill)
+
+| Item | Result |
+|---|---|
+| Mode | SELECTIVE EXPANSION |
+| Premises named | 6, of which 4 were assumed silently |
+| Premise gate | Passed — accepted with the plan made overridable |
+| User challenges raised | 1 (session length) — **overruled by the user, as is their call** |
+| Scope added by review | 5 fallout items, then 2 dropped by D3, then 1 prerequisite refactor added by E2 |
+| Scope deleted by review | Plan queue, active index, persisted index, day-boundary resume, mid-plan-edit semantics, auto-advance, live goal migration |
+| Net | The review removed more scope than it added |
+
+## Cross-phase themes
+
+Concerns that surfaced independently in two or more phases. These are the
+high-confidence signals.
+
+**Theme 1 — Provenance. Flagged in Phase 2 and Phase 3.** Design concluded the
+screen must always say where the number came from ("Your default" vs "From this
+task's plan"). Eng independently found that with the overlay live, the existing
+duration stepper would silently do nothing. Two different routes to the same
+defect: a number on screen whose origin the user cannot see, and a control that
+appears to work and does not.
+
+**Theme 2 — The estimate field is the bottleneck, not the algorithm. Flagged in
+Phase 1 and Phase 2.** CEO named P1 (fill-rate unverified, field optional and
+stepper-only). Design independently proposed turning the no-estimate case into a
+`+ Add an estimate` call to action. Both concluded the splitting logic is
+downstream of a field most tasks may not carry.
+
+**Theme 3 — This codebase duplicates derived values instead of sharing them.
+Flagged in Phase 2 and Phase 3.** Design found two different estimate-progress
+bars for one concept (`tasks.tsx:388-393` vs `index.tsx:573-598`). Eng found
+three copies of the phase-duration calculation (`timerStore.ts:111`,
+`index.tsx:216-221`, `useAnalytics.ts:55`). Same disease, found twice by
+reviewers who never spoke. This is the strongest structural signal in the whole
+review, and it is why `getSessionPlan` must ship as one shared function rather
+than a fourth copy.
+
+## Implementation tasks
+
+The per-phase JSONL task lists that the aggregator reads are not present — the
+review phases ran inline rather than as separate skill invocations, so no
+`tasks-<phase>-*.jsonl` files were written. List assembled from the findings
+instead, ordered by dependency.
+
+- [ ] **T1 (P1, human ~0.5d / CC ~15m) — prerequisite refactor.** Collapse the
+  three phase-duration implementations onto one exported function.
+  Files: `mobile/stores/timerStore.ts:111`, `mobile/app/(tabs)/index.tsx:216-221`,
+  `mobile/store/hooks/useAnalytics.ts:55`. Blocks everything else (E2).
+- [ ] **T2 (P1, human ~0.5d / CC ~20m) — `getSessionPlan`.** New pure module
+  `mobile/lib/sessionPlan.ts`. Invariant `sum === roundedRemaining`, all blocks
+  multiples of 5 and `>= 5`, front-loaded distribution, `null` below 5, clamp at
+  360 min. Drop `breaks` from the return type (FM6).
+- [ ] **T3 (P1, human ~0.5d / CC ~20m) — property + example tests** for T2.
+  `mobile/lib/sessionPlan.test.ts`. The property test is what catches FM1.
+- [ ] **T4 (P1, human ~1d / CC ~30m) — freeze the overlay.** Add
+  `plannedFocusSeconds` to `TimerState` and `PersistedSession`; write at
+  `start()` and the break-to-focus branch; clear at `reset()`/`setMode()`/
+  `skip()`/idle-subscription; consume in `getPhaseDuration` and
+  `reconstructSession` (E3, FM4).
+- [ ] **T5 (P1, human ~0.5d / CC ~15m) — fix the credit clamp.**
+  `timerStore.ts:141`, `:205`, `:272`. Do NOT touch `sessionCredit.ts` (E1, FM3).
+- [ ] **T6 (P1, human ~1d / CC ~30m) — `POST /timer/complete` integration tests.**
+  New file; none exists today. The planned-2100/actual-2100 case is the
+  regression test for the whole feature.
+- [ ] **T7 (P2, human ~1d / CC ~30m) — Focus screen UI.** Plan becomes the
+  existing sequence row (`index.tsx:414-438`); provenance line; silent apply
+  with the escape hatch on the existing duration button; a11y per Phase 2.
+- [ ] **T8 (P2, human ~0.5d / CC ~15m) — creation preview.** `tasks.tsx:711`
+  renders the shape (`2 x 20 min`), not a count. Fix the now-false
+  `Based on {N}m session length` label at `:980` (F4).
+- [ ] **T9 (P2, human ~0.5d / CC ~20m) — goal time stats.** `_sum` on the
+  existing groupBy; widen `TaskGoalCounts` (5 construction sites); clamp elapsed
+  days at 0 (FM9). Integration tests for differing session lengths.
+- [ ] **T10 (P3) — deferred to TODOS.md.** FM7 pre-existing recurring-goal
+  under-count; estimate fill-rate telemetry; reconcile the two progress bars;
+  verify the Phase 2 contrast ratios; jest-expo for store tests.
