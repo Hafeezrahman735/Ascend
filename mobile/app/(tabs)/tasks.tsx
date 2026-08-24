@@ -12,6 +12,7 @@ import { Swipeable, GestureDetector, Gesture } from 'react-native-gesture-handle
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 import { Task, TaskGoal, TaskAnalytics, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
 import { useTheme, useIsDark, type ThemeColors } from '../../hooks/useTheme';
+import { getSessionPlan } from '../../lib/sessionPlan';
 import { useAppForeground } from '../../hooks/useAppState';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -606,7 +607,29 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       : prev);
   };
 
-  const estSessions = estimatedMinutes > 0 && sessionLengthMinutes > 0 ? Math.max(1, Math.round(estimatedMinutes / sessionLengthMinutes)) : 0;
+  // Same function the Focus screen loads into the timer, so the split promised
+  // here is the split you actually get. It used to be a bare count derived from
+  // a rounded division, which could not say how LONG each session would be —
+  // and the length is the part that changes.
+  const estPlan = useMemo(
+    () => getSessionPlan(estimatedMinutes, sessionLengthMinutes),
+    [estimatedMinutes, sessionLengthMinutes],
+  );
+
+  /**
+   * "2 x 20 min", or "25 + 20 + 20" when the split is uneven.
+   *
+   * Showing the shape rather than a count is what makes the grace-zone edge
+   * explain itself: tapping + from 35 to 40 changes this line from "35 min" to
+   * "2 x 20 min" right beside the stepper, so the user watches the change happen
+   * instead of discovering it later on the timer.
+   */
+  const estPlanLabel = useMemo(() => {
+    if (!estPlan || estPlan.length === 0) return null;
+    if (estPlan.length === 1) return `${estPlan[0]} min`;
+    const allSame = estPlan.every((b) => b === estPlan[0]);
+    return allSame ? `${estPlan.length} × ${estPlan[0]} min` : `${estPlan.join(' + ')} min`;
+  }, [estPlan]);
 
   return (
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
@@ -708,7 +731,14 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
                 <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
                   <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
                 </TouchableOpacity>
-                {estSessions > 0 && <Text style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}>≈ {estSessions} session{estSessions !== 1 ? 's' : ''}</Text>}
+                {estPlanLabel && (
+                  <Text
+                    style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}
+                    accessibilityLabel={`Splits into ${estPlan && estPlan.length > 1 ? `${estPlan.length} sessions of ${estPlan.join(', ')} minutes` : `one session of ${estPlan?.[0]} minutes`}`}
+                  >
+                    ≈ {estPlanLabel}
+                  </Text>
+                )}
               </View>
 
               {/* due date + category */}
@@ -977,7 +1007,12 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
                 </TouchableOpacity>
                 {focusHours && <Text style={{ color: Colors.subtext, fontSize: 11, marginLeft: 12 }}>≈ {focusHours}h</Text>}
               </View>
-              <Text style={[styles.fieldLabel, { marginBottom: 16 }]}>Based on {sessionLengthMinutes}m session length</Text>
+              {/* Sessions are no longer uniformly workDuration — a task with an
+                  estimate sizes its own blocks — so this figure is an estimate
+                  from the default, not an identity. Saying so keeps it honest. */}
+              <Text style={[styles.fieldLabel, { marginBottom: 16 }]}>
+                Estimated from your {sessionLengthMinutes}m default; sessions sized to a task estimate differ
+              </Text>
               <Text style={styles.fieldLabel}>Deadline</Text>
               {deadline ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>

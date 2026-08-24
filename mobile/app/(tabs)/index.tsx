@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Dimensions, Modal, ScrollView, Alert, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -11,6 +11,7 @@ import Svg, { Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
 import { getPhaseDuration } from '../../lib/phaseDuration';
+import { getSessionPlan } from '../../lib/sessionPlan';
 import { cancelAllTimerNotifications } from '../../services/notifications';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -304,6 +305,25 @@ export default function TimerScreen() {
       : pomodoroRounds % settings.sessionsUntilLong;
   const totalBreakBlocks = settings.sessionsUntilLong;
 
+  // Derived on render, deliberately not stored. The value the running timer
+  // uses is frozen separately in timerStore.plannedFocusSeconds; this is only
+  // for display, so it is free to recompute when the task or the setting moves.
+  const planBlocks = useMemo(() => {
+    if (isStopwatch || !selectedTask?.estimatedMinutes) return null;
+    const loggedMinutes = Math.round((selectedTask.totalTimeOnTask ?? 0) / 60);
+    const remaining = selectedTask.estimatedMinutes - loggedMinutes;
+    return getSessionPlan(remaining, Math.round(settings.workDuration / 60));
+  }, [isStopwatch, selectedTask, settings.workDuration]);
+
+  const planLabel = useMemo(() => {
+    if (!planBlocks || planBlocks.length === 0) return null;
+    if (planBlocks.length === 1) return `${planBlocks[0]} min`;
+    const allSame = planBlocks.every((b) => b === planBlocks[0]);
+    return allSame
+      ? `${planBlocks.length} × ${planBlocks[0]} min`
+      : `${planBlocks.join(' + ')} min`;
+  }, [planBlocks]);
+
   const minutes = Math.floor(timeLeft / 60).toString().padStart(2, '0');
   const seconds = (timeLeft % 60).toString().padStart(2, '0');
 
@@ -407,30 +427,63 @@ export default function TimerScreen() {
           </View>
         </View>
 
-        {/* BREAK PROGRESS BLOCKS — pomodoro cycle only */}
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'center',
-          alignItems: 'center',
-          paddingVertical: 10,
-        }}>
-          {!isStopwatch && Array.from({ length: totalBreakBlocks }).map((_, i) => (
-            <View
-              key={i}
-              style={{
-                width: i < completedDots ? 28 : 20,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
-                marginHorizontal: 3,
-                shadowColor: i < completedDots ? Colors.accent : 'transparent',
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: i < completedDots ? 0.6 : 0,
-                shadowRadius: 6,
-                elevation: i < completedDots ? 4 : 0,
-              }}
-            />
-          ))}
+        {/* SEQUENCE ROW — the task plan when one is loaded, else the pomodoro cycle */}
+        <View
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={planBlocks
+            ? `Task plan, block 1 of ${planBlocks.length}, ${planLabel}`
+            : `Pomodoro cycle, ${completedDots} of ${totalBreakBlocks} complete`}
+          accessibilityValue={{ min: 0, max: planBlocks ? planBlocks.length : totalBreakBlocks, now: planBlocks ? 1 : completedDots }}
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingVertical: 10,
+          }}>
+          {/* With a plan loaded this row shows THAT plan — one segment per
+              remaining block, width proportional to its length — instead of the
+              global pomodoro cycle. Two rows answering "how many blocks am I
+              doing" with different numbers would be worse than either alone. */}
+          {!isStopwatch && planBlocks
+            ? planBlocks.map((minutes, i) => {
+                const total = planBlocks.reduce((a, b) => a + b, 0);
+                const isCurrent = i === 0;
+                return (
+                  <View
+                    key={i}
+                    style={{
+                      width: Math.max(12, Math.round((minutes / total) * 180)),
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: isCurrent ? Colors.accent : Colors.inactive,
+                      marginHorizontal: 3,
+                      shadowColor: isCurrent ? Colors.accent : 'transparent',
+                      shadowOffset: { width: 0, height: 0 },
+                      shadowOpacity: isCurrent ? 0.6 : 0,
+                      shadowRadius: 6,
+                      elevation: isCurrent ? 4 : 0,
+                    }}
+                  />
+                );
+              })
+            : !isStopwatch && Array.from({ length: totalBreakBlocks }).map((_, i) => (
+                <View
+                  key={i}
+                  style={{
+                    width: i < completedDots ? 28 : 20,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
+                    marginHorizontal: 3,
+                    shadowColor: i < completedDots ? Colors.accent : 'transparent',
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: i < completedDots ? 0.6 : 0,
+                    shadowRadius: 6,
+                    elevation: i < completedDots ? 4 : 0,
+                  }}
+                />
+              ))}
         </View>
 
         {/* CONTROL BUTTONS */}
@@ -523,6 +576,15 @@ export default function TimerScreen() {
             }}
           >
             <Ionicons name="timer-outline" size={20} color={Colors.text} />
+            {/* A plan is currently overriding this control. Without the marker the
+                button silently shows a number the timer is not using. */}
+            {planBlocks && (
+              <View style={{
+                position: 'absolute', top: 8, right: 8,
+                width: 8, height: 8, borderRadius: 4,
+                backgroundColor: Colors.accent,
+              }} />
+            )}
           </TouchableOpacity>
         </View>
 
@@ -565,6 +627,20 @@ export default function TimerScreen() {
             </Text>
             <Ionicons name="chevron-forward" size={18} color={Colors.text} style={{ marginLeft: 8 }} />
           </View>
+
+          {/* Say where the duration came from. Without this the timer silently
+              changes length between task selections with nothing on screen to
+              explain why — which reads as a bug rather than a feature. */}
+          {selectedTask && !isStopwatch && (
+            <Text
+              style={{ color: Colors.subtext, fontSize: 11, marginTop: 6 }}
+              numberOfLines={2}
+            >
+              {planLabel
+                ? `From this task’s plan · ${planLabel}`
+                : `Your default · ${Math.round(settings.workDuration / 60)} min`}
+            </Text>
+          )}
 
           {selectedTask?.estimatedMinutes ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
