@@ -51,6 +51,7 @@ export function useLiveTotalFocusMinutes(): number {
   const currentPhase = useTimerStore((s) => s.currentPhase);
   const timeLeft = useTimerStore((s) => s.timeLeft);
   const status = useTimerStore((s) => s.status);
+  const plannedFocusSeconds = useTimerStore((s) => s.plannedFocusSeconds);
 
   return useMemo(() => {
     if (status === 'idle') return storedMinutes;
@@ -58,7 +59,7 @@ export function useLiveTotalFocusMinutes(): number {
     // against workDuration, so starting a 5-minute break added (25 - 5) = 20
     // phantom minutes to the live total the instant the break began.
     if (currentPhase !== 'focus') return storedMinutes;
-    const elapsedSeconds = Math.max(0, getPhaseDuration(currentPhase, settings) - timeLeft);
+    const elapsedSeconds = Math.max(0, getPhaseDuration(currentPhase, settings, plannedFocusSeconds) - timeLeft);
     return storedMinutes + Math.floor(elapsedSeconds / 60);
-  }, [storedMinutes, settings, currentPhase, timeLeft, status]);
+  }, [storedMinutes, settings, currentPhase, timeLeft, status, plannedFocusSeconds]);
 }

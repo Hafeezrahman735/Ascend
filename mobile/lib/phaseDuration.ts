@@ -44,3 +44,46 @@ export function getPhaseDuration(
   if (phase === 'shortBreak') return settings.shortBreakDuration;
   return plannedFocusSeconds ?? settings.workDuration;
 }
+
+/**
+ * Seconds elapsed in the current phase.
+ *
+ * `elapsedAtPause` is time already banked by previous start→pause cycles;
+ * `startedAt` anchors the segment running right now. A null `startedAt` means no
+ * segment is running (paused, or a break queued but not started), so only the
+ * banked time counts.
+ *
+ * `now` is passed in rather than read from `Date.now()` so this stays pure and
+ * testable.
+ */
+export function elapsedInPhase(
+  elapsedAtPause: number,
+  startedAt: number | null,
+  now: number,
+): number {
+  if (startedAt == null) return elapsedAtPause;
+  return elapsedAtPause + Math.floor((now - startedAt) / 1000);
+}
+
+export interface RunningPhase {
+  phase: TimerPhase;
+  settings: PhaseDurationSettings;
+  plannedFocusSeconds?: number | null;
+  elapsedAtPause: number;
+  startedAt: number | null;
+}
+
+/**
+ * Seconds left in the current phase, clamped at zero.
+ *
+ * The whole point of this living here is that `pause()`, `tick()` and the
+ * force-quit rehydration all used to compute it inline, and three of the four
+ * call sites forgot to pass `plannedFocusSeconds` — so a 20-minute planned block
+ * started at 20:00 and jumped to 24:59 on the first tick. One function, one
+ * signature that cannot be called without the overlay.
+ */
+export function remainingInPhase(input: RunningPhase, now: number): number {
+  const duration = getPhaseDuration(input.phase, input.settings, input.plannedFocusSeconds);
+  const elapsed = elapsedInPhase(input.elapsedAtPause, input.startedAt, now);
+  return Math.max(0, duration - elapsed);
+}

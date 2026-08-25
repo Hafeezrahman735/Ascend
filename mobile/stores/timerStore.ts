@@ -7,7 +7,7 @@ import { useGamificationStore } from './gamificationStore';
 import { recordCompletedSession, generateSessionId } from '../store/sync';
 import { getLocalDateString } from '../utils/date';
 import type { SessionReward } from '../types';
-import { getPhaseDuration, type TimerPhase } from '../lib/phaseDuration';
+import { elapsedInPhase, remainingInPhase, type TimerPhase } from '../lib/phaseDuration';
 import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
@@ -184,12 +184,15 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   },
 
   pause: () => {
-    const { status, startedAt, elapsedAtPause, currentPhase, settings } = get();
+    const { status, startedAt, elapsedAtPause, currentPhase, settings, plannedFocusSeconds } = get();
     if (status !== 'running' || !startedAt) return;
 
-    const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
-    const phaseDuration = getPhaseDuration(currentPhase, settings);
-    const timeLeft = Math.max(0, phaseDuration - elapsed);
+    const now = Date.now();
+    const elapsed = elapsedInPhase(elapsedAtPause, startedAt, now);
+    const timeLeft = remainingInPhase(
+      { phase: currentPhase, settings, plannedFocusSeconds, elapsedAtPause, startedAt },
+      now,
+    );
 
     set({ status: 'paused', elapsedAtPause: elapsed, startedAt: null, timeLeft });
     persistActiveSession();
@@ -209,19 +212,19 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   },
 
   tick: () => {
-    const { status, startedAt, elapsedAtPause, currentPhase, settings, mode } = get();
+    const { status, startedAt, elapsedAtPause, currentPhase, settings, mode, plannedFocusSeconds } = get();
     if (status !== 'running' || !startedAt) return;
 
     // Stopwatch counts up; never auto-completes.
     if (mode === 'stopwatch') {
-      const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
-      set({ stopwatchElapsed: elapsed });
+      set({ stopwatchElapsed: elapsedInPhase(elapsedAtPause, startedAt, Date.now()) });
       return;
     }
 
-    const phaseDuration = getPhaseDuration(currentPhase, settings);
-    const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
-    const timeLeft = Math.max(0, phaseDuration - elapsed);
+    const timeLeft = remainingInPhase(
+      { phase: currentPhase, settings, plannedFocusSeconds, elapsedAtPause, startedAt },
+      Date.now(),
+    );
 
     set({ timeLeft });
 
@@ -235,9 +238,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
     if (currentPhase === 'focus') {
       // Focus session completed — update stats, save, transition to break
-      const elapsed = startedAt
-        ? elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000)
-        : elapsedAtPause;
+      const elapsed = elapsedInPhase(elapsedAtPause, startedAt, Date.now());
       // Clamp against the block that actually ran, not the global default. This
       // line runs BEFORE anything is recorded, so a wrong bound here destroys the
       // time permanently — no later backend change can recover it. With a plan,
@@ -415,13 +416,23 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       console.warn('[timerStore] clearUserData failed:', err);
     }
 
+    // Logging out ends the session, so the status has to go with it. Clearing
+    // only the anchors left status on 'running' with a null startedAt — a state
+    // nothing else in the store can produce, where tick() returns early and the
+    // UI shows a running timer that cannot advance. It also stranded the Live
+    // Activity, which reads status to decide whether a card should exist.
     set({
       pomodoroRounds: 0,
       globalSessions: 0,
       globalTotalTime: 0,
       lastSessionDate: null,
+      status: 'idle',
+      currentPhase: 'focus',
+      timeLeft: get().settings.workDuration,
       startedAt: null,
       elapsedAtPause: 0,
+      stopwatchElapsed: 0,
+      plannedFocusSeconds: null,
     });
   },
 
@@ -486,7 +497,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   pauseStopwatch: () => {
     const { status, startedAt, elapsedAtPause } = get();
     if (status !== 'running' || !startedAt) return;
-    const elapsed = elapsedAtPause + Math.floor((Date.now() - startedAt) / 1000);
+    const elapsed = elapsedInPhase(elapsedAtPause, startedAt, Date.now());
     // Commit the worked time to today + all-time focus stats via the shared path.
     recordFocusSession(elapsed);
     // Reset the stopwatch back to 00:00 / idle.
@@ -752,7 +763,8 @@ function persistActiveSession(): void {
 // normal tick() path complete it). Paused/break states carry no clock, so restore verbatim.
 function reconstructSession(snap: PersistedSession, settings: Settings): Partial<TimerState> {
   if (snap.status === 'running' && snap.startedAt != null) {
-    const elapsed = snap.elapsedAtPause + Math.floor((Date.now() - snap.startedAt) / 1000);
+    const now = Date.now();
+    const elapsed = elapsedInPhase(snap.elapsedAtPause, snap.startedAt, now);
     if (snap.mode === 'stopwatch') {
       return {
         status: 'running',
@@ -766,14 +778,22 @@ function reconstructSession(snap: PersistedSession, settings: Settings): Partial
     // Snapshots written before this field existed have it undefined, which falls
     // back to settings — exactly the old behaviour, so old snapshots keep working.
     const planned = snap.plannedFocusSeconds ?? null;
-    const phaseDuration = getPhaseDuration(snap.currentPhase, settings, planned);
     return {
       status: 'running',
       mode: 'pomodoro',
       currentPhase: snap.currentPhase,
       startedAt: snap.startedAt,
       elapsedAtPause: snap.elapsedAtPause,
-      timeLeft: Math.max(0, phaseDuration - elapsed),
+      timeLeft: remainingInPhase(
+        {
+          phase: snap.currentPhase,
+          settings,
+          plannedFocusSeconds: planned,
+          elapsedAtPause: snap.elapsedAtPause,
+          startedAt: snap.startedAt,
+        },
+        now,
+      ),
       plannedFocusSeconds: planned,
     };
   }

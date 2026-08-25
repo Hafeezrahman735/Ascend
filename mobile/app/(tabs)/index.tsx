@@ -101,6 +101,7 @@ export default function TimerScreen() {
   const globalSessions = useTimerStore((s) => s.globalSessions);
   const globalTotalTime = useTimerStore((s) => s.globalTotalTime);
   const settings = useTimerStore((s) => s.settings);
+  const plannedFocusSeconds = useTimerStore((s) => s.plannedFocusSeconds);
   const start = useTimerStore((s) => s.start);
   const pause = useTimerStore((s) => s.pause);
   const resume = useTimerStore((s) => s.resume);
@@ -215,7 +216,7 @@ export default function TimerScreen() {
     prevPhaseRef.current = currentPhase;
   }, [status, currentPhase]);
 
-  const currentPhaseDuration = getPhaseDuration(currentPhase, settings);
+  const currentPhaseDuration = getPhaseDuration(currentPhase, settings, plannedFocusSeconds);
 
   const progress = useSharedValue(currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1);
 
