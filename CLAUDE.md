@@ -45,12 +45,60 @@ For every non-trivial task:
 4. Produce an implementation plan.
 5. Wait for approval if major architecture changes are required.
 6. Implement incrementally.
-7. Run tests.
-8. Verify linting.
-9. Review for regressions.
-10. Summarize changes.
+7. Write an integration test against a real database for any new or changed route.
+8. Run tests.
+9. Verify linting.
+10. Review for regressions.
+11. Summarize changes.
 
 Never skip directly to implementation.
+
+---
+
+# Testing Standard
+
+Every new backend route, and every change to an existing route's behavior, requires an integration test that runs against a real database — not a mock.
+
+This is not optional and not deferred to "later." It is part of implementing the feature, not a follow-up task.
+
+Integration tests must:
+
+- exercise the real route handler, not a reimplementation of its logic
+- run against a real local/test Postgres database (never staging or production data)
+- cover the success path and at least one meaningful failure path (invalid input, unauthorized access, not-found, etc.)
+- clean up or isolate their own data so tests can run repeatedly without side effects
+
+A feature is not "done" until its integration test exists and passes. This applies equally to Claude's own work and to reviewing changes written by the user.
+
+If a route genuinely cannot be integration-tested (e.g., it only wraps a third-party call with no meaningful local behavior), say so explicitly and explain why, rather than skipping the test silently.
+
+---
+
+# Git & Environment Workflow
+
+Ascend uses two long-lived branches, matching two Railway environments:
+
+- `staging` branch → deploys to the Railway `staging` environment
+- `main` branch → deploys to the Railway `production` environment
+
+**All new work happens against `staging` first. Nothing goes directly to `main`.**
+
+Workflow for any feature or fix:
+
+1. Branch from `staging` (or commit directly to `staging` for small changes, if that's the user's preference at the time).
+2. Implement the change, including its integration test(s), per the Testing Standard above.
+3. Push to `staging`. This deploys to the Railway staging environment automatically.
+4. Verify the change against the real staging environment — run the integration test suite against staging's database where applicable, and/or manually exercise the feature through the staging API/app build.
+5. Only after the change is confirmed working in staging — and after other in-flight staging changes are also confirmed stable together — merge `staging` into `main`.
+6. Merging into `main` deploys to production. Do not treat this step as routine; treat it as a release.
+
+Rules:
+
+- Never merge directly into `main` without having first verified the change on `staging`.
+- Never push experimental or half-finished work to `main`.
+- `staging` can be a little messy (multiple features in flight, iterating). `main` should always reflect a working, verified state.
+- If a change involves a database migration or schema change, confirm it has been run and verified against the staging database before it's included in a merge to `main`.
+- Flag clearly if a change is risky enough that it should be tested in staging for a period of time (e.g., a day) before being promoted, rather than merged immediately after it looks correct.
 
 ---
 
@@ -298,6 +346,8 @@ Avoid unrelated changes.
 
 Keep pull requests easy to review.
 
+See "Git & Environment Workflow" above for branch and environment rules.
+
 ---
 
 # Definition of Done
@@ -312,13 +362,15 @@ A task is complete only when:
 
 ✓ Tests pass
 
+✓ Integration test written and passing against a real database for any new or changed route
+
 ✓ Existing behavior preserved
 
 ✓ Edge cases handled
 
 ✓ Documentation updated if needed
 
-✓ Every new route needs an integration test before it's considered done
+✓ Changes deployed and verified on `staging` before being considered ready to merge to `main`
 
 ---
 
