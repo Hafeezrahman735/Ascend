@@ -17,6 +17,7 @@ import UnlockOverlay from '../components/achievements/UnlockOverlay';
 import { setupNotifications, configureNotificationHandler } from '../services/notifications';
 import { useNotificationListener } from '../hooks/useNotificationListener';
 import { useTimerNotifications } from '../hooks/useTimerNotifications';
+import { useTimerLiveActivity } from '../hooks/useTimerLiveActivity';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
@@ -63,6 +64,11 @@ export default function RootLayout() {
   // they stay alive across tab navigation — never inside the timer screen.
   useTimerNotifications();
   useNotificationListener();
+
+  // Mirrors the running session onto the Lock Screen and Dynamic Island. Root
+  // level for the same reason as the notifications above: the card has to
+  // outlive the timer screen, not be torn down when the user changes tab.
+  useTimerLiveActivity();
 
   // Configure how notifications render — must run before any can fire, no
   // permission needed, every launch.

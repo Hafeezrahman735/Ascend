@@ -56,6 +56,13 @@
         {
           "calendarPermission": "Ascend shows the events already on your calendar beside your tasks, so you can plan focus sessions around them. Events are read on your device and never leave it."
         }
+      ],
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.hafeezrahman.ascend.ExpoWidgetsTarget",
+          "groupIdentifier": "group.com.hafeezrahman.ascend"
+        }
       ]
     ],
     "extra": {
