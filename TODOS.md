@@ -93,3 +93,36 @@ Full plan: `docs/plans/adaptive-session-plan.md`
   review agent, NOT independently confirmed.
 - jest-expo + AsyncStorage mocks so `timerStore` freeze/persist/reconstruct
   can be tested automatically instead of by hand.
+
+---
+
+## Events (shipped to staging, `e7b5c27`..`acf5a20`)
+
+### Deliberate limits, so they are decisions and not oversights
+
+- **No location, description, or reminders on an Event.** Location is the
+  most-expected field on anything called an event; its absence is a choice, not
+  an omission. Add it when someone asks.
+- **Overnight events are unrepresentable.** `endMinutes` caps at 1439, so
+  11pm–1am is rejected rather than clamped to 11pm–11:59pm. Supporting them
+  means either a second date or a duration field, and neither is worth it until
+  a user hits the wall.
+- **Week and Month rows are still read-only.** Only Day view (grid + agenda) and
+  the Planning sections can open an item. This is consistent with the rest of
+  the calendar, which has never been tappable — but it does mean an event seen
+  in Week view has no path to editing except switching views.
+- **No unscheduled events or notes from Planning.** The sheets offer the seven
+  days of the anchored week, which makes the "created outside the loaded range
+  and vanishes on refetch" failure unreachable. An unscheduled note would need
+  the `notes` slice broken out of being derived from `items`, plus a
+  reconciliation rule between two independent slices.
+
+### Follow-ups
+
+- `mobile/.expo/devices.json` is tracked but is local machine state; it dirties
+  `git status` on every run. Should be gitignored and removed from the index.
+- Two new `react-hooks/set-state-in-effect` warnings (EventFormSheet,
+  NoteFormSheet) — the "reset the form when the sheet opens" pattern, identical
+  to the one TaskFormModal already had. Fixing all three means either keying the
+  sheets to remount or rendering them conditionally, which costs the dismiss
+  animation. Held at `warn` with the other 79.
