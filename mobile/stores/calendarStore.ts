@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
-import type { CalendarItem, CalendarStats, GoogleCalendarStatus, Note } from '../types';
+import type { CalendarEvent, CalendarItem, CalendarStats, GoogleCalendarStatus, Note } from '../types';
 import { useAuthStore } from './authStore';
 import {
   fetchAppleEvents,
@@ -64,6 +64,20 @@ async function clearCache(userId: string): Promise<void> {
   }
 }
 
+export interface EventInput {
+  title: string;
+  /** 'YYYY-MM-DD' */
+  date: string;
+  /** Minutes from local midnight. Both null together is an all-day event. */
+  startMinutes?: number | null;
+  endMinutes?: number | null;
+}
+
+/** True when a date falls inside the range currently painted on screen. */
+function inLoadedRange(range: { start: string; end: string } | null, date: string): boolean {
+  return !!range && date >= range.start && date <= range.end;
+}
+
 interface CalendarStoreState {
   /** Items for the currently-viewed range, server + device merged. */
   items: CalendarItem[];
@@ -90,6 +104,16 @@ interface CalendarStoreState {
   createNote: (data: { content: string; date?: string | null; isTodo?: boolean }) => Promise<void>;
   updateNote: (id: string, data: Partial<Note>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
+  /**
+   * Events live only inside `items` — there is no second slice.
+   *
+   * Notes have one because the app needs unscheduled notes, which GET /calendar
+   * cannot return. An event always carries a date, so `items` is a complete
+   * source for it and a parallel array could only ever disagree with itself.
+   */
+  createEvent: (data: EventInput) => Promise<CalendarEvent | null>;
+  updateEvent: (id: string, data: Partial<EventInput>) => Promise<boolean>;
+  deleteEvent: (id: string) => Promise<void>;
   clearCalendar: (userId?: string) => void;
   /** Marks the calendar for refetch after an external change. */
   invalidate: () => void;
@@ -256,6 +280,70 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
       if (!res.success) set({ notes: previous, items: previousItems });
     } catch {
       set({ notes: previous, items: previousItems });
+    }
+  },
+
+  createEvent: async (data) => {
+    try {
+      const res = await api.post<CalendarEvent>('/events', data);
+      if (!res.success || !res.data) {
+        set({ error: res.error || 'Could not create the event' });
+        return null;
+      }
+      const created = res.data;
+      // Only merge into `items` when the new date is on screen. Splicing in a
+      // day the current range does not cover would show a row that the next
+      // refetch silently removes.
+      if (inLoadedRange(get().loadedRange, created.date)) {
+        set({ items: [...get().items, { type: 'event', date: created.date, data: created }] });
+      }
+      return created;
+    } catch {
+      set({ error: 'Could not create the event' });
+      return null;
+    }
+  },
+
+  updateEvent: async (id, data) => {
+    const previousItems = get().items;
+    try {
+      const res = await api.patch<CalendarEvent>(`/events/${id}`, data);
+      if (!res.success || !res.data) {
+        set({ error: res.error || 'Could not update the event' });
+        return false;
+      }
+      const updated = res.data;
+      // Applied after the server answers rather than optimistically: an event can
+      // change DAY, and moving a row between buckets before the write is
+      // confirmed means unwinding two days on failure instead of one.
+      const withoutOld = previousItems.filter(
+        (i) => !(i.type === 'event' && (i.data as CalendarEvent).id === id),
+      );
+      set({
+        items: inLoadedRange(get().loadedRange, updated.date)
+          ? [...withoutOld, { type: 'event', date: updated.date, data: updated }]
+          : withoutOld,
+      });
+      return true;
+    } catch {
+      set({ error: 'Could not update the event' });
+      return false;
+    }
+  },
+
+  deleteEvent: async (id) => {
+    const previousItems = get().items;
+    set({
+      items: previousItems.filter(
+        (i) => !(i.type === 'event' && (i.data as CalendarEvent).id === id),
+      ),
+    });
+
+    try {
+      const res = await api.delete(`/events/${id}`);
+      if (!res.success) set({ items: previousItems, error: 'Could not delete the event' });
+    } catch {
+      set({ items: previousItems, error: 'Could not delete the event' });
     }
   },
 

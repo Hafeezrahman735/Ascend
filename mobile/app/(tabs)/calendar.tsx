@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCalendarStore } from '../../stores/calendarStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useTheme } from '../../hooks/useTheme';
-import type { Note } from '../../types';
+import type { CalendarEvent, CalendarItem, Note } from '../../types';
 import {
   getLocalDateString, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   addDays, addMonths, parseLocalDate,
@@ -18,6 +18,8 @@ import MonthView from '../../components/calendar/MonthView';
 import WeekView from '../../components/calendar/WeekView';
 import DayView from '../../components/calendar/DayView';
 import PlanningView from '../../components/calendar/PlanningView';
+import EventFormSheet, { type EventDraft } from '../../components/calendar/EventFormSheet';
+import NoteFormSheet, { type NoteDraft } from '../../components/calendar/NoteFormSheet';
 
 /**
  * Calendar tab — owns the view mode, the anchored date, and the fetch for the
@@ -36,9 +38,16 @@ export default function CalendarScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
 
+  // One piece of state per sheet, holding both "is it open" and "what is it
+  // editing". Two separate flags could disagree — open with nothing to edit, or
+  // hold a stale row while closed — and this cannot.
+  const [eventSheet, setEventSheet] = useState<{ event: CalendarEvent | null } | null>(null);
+  const [noteSheet, setNoteSheet] = useState<{ note: Note | null } | null>(null);
+
   const {
     items, stats, isLoading, isLoadingStats, error, syncWarning,
     fetchRange, fetchStats, createNote, updateNote, deleteNote,
+    createEvent, updateEvent, deleteEvent,
   } = useCalendarStore();
 
   // The visible range is derived from the mode, so every view fetches exactly
@@ -111,7 +120,9 @@ export default function CalendarScreen() {
     const from = startOfWeek(anchorDate, weekStartsOn);
     const to = endOfWeek(anchorDate, weekStartsOn);
     return `${from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${to.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
-  }, [viewMode, anchorDate]);
+    // weekStartsOn belongs here: without it, changing the setting left the range
+    // in the header describing the old week boundaries.
+  }, [viewMode, anchorDate, weekStartsOn]);
 
   const openDay = useCallback((date: string) => {
     setAnchorDate(parseLocalDate(date));
@@ -137,6 +148,71 @@ export default function CalendarScreen() {
       { text: 'Delete', style: 'destructive', onPress: () => deleteNote(note.id) },
     ]);
   }, [deleteNote]);
+
+  const weekStart = useMemo(
+    () => startOfWeek(anchorDate, weekStartsOn),
+    [anchorDate, weekStartsOn],
+  );
+
+  // The day a sheet opens on. The anchored day when it is inside the week the
+  // sheet offers, and the start of that week otherwise — so the preselected chip
+  // is always one the user can see.
+  const sheetDefaultDate = useMemo(() => {
+    const anchored = getLocalDateString(anchorDate);
+    const weekEnd = getLocalDateString(endOfWeek(anchorDate, weekStartsOn));
+    const from = getLocalDateString(weekStart);
+    return anchored >= from && anchored <= weekEnd ? anchored : from;
+  }, [anchorDate, weekStart, weekStartsOn]);
+
+  /**
+   * Follow a saved item to wherever it landed.
+   *
+   * Day view loads exactly one day, so an event moved to Thursday would be
+   * written correctly and then be nowhere on screen. Re-anchoring refetches the
+   * range that now contains it, which is also what the user asked for by
+   * choosing that day.
+   */
+  const followDate = useCallback((date: string) => {
+    if (date < start || date > end) setAnchorDate(parseLocalDate(date));
+  }, [start, end]);
+
+  const handleSaveEvent = useCallback(async (draft: EventDraft) => {
+    const editing = eventSheet?.event ?? null;
+    const ok = editing
+      ? await updateEvent(editing.id, draft)
+      : !!(await createEvent(draft));
+    if (!ok) return;
+    setEventSheet(null);
+    followDate(draft.date);
+  }, [eventSheet, updateEvent, createEvent, followDate]);
+
+  const handleDeleteEvent = useCallback(async () => {
+    const editing = eventSheet?.event;
+    if (!editing) return;
+    setEventSheet(null);
+    await deleteEvent(editing.id);
+  }, [eventSheet, deleteEvent]);
+
+  const handleSaveNote = useCallback(async (draft: NoteDraft) => {
+    const editing = noteSheet?.note ?? null;
+    if (editing) await updateNote(editing.id, draft);
+    else await createNote(draft);
+    setNoteSheet(null);
+    followDate(draft.date);
+  }, [noteSheet, updateNote, createNote, followDate]);
+
+  const handleDeleteNoteFromSheet = useCallback(async () => {
+    const editing = noteSheet?.note;
+    if (!editing) return;
+    setNoteSheet(null);
+    await deleteNote(editing.id);
+  }, [noteSheet, deleteNote]);
+
+  // Day view routes a tapped block or row back to the sheet that owns it.
+  const handleItemPress = useCallback((item: CalendarItem) => {
+    if (item.type === 'event') setEventSheet({ event: item.data as CalendarEvent });
+    else if (item.type === 'note') setNoteSheet({ note: item.data as Note });
+  }, []);
 
   const showSpinner = (isLoading || isLoadingStats) && items.length === 0 && !stats;
 
@@ -200,7 +276,7 @@ export default function CalendarScreen() {
           )}
           {viewMode === 'week' && (
             <WeekView
-              start={startOfWeek(anchorDate, weekStartsOn)}
+              start={weekStart}
               itemsByDate={itemsByDate}
               onDayPress={openDay}
               onToggleNote={toggleNote}
@@ -215,18 +291,43 @@ export default function CalendarScreen() {
               onAddNote={handleAddNote}
               onToggleNote={toggleNote}
               onDeleteNote={handleDeleteNote}
+              onItemPress={handleItemPress}
             />
           )}
           {viewMode === 'planning' && (
             <PlanningView
               stats={stats}
-              weekStart={startOfWeek(anchorDate, weekStartsOn)}
+              weekStart={weekStart}
               itemsByDate={itemsByDate}
               onDayPress={openDay}
+              onAddEvent={() => setEventSheet({ event: null })}
+              onEditEvent={(event) => setEventSheet({ event })}
+              onAddNote={() => setNoteSheet({ note: null })}
+              onEditNote={(note) => setNoteSheet({ note })}
             />
           )}
         </ScrollView>
       )}
+
+      <EventFormSheet
+        visible={!!eventSheet}
+        event={eventSheet?.event ?? null}
+        weekStart={weekStart}
+        defaultDate={sheetDefaultDate}
+        onSave={handleSaveEvent}
+        onDelete={eventSheet?.event ? handleDeleteEvent : undefined}
+        onClose={() => setEventSheet(null)}
+      />
+
+      <NoteFormSheet
+        visible={!!noteSheet}
+        note={noteSheet?.note ?? null}
+        weekStart={weekStart}
+        defaultDate={sheetDefaultDate}
+        onSave={handleSaveNote}
+        onDelete={noteSheet?.note ? handleDeleteNoteFromSheet : undefined}
+        onClose={() => setNoteSheet(null)}
+      />
     </SafeAreaView>
   );
 }

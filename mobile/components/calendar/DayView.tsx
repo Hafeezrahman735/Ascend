@@ -3,7 +3,10 @@ import { View, Text, TouchableOpacity, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem, CalendarItemType, Note } from '../../types';
-import { getCalendarStyles, DAY_GROUP_ORDER, TYPE_META, typeColor, itemTimeRange } from './shared';
+import {
+  getCalendarStyles, DAY_GROUP_ORDER, TYPE_META, typeColor, itemTimeRange,
+  isScheduledItem, calendarItemKey,
+} from './shared';
 import ItemRow from './ItemRow';
 import TimelineView from './TimelineView';
 
@@ -23,6 +26,7 @@ export default function DayView({
   onAddNote,
   onToggleNote,
   onDeleteNote,
+  onItemPress,
 }: {
   dateKey: string;
   itemsByDate: Map<string, CalendarItem[]>;
@@ -31,6 +35,8 @@ export default function DayView({
   onAddNote: () => void;
   onToggleNote: (note: Note) => void;
   onDeleteNote: (note: Note) => void;
+  /** Opens an item for editing. Reaches both the grid above and the agenda below. */
+  onItemPress?: (item: CalendarItem) => void;
 }) {
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
@@ -56,14 +62,16 @@ export default function DayView({
   const hasTimed = useMemo(() => dayItems.some((item) => itemTimeRange(item) !== null), [dayItems]);
   // Notes are not "on the day" in the scheduling sense — a day holding only notes
   // still reads as empty.
-  const hasAnything = useMemo(() => dayItems.some((item) => item.type !== 'note'), [dayItems]);
-  const hasUnscheduled = untimedItems.some((item) => item.type !== 'note');
+  const hasAnything = useMemo(() => dayItems.some(isScheduledItem), [dayItems]);
+  const hasUnscheduled = untimedItems.some(isScheduledItem);
 
   return (
     <View style={{ paddingTop: 6 }}>
       {/* When the day is completely empty the box below says so; a second empty
           prompt from the timeline would just be noise. */}
-      {hasAnything && <TimelineView dateKey={dateKey} items={dayItems} />}
+      {hasAnything && (
+        <TimelineView dateKey={dateKey} items={dayItems} onItemPress={onItemPress} />
+      )}
 
       <View style={{ paddingHorizontal: 16 }}>
         {!hasAnything && (
@@ -95,7 +103,17 @@ export default function DayView({
                 <Text style={styles.groupTitle}>{TYPE_META[type].label}</Text>
                 <Text style={{ color: Colors.subtext, fontSize: 11 }}>{group.length}</Text>
               </View>
-              {group.map((item, idx) => <ItemRow key={`${type}-${idx}`} item={item} />)}
+              {group.map((item) => (
+                <ItemRow
+                  key={calendarItemKey(item)}
+                  item={item}
+                  // Only events are editable from here so far; the rest of the
+                  // calendar is still read-only and should not pretend otherwise.
+                  onPress={onItemPress && item.type === 'event'
+                    ? () => onItemPress(item)
+                    : undefined}
+                />
+              ))}
             </View>
           );
         })}

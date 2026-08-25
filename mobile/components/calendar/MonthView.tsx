@@ -4,7 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import type { CalendarItem } from '../../types';
 import { eachDayOfRange, getLocalDateString, parseLocalDate, startOfMonth, endOfMonth } from '../../utils/date';
-import { itemTitle, itemIsDone, typeColor, itemTimeRange, formatMinutes, formatSeconds } from './shared';
+import {
+  itemTitle, itemIsDone, typeColor, itemTimeRange, isScheduledItem,
+  calendarItemKey, formatMinutes, formatSeconds,
+} from './shared';
 
 const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -28,7 +31,7 @@ const BUSY_MINUTES = 4 * 60;
 type Load = 'empty' | 'light' | 'moderate' | 'busy';
 
 function dayLoad(items: CalendarItem[]): { load: Load; bookedMinutes: number } {
-  const scheduled = items.filter((i) => i.type !== 'note');
+  const scheduled = items.filter(isScheduledItem);
   if (scheduled.length === 0) return { load: 'empty', bookedMinutes: 0 };
 
   let booked = 0;
@@ -96,12 +99,16 @@ export default function MonthView({
     : (days.includes(todayKey) ? todayKey : days[0]);
 
   const selectedItems = itemsByDate.get(selectedKey) ?? [];
-  const selectedScheduled = selectedItems.filter((i) => i.type !== 'note');
+  const selectedScheduled = selectedItems.filter(isScheduledItem);
   const { bookedMinutes } = dayLoad(selectedItems);
   const taskCount = selectedScheduled.filter(
     (i) => i.type === 'task' || i.type === 'habit_instance',
   ).length;
-  const eventCount = selectedScheduled.length - taskCount;
+  // Events, from here or from a linked calendar. Goal deadlines are neither, and
+  // land in neither tile on purpose — a deadline is a date, not an appointment.
+  const eventCount = selectedScheduled.filter(
+    (i) => i.type === 'event' || i.type === 'external_google' || i.type === 'external_apple',
+  ).length;
 
   return (
     <View>
@@ -212,7 +219,7 @@ export default function MonthView({
             const done = itemIsDone(item);
             return (
               <View
-                key={`${item.type}-${idx}`}
+                key={calendarItemKey(item)}
                 style={{
                   flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8,
                   borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: Colors.border,

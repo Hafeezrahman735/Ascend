@@ -4,7 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem, Note } from '../../types';
 import { addDays, eachDayOfRange, getLocalDateString, parseLocalDate } from '../../utils/date';
-import { getCalendarStyles, itemTitle, itemIsDone, typeColor, itemTimeRange, formatMinutes } from './shared';
+import {
+  getCalendarStyles, itemTitle, itemIsDone, typeColor, itemTimeRange,
+  isScheduledItem, calendarItemKey, formatMinutes,
+} from './shared';
 
 /** Cards drawn in a column before it collapses into a "+N" line. */
 const MAX_COLUMN_CARDS = 3;
@@ -43,7 +46,7 @@ export default function WeekView({
     : (days.includes(todayKey) ? todayKey : days[0]);
 
   const selectedItems = itemsByDate.get(selectedKey) ?? [];
-  const selectedScheduled = selectedItems.filter((i) => i.type !== 'note');
+  const selectedScheduled = selectedItems.filter(isScheduledItem);
   const selectedTodos = selectedItems
     .filter((i) => i.type === 'note')
     .map((i) => i.data as Note)
@@ -55,7 +58,7 @@ export default function WeekView({
       <View style={{ flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingBottom: 18 }}>
         {days.map((dateKey) => {
           const dayItems = itemsByDate.get(dateKey) ?? [];
-          const cards = dayItems.filter((i) => i.type !== 'note');
+          const cards = dayItems.filter(isScheduledItem);
           const day = parseLocalDate(dateKey);
           const isSelected = dateKey === selectedKey;
           const isToday = dateKey === todayKey;
@@ -92,7 +95,7 @@ export default function WeekView({
 
               {cards.slice(0, MAX_COLUMN_CARDS).map((item, idx) => (
                 <View
-                  key={`${item.type}-${idx}`}
+                  key={calendarItemKey(item)}
                   style={{
                     backgroundColor: Colors.surface,
                     borderWidth: 1,
@@ -168,7 +171,7 @@ export default function WeekView({
           const done = itemIsDone(item);
           return (
             <View
-              key={`${item.type}-${idx}`}
+              key={calendarItemKey(item)}
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8,
                 borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: Colors.border,

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem } from '../../types';
 import { getLocalDateString } from '../../utils/date';
 import {
-  itemTimeRange, itemTitle, itemIsDone, typeColor, formatTimeRange,
-  MINUTES_IN_DAY, type TimeRange,
+  itemTimeRange, itemTitle, itemIsDone, isPastEvent, blockStyle, calendarItemKey,
+  formatTimeRange, TYPE_META, MINUTES_IN_DAY, type TimeRange,
 } from './shared';
 
 /**
@@ -19,8 +19,14 @@ import {
 
 const HOUR_HEIGHT = 56;
 const GUTTER_WIDTH = 46;
-/** Enough vertical room that a 15-minute block still shows its title. */
-const MIN_BLOCK_HEIGHT = 26;
+/**
+ * Enough vertical room that a short block still shows its title AND stays
+ * tappable. Events skew short, and hitSlop cannot rescue a 26px row here: on a
+ * stacked grid, slop creates overlapping hit zones and the wrong block opens.
+ * Still under the 44pt guideline, which is why the Planning EVENTS list exists
+ * as the guaranteed-reachable path to the same rows.
+ */
+const MIN_BLOCK_HEIGHT = 32;
 /** A grid tighter than this is cramped, so short days get breathing room. */
 const MIN_VISIBLE_HOURS = 4;
 
@@ -78,11 +84,19 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-export default function TimelineView({ dateKey, items }: {
+export default function TimelineView({ dateKey, items, onItemPress }: {
   dateKey: string;
   items: CalendarItem[];
+  /**
+   * Opens the item behind a block. Without this there is no path to a timed
+   * event at all: DayView's agenda renders only UNTIMED items, so an event with
+   * a time exists nowhere else on the screen. Blocks stay inert when it is not
+   * passed, rather than looking tappable and doing nothing.
+   */
+  onItemPress?: (item: CalendarItem) => void;
 }) {
   const Colors = useTheme();
+  const now = new Date();
 
   const entries = useMemo(() => {
     const found: Entry[] = [];
@@ -177,21 +191,30 @@ export default function TimelineView({ dateKey, items }: {
             height: 1, backgroundColor: Colors.border,
           }} />
 
-          {placed.map((entry, idx) => {
-            const color = typeColor(entry.item.type, Colors);
+          {placed.map((entry) => {
             const done = itemIsDone(entry.item);
+            // Events never complete — you do not tick off a dentist appointment.
+            // They dim once they have happened instead, which is a different
+            // statement: it did not fail, it is simply behind you.
+            const past = isPastEvent(entry.item, now);
             const top = offsetFor(entry.range.start);
             const height = Math.max(
               MIN_BLOCK_HEIGHT,
               ((entry.range.end - entry.range.start) / 60) * HOUR_HEIGHT,
             );
             const widthPct = 100 / entry.columns;
+            const handled = !!onItemPress;
 
             return (
-              <View
-                key={`${entry.item.type}-${idx}`}
-                accessibilityRole="text"
-                accessibilityLabel={`${itemTitle(entry.item)}, ${formatTimeRange(entry.range)}`}
+              <TouchableOpacity
+                key={calendarItemKey(entry.item)}
+                onPress={handled ? () => onItemPress(entry.item) : undefined}
+                disabled={!handled}
+                activeOpacity={0.75}
+                accessibilityRole={handled ? 'button' : 'text'}
+                // The type leads: sighted users get form and colour, VoiceOver
+                // users used to get neither.
+                accessibilityLabel={`${TYPE_META[entry.item.type].label}: ${itemTitle(entry.item)}, ${formatTimeRange(entry.range)}${past ? ', past' : ''}`}
                 style={{
                   position: 'absolute',
                   top,
@@ -202,17 +225,17 @@ export default function TimelineView({ dateKey, items }: {
                   paddingTop: 1,
                 }}
               >
-                <View style={{
-                  flex: 1,
-                  backgroundColor: Colors.surface,
-                  borderLeftWidth: 3,
-                  borderLeftColor: color,
-                  borderRadius: 7,
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  overflow: 'hidden',
-                  opacity: done ? 0.55 : 1,
-                }}>
+                <View style={[
+                  {
+                    flex: 1,
+                    borderRadius: 7,
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    overflow: 'hidden',
+                    opacity: done || past ? 0.55 : 1,
+                  },
+                  blockStyle(entry.item.type, Colors),
+                ]}>
                   <Text
                     numberOfLines={height >= 44 ? 2 : 1}
                     style={{
@@ -230,7 +253,7 @@ export default function TimelineView({ dateKey, items }: {
                     </Text>
                   )}
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })}
 
