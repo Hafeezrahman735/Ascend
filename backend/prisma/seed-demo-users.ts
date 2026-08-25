@@ -74,6 +74,26 @@ const NOTE_POOL: { content: string; isTodo: boolean }[] = [
   { content: 'Two short blocks worked better than one long one', isTodo: false },
 ];
 
+/**
+ * Events — time that is spoken for but is not work the user does. Deliberately
+ * the kind of thing a task would be wrong for: you do not complete a dentist
+ * appointment, and ticking one off must never award XP or post to the feed.
+ *
+ * `startHour` null means an all-day event.
+ */
+const EVENT_POOL: { title: string; startHour: number | null; minutes: number }[] = [
+  { title: 'Dentist',                 startHour: 14, minutes: 60 },
+  { title: 'Team standup',            startHour: 9,  minutes: 15 },
+  { title: 'Lunch with Sam',          startHour: 12, minutes: 75 },
+  { title: 'Physio',                  startHour: 17, minutes: 45 },
+  { title: 'Flight to Lisbon',        startHour: 7,  minutes: 150 },
+  { title: 'Supervisor check-in',     startHour: 11, minutes: 30 },
+  { title: 'Public holiday',          startHour: null, minutes: 0 },
+  { title: 'Conference day',          startHour: null, minutes: 0 },
+  { title: 'Haircut',                 startHour: 16, minutes: 30 },
+  { title: 'Group project sync',      startHour: 15, minutes: 60 },
+];
+
 interface AttachedStat { label: string; value: string }
 
 interface DemoPost {
@@ -445,6 +465,7 @@ async function seedDemoUsers() {
     await prisma.taskGoal.deleteMany({ where: { userId: user.id } });
     await prisma.socialPost.deleteMany({ where: { authorId: user.id } });
     await prisma.note.deleteMany({ where: { userId: user.id } });
+    await prisma.event.deleteMany({ where: { userId: user.id } });
     await prisma.userAchievement.deleteMany({ where: { userId: user.id } });
 
     // Sessions.
@@ -578,6 +599,24 @@ async function seedDemoUsers() {
           isTodo: pick.isTodo,
           isCompleted: pick.isTodo && offset < 0,
           createdAt: day(Math.max(0, -offset)),
+        },
+      });
+    }
+
+    // Events across the visible fortnight, biased forward: a calendar full of
+    // appointments you have already been to is not what the app is for.
+    for (let i = 0; i < 3; i += 1) {
+      const pick = EVENT_POOL[Math.floor(hashUnit(`${u.username}:event:${i}`) * EVENT_POOL.length)];
+      const offset = Math.floor(hashUnit(`${u.username}:eventday:${i}`) * 8) - 1;
+      const startMinutes = pick.startHour === null ? null : pick.startHour * 60;
+      await prisma.event.create({
+        data: {
+          userId: user.id,
+          title: pick.title,
+          date: dayKey(offset),
+          startMinutes,
+          endMinutes: startMinutes === null ? null : startMinutes + pick.minutes,
+          createdAt: day(Math.max(0, -offset) + 1),
         },
       });
     }
