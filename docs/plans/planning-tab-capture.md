@@ -272,3 +272,213 @@ work. Shipping create-only would produce rows that are permanent by accident.
   starts from zero.
 - Unscheduled notes (F3) are **deferred**. They are architecture, not wiring,
   and they are not what the user asked to build first.
+
+---
+
+# GSTACK REVIEW — Phase 2: Design
+
+Codex: `[codex-unavailable]`. Single voice. **Overall 3/10 as a design spec.**
+
+## Scorecard
+
+```
+  Dimension                    Score   Verdict
+  ---------------------------- ------- ------------------------------------
+  1. Entry point in Planning    4/10   Named, not designed
+  2. Path back to an event      2/10   Named, and the proposed fix is wrong
+  3. Event vs Task language     3/10   Unaddressed; hue-only fails in light
+  4. Missing states             1/10   0 of 7 covered; 2 fail silently
+  5. Create sheet               5/10   Right instinct, chrome will drift
+  6. Accessibility              3/10   Unmentioned; 26px unlabelled blocks
+```
+
+The reviewer's summary, worth keeping verbatim: *"The model will land clean and
+the surface will land broken."*
+
+## Three findings, all VERIFIED against code written this session
+
+### D-A — CRITICAL: the plan's stated minimum does not work
+
+Line 251 offered `ItemRow` gaining an `onPress` as one acceptable path back to an
+event. **It reaches the empty set of the events users actually create.** VERIFIED
+in `DayView.tsx:38-41`:
+
+```ts
+const untimedItems = useMemo(
+  () => dayItems.filter((item) => itemTimeRange(item) === null), [dayItems]);
+```
+
+The agenda — and therefore every `ItemRow` — renders only from `untimedItems`.
+Anything with a time exists solely as an absolutely-positioned `<View>` inside
+`TimelineView`. Since an Event's whole purpose is to sit at a time,
+`ItemRow.onPress` buys all-day events and nothing else.
+
+Corrected minimum: **`TimelineView` takes `onItemPress?`**, its block becomes a
+`TouchableOpacity` with `accessibilityRole="button"` when handled and `disabled`
+otherwise, so tasks stay inert until someone does the F1 work. ~8 lines, and
+non-optional. `ItemRow.onPress` is a *second* pass that buys Week view.
+
+### D-B — CRITICAL: a missing `DAY_GROUP_ORDER` entry deletes data silently
+
+VERIFIED, `DayView.tsx:88` — the agenda iterates the **type list**, not the items:
+
+```tsx
+{DAY_GROUP_ORDER.filter((t) => t !== 'note').map((type) => {
+```
+
+A `CalendarItemType` absent from that array renders nowhere. No default, no
+warning. The item is fetched, stored, counted in `dayItems.length`, dotted in
+MonthView — and invisible in the view meant to show it. Separately,
+`TYPE_META[type].icon` on an absent key is a runtime crash.
+
+So scope item 4 is not the mechanical chore it was written as: five of the six
+switch surfaces degrade gracefully, `DAY_GROUP_ORDER` drops data, and `TYPE_META`
+throws. And it is not six surfaces — at least four more call sites encode "note
+is the exception, everything else is work": `PlanningView.bookedMinutes`,
+`PlanningView`'s `count`, `WeekView`'s `scheduled` filter, `DayView.hasAnything`.
+
+Fix: `event` goes **first** in `DAY_GROUP_ORDER` (all-day events frame a day
+rather than sit in it), `TYPE_META.event = { icon: 'calendar-number-outline',
+label: 'Events' }`, plus a test asserting
+`Object.keys(TYPE_META).length === DAY_GROUP_ORDER.length` so the next type
+cannot repeat this.
+
+### D-C — HIGH: events corrupt the number Planning leads with
+
+VERIFIED, `PlanningView.tsx:24-31` — `bookedMinutes` has no type filter, and its
+own doc comment reads "Minutes of **work** already placed on a day." The moment
+`itemTimeRange` returns a range for `event`, every day chip absorbs dentist
+appointments and standups.
+
+Worse, the caption I wrote — "Hours already planned on each day" — sits under a
+comment defending that exact wording against inventing a "free hours" budget.
+Including events makes it the same class of overstatement the comment was written
+to avoid.
+
+Fix taken: keep events in the total, change the caption to **"Hours already
+booked on each day."** Booked is the honest word for time that is gone regardless
+of why, and it serves the number's actual job — choosing which day can absorb an
+unscheduled task. Filtering events out instead would show `—` on a day full of
+meetings and recommend it as free, which is worse.
+
+## Entry point — decided
+
+A FAB is not architecturally available: `PlanningView` renders inside
+`calendar.tsx`'s `ScrollView`, so a floating button must be lifted into
+`calendar.tsx` and would then appear in Day, Week and Month, promising creation
+this plan does not build. The seven day chips' tap is already spent on
+`onDayPress`. A header `+` would sit between two chevrons that already change the
+week — bad neighbours.
+
+Decided: a third section between `UNSCHEDULED` and `THIS WEEK`:
+
+```
+EVENTS · 3                                   + Add
+```
+
+Label typography matches the existing sections exactly (10px / 700 / 1.2
+letter-spacing / `Colors.subtext`); the `+ Add` chip matches the tag-editor chip
+in `tasks.tsx`. Rows are the week's events, tappable, in the same
+`Colors.surface` / radius-16 card the UNSCHEDULED list uses.
+
+This is the entry point AND the path back, in one component, in the same change
+that lands the model. It needs no new data — `PlanningView` already receives
+`itemsByDate` for the whole anchored week. Cap at 5 rows with `+N more`, matching
+`WeekView`'s `MAX_VISIBLE_ITEMS = 4` convention.
+
+## Event vs Task — figure and ground, not hue
+
+Colour: reuse `Colors.AMBER`, minting no new token, on the reasoning already
+written into `shared.tsx:56-59` for Google/Apple — a dentist appointment authored
+here and one pulled from Google are the same *category*; which system stores it
+is a detail. That yields a coherent language: `primary` work you chose, `accent`
+work you repeat, `AMBER` time that is spoken for, `ROSE` a deadline, `subtext` a
+jotting.
+
+But hue alone fails: `lightColors.primary` `#E05A3A` and `lightSocialTheme.AMBER`
+`#D4820A` are both warm orange, ~23° apart, and both render as a **3px** rail.
+Dark mode is fine. One theme working is not the theme working.
+
+So separate by form:
+- **Task** — `Colors.surface` fill, `borderLeftWidth: 3` in `Colors.primary`. An
+  outlined container, something you can close.
+- **Event** — `Colors.AMBER_DIM` fill, no rail, `borderWidth: 1` in `AMBER + '55'`.
+  A solid painted band, the universal calendar-event form.
+
+Outlined vs filled is legible at 26px, in greyscale, in both palettes.
+
+`itemIsDone` returns `false` for events, so they never strike through or dim to
+0.55 on completion. That is correct — you do not *complete* a dentist
+appointment. Leave it; make sure nobody "fixes" it.
+
+## States — 7 identified, 0 were in the plan
+
+| State | Decision |
+|---|---|
+| No events | `styles.emptyBox`, copy "Nothing booked this week." matching the existing voice |
+| **Past event** | Currently renders at full strength forever, since `itemIsDone` is false. Dim to `opacity: 0.55`, no strikethrough — it did not fail, it happened |
+| Overlapping a task | `placeEntries` already clusters correctly. Two caveats: `MIN_BLOCK_HEIGHT` is applied after placement so a 15-min event visually overruns; cap clusters at 3 columns |
+| **All-day event** | Invisible without D-B. Also `ItemRow` emits "All day" only for external types — add `event` |
+| **Spanning midnight** | `endMinutes` cannot exceed 1440, so 11pm-1am is unrepresentable. **Decided: reject `end <= start`, overnight events out of scope for v1.** Silent clamping is the worst option and the default one |
+| Event outside the viewed week | Sheet must not default the date to today when today is outside the anchored week. Re-anchor the calendar to the created event's week on save |
+| Optimistic create then refetch | Same failure shape as F3: anything outside `{gte, lte}` vanishes on refetch. Re-anchoring solves it |
+
+## Create sheet
+
+A separate sheet is right — an Event is four fields, and it sheds
+TaskFormModal's awkward "pick a due date first" gate entirely. But the chrome
+must be extracted, not copied: scrim, grabber, header, and especially the
+`kbHeight` keyboard maths, which carries a comment explaining that lifting the
+whole sheet pushed the header off-screen. Reimplemented from memory, that bug
+comes back.
+
+**New scope item: extract `<BottomSheet>` from `TaskFormModal`.** ~40 lines, one
+call site to migrate, and it is the real answer to F4's drift concern.
+
+Written omissions, so they are decisions and not oversights: **no location, no
+reminders, no description.** Location is the most-expected field on anything
+called an event; its absence should be stated.
+
+## Accessibility
+
+- Timeline blocks label as `title, timeRange` with no type. Sighted users get a
+  colour; VoiceOver users get nothing. Add the type: "Event: Dentist, 2:00 PM –
+  3:00 PM." `ItemRow` has **no** `accessibilityLabel` at all.
+- `MIN_BLOCK_HEIGHT = 26` is under the 44pt floor and events skew short.
+  `hitSlop` cannot fix it — on a stacked grid, slop creates overlapping hit zones
+  and the wrong event opens. Raise to 32 and rely on the Planning EVENTS list as
+  the guaranteed-accessible path.
+- **AMBER must never be small text in the light theme**: `#D4820A` is ~3.0:1 on
+  white. This is *already* violated at `PlanningView.tsx:131`, where I render
+  `UNSCHEDULED · N` in AMBER at 10px. Fix while in the file. Event block titles
+  stay `Colors.textBright`.
+
+## New blocker the plan did not have
+
+`CalendarItem` is `{ type, date, data: unknown }` — **no id**. Every call site
+keys on `${type}-${idx}`. Index keys are harmless while nothing mutates; the
+moment an event can be deleted mid-list, React reuses component state across a
+shifted list. Fix before anything becomes tappable: serialize an id onto
+`CalendarItem`, or add `calendarItemKey(item)` beside the other helpers in
+`shared.tsx`.
+
+## Revised scope
+
+1. `Event` model + migration
+2. Routes: create, update, delete, inclusion in `GET /calendar`
+3. Integration tests against real Postgres for each
+4. `CalendarItemType` gains `event`; `DAY_GROUP_ORDER` places it **first**;
+   `TYPE_META` entry; the four "note is the exception" call sites; a test pinning
+   `TYPE_META` and `DAY_GROUP_ORDER` to the same length
+5. Mobile store slice
+6. **Planning `EVENTS` section** — entry point and edit path in one
+7. **`TimelineView.onItemPress`** — the only path to a timed event
+8. **Extract `<BottomSheet>`** from `TaskFormModal`; event sheet consumes it
+9. **`calendarItemKey`** before anything becomes tappable
+10. `bookedMinutes` keeps events; caption becomes "booked"
+11. Past-event dimming, all-day meta, `end <= start` rejection
+12. Accessibility: typed labels, `MIN_BLOCK_HEIGHT` 32, AMBER contrast fix
+
+**PHASE 2 COMPLETE.** Codex unavailable. Claude subagent: 3 critical/high
+findings, all verified, two of which invalidate scope items as written.
+Consensus: 0/6 CONFIRMED (single voice), 6/6 FLAGGED.
