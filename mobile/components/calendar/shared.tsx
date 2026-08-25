@@ -1,21 +1,36 @@
 import { StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import type { ThemeColors } from '../../hooks/useTheme';
-import type {
-  CalendarItem,
-  CalendarItemType,
-  Note,
-  Task,
-  TaskGoal,
-  GoogleCalendarEvent,
-} from '../../types';
+import type { CalendarItem, CalendarItemType } from '../../types';
 
 /**
  * Presentation shared by every calendar view.
  *
  * Item-type styling lives here rather than in each view so a task looks the same
  * in Month, Week and Day without three definitions drifting apart.
+ *
+ * The item taxonomy and time maths moved to lib/calendarItems.ts so they can be
+ * unit-tested under plain Node; they are re-exported below so existing call
+ * sites keep importing from one place.
  */
+
+export {
+  TYPE_META,
+  DAY_GROUP_ORDER,
+  calendarTaxonomyIsComplete,
+  calendarItemKey,
+  isScheduledItem,
+  itemTitle,
+  itemIsDone,
+  itemTimeRange,
+  isPastEvent,
+  bookedMinutes,
+  formatMinutes,
+  formatTimeRange,
+  formatSeconds,
+  groupItemsByDate,
+  MINUTES_IN_DAY,
+} from '../../lib/calendarItems';
+export type { TimeRange } from '../../lib/calendarItems';
 
 // 'planning' replaced 'stats' as a tab: Stats did not disappear, it became one of
 // two modes inside Planning. Planning leads because deciding what to work on
@@ -29,33 +44,15 @@ export const VIEW_MODES: { key: CalendarViewMode; label: string }[] = [
   { key: 'month', label: 'Month' },
 ];
 
-export const TYPE_META: Record<
-  CalendarItemType,
-  { icon: keyof typeof Ionicons.glyphMap; label: string }
-> = {
-  // The wire value stays `habit_instance` (backend contract); only the
-  // user-facing label changes. These are recurring tasks, not a separate
-  // "habits" feature — nothing in the app creates a "habit".
-  habit_instance:  { icon: 'repeat',           label: 'Recurring tasks' },
-  task:            { icon: 'checkbox-outline', label: 'Tasks' },
-  goal_deadline:   { icon: 'flag',             label: 'Goal deadlines' },
-  external_google: { icon: 'logo-google',      label: 'Google Calendar' },
-  external_apple:  { icon: 'calendar',         label: 'Device Calendar' },
-  note:            { icon: 'document-text',    label: 'Notes & to-dos' },
-};
-
-/** Day view group order — what you must do today, before what you noted. */
-export const DAY_GROUP_ORDER: CalendarItemType[] = [
-  'habit_instance', 'task', 'goal_deadline', 'external_google', 'external_apple', 'note',
-];
-
 export function typeColor(type: CalendarItemType, Colors: ThemeColors): string {
   switch (type) {
     case 'habit_instance': return Colors.accent;
     case 'task':           return Colors.primary;
     case 'goal_deadline':  return Colors.ROSE;
-    // Google and Apple share a colour on purpose — both read as "from my other
-    // calendar", and the source is a detail, not a category.
+    // Google, Apple and events authored here share a colour on purpose — a
+    // dentist appointment is the same category of thing wherever it is stored,
+    // and which system holds it is a detail, not a category.
+    case 'event':
     case 'external_google':
     case 'external_apple': return Colors.AMBER;
     case 'note':           return Colors.subtext;
@@ -63,116 +60,32 @@ export function typeColor(type: CalendarItemType, Colors: ThemeColors): string {
   }
 }
 
-export function itemTitle(item: CalendarItem): string {
-  switch (item.type) {
-    case 'task':
-    case 'habit_instance':
-      return (item.data as Task).title;
-    case 'goal_deadline':
-      return (item.data as TaskGoal).title;
-    case 'note':
-      return (item.data as Note).content;
-    case 'external_google':
-    case 'external_apple':
-      return (item.data as GoogleCalendarEvent).title;
-    default:
-      return '';
-  }
-}
-
-export function itemIsDone(item: CalendarItem): boolean {
-  if (item.type === 'task' || item.type === 'habit_instance') return (item.data as Task).isCompleted;
-  if (item.type === 'note') return (item.data as Note).isCompleted;
-  if (item.type === 'goal_deadline') return (item.data as TaskGoal).isCompleted;
-  return false;
-}
-
-// ── Time of day ───────────────────────────────────────────────
-
-export const MINUTES_IN_DAY = 1440;
-
-/** A block on the day grid: minutes from local midnight, end exclusive. */
-export interface TimeRange { start: number; end: number }
-
-/** Minutes from local midnight for an instant, in the device’s own timezone. */
-function localMinutes(d: Date): number {
-  return d.getHours() * 60 + d.getMinutes();
-}
-
-function isSameLocalDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
-}
-
 /**
- * The slot an item occupies on the day grid, or null when it has no time and
- * therefore belongs in the agenda below rather than on the timeline.
+ * How an item's block is drawn on the timeline.
  *
- * Two clocks meet here. Tasks carry minutes-from-local-midnight, which are
- * already wall-clock. External calendar events carry real ISO instants, so they
- * are converted through the device’s timezone — which is right for them: a
- * meeting at 14:00 UTC genuinely moves when you fly.
+ * Hue alone is not enough to separate a task from an event: in the light theme
+ * `primary` (#E05A3A) and `AMBER` (#D4820A) are both warm orange, about 23°
+ * apart, and both would render as a 3px rail. So they differ in FORM instead —
+ * a task is an outlined container with a coloured rail, an event is a solid
+ * painted band. That reads at 26px, in greyscale, and in both palettes.
  */
-export function itemTimeRange(item: CalendarItem): TimeRange | null {
-  if (item.type === 'task' || item.type === 'habit_instance') {
-    const task = item.data as Task;
-    if (task.startMinutes == null || task.endMinutes == null) return null;
-    return { start: task.startMinutes, end: task.endMinutes };
+export function blockStyle(type: CalendarItemType, Colors: ThemeColors) {
+  if (type === 'event' || type === 'external_google' || type === 'external_apple') {
+    return {
+      backgroundColor: Colors.AMBER_DIM,
+      borderWidth: 1,
+      borderColor: Colors.AMBER + '55',
+      borderLeftWidth: 1,
+      borderLeftColor: Colors.AMBER + '55',
+    };
   }
-
-  if (item.type === 'external_google' || item.type === 'external_apple') {
-    const event = item.data as GoogleCalendarEvent;
-    if (event.isAllDay || !event.startTime) return null;
-
-    const startedAt = new Date(event.startTime);
-    const start = localMinutes(startedAt);
-    const endedAt = event.endTime ? new Date(event.endTime) : null;
-
-    // An event running past midnight is clamped to the end of this day rather
-    // than drawn taller than the grid it sits in.
-    let end = endedAt && isSameLocalDay(endedAt, startedAt)
-      ? localMinutes(endedAt)
-      : MINUTES_IN_DAY;
-    // Zero-length and inverted events still need something visible to tap.
-    if (end <= start) end = Math.min(start + 30, MINUTES_IN_DAY);
-    return { start, end };
-  }
-
-  return null;
-}
-
-/**
- * '9:00 AM' in the user’s locale. Built on a fixed calendar date so it stays a
- * pure function — formatting must not depend on when it is called.
- */
-export function formatMinutes(minutes: number): string {
-  const clamped = Math.max(0, Math.min(MINUTES_IN_DAY - 1, Math.round(minutes)));
-  const d = new Date(2000, 0, 1, Math.floor(clamped / 60), clamped % 60);
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
-
-/** '9:00 AM – 10:30 AM', for a row that has room for the whole span. */
-export function formatTimeRange(range: TimeRange): string {
-  return `${formatMinutes(range.start)} – ${formatMinutes(range.end)}`;
-}
-
-export function formatSeconds(total: number): string {
-  const h = Math.floor(total / 3600);
-  const m = Math.round((total % 3600) / 60);
-  if (h === 0) return `${m}m`;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
-
-/** Groups items by date once, so no view filters the full list per cell. */
-export function groupItemsByDate(items: CalendarItem[]): Map<string, CalendarItem[]> {
-  const map = new Map<string, CalendarItem[]>();
-  for (const item of items) {
-    const bucket = map.get(item.date);
-    if (bucket) bucket.push(item);
-    else map.set(item.date, [item]);
-  }
-  return map;
+  return {
+    backgroundColor: Colors.surface,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderLeftWidth: 3,
+    borderLeftColor: typeColor(type, Colors),
+  };
 }
 
 export const EMPTY_ITEMS: CalendarItem[] = [];
@@ -219,5 +132,17 @@ export function getCalendarStyles(Colors: ThemeColors) {
     emptyBox: { alignItems: 'center', paddingVertical: 34, backgroundColor: Colors.surface, borderRadius: 12 },
     statCard: { backgroundColor: Colors.surface, borderRadius: 14, padding: 14, marginBottom: 12 },
     statHeading: { color: Colors.textBright, fontSize: 14, fontWeight: '700', marginBottom: 2 },
+    /** Section label used by Planning: UNSCHEDULED, EVENTS, THIS WEEK. */
+    sectionLabel: {
+      color: Colors.subtext, fontSize: 10, fontWeight: '700',
+      letterSpacing: 1.2, marginBottom: 10,
+    },
+    /** The '+ Add' chip beside a section label. */
+    addChip: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+      backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border,
+    },
+    addChipText: { color: Colors.primarySoft, fontSize: 11, fontWeight: '700' },
   });
 }

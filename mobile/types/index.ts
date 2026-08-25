@@ -234,10 +234,31 @@ export interface GoogleCalendarEvent {
   isAllDay: boolean;
 }
 
+/**
+ * An event authored in Ascend: time that is spoken for but is not work you do.
+ *
+ * Named CalendarEvent rather than Event to avoid shadowing the global DOM Event
+ * type. Deliberately thin — no description, no location, no reminders. Those are
+ * omissions, not oversights: the model exists to hold a day and a slot.
+ */
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  /** 'YYYY-MM-DD'. Always set — an undated event is not a thing. */
+  date: string;
+  /** Minutes from local midnight. Both null together means an all-day event. */
+  startMinutes: number | null;
+  endMinutes: number | null;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type CalendarItemType =
   | 'task'
   | 'habit_instance'
   | 'goal_deadline'
+  | 'event'
   | 'note'
   | 'external_google'
   | 'external_apple';

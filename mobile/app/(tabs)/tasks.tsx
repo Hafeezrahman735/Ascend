@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   View, Text, TouchableOpacity, ScrollView, Modal, TextInput,
   Alert, Platform, Dimensions, PanResponder, Animated,
-  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator, Switch, Keyboard,
+  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +23,7 @@ import {
 import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import RecentActivity from '../../components/RecentActivity';
+import FormSheet from '../../components/FormSheet';
 import { useAuthStore } from '../../stores/authStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
@@ -489,20 +490,6 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const [recurringDays, setRecurringDays] = useState<DayOfWeek[]>([]); // empty = every day
   const [editingTemplate, setEditingTemplate] = useState<Task | null>(null);
 
-  // Track the keyboard height so the sheet can sit ABOVE the keyboard and cap its
-  // own height, rather than the whole sheet being lifted (which pushed the header
-  // and close button off the top of the screen).
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates.height));
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
-  // Reset when the sheet closes so it reopens in a clean state.
-  useEffect(() => { if (!visible) setKbHeight(0); }, [visible]);
-
   useEffect(() => {
     if (visible) {
       setTitle(task?.title ?? ''); setDescription(task?.description ?? '');
@@ -632,299 +619,286 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   }, [estPlan]);
 
   return (
-    <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
-      <View style={{ flex: 1 }}>
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(2,2,12,0.62)' }]} />
-        </TouchableWithoutFeedback>
-        <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
-          {/* marginBottom lifts the sheet to rest on top of the keyboard; the matching
-              maxHeight reduction keeps the sheet top (and its header/close button)
-              anchored near the top of the screen instead of clipping off it. */}
-          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, marginBottom: kbHeight, maxHeight: SCREEN_H * 0.92 - kbHeight }}>
-            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-              <View style={{ width: 38, height: 4, borderRadius: 3, backgroundColor: Colors.inactive }} />
-            </View>
-            {/* header */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 14 }}>
-              <Text style={{ color: Colors.textBright, fontSize: 19, fontWeight: '700', letterSpacing: -0.3 }}>{task ? 'Edit task' : 'New task'}</Text>
-              <TouchableOpacity onPress={onClose} style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="close" size={16} color={Colors.subtext} />
+    <FormSheet
+      visible={visible}
+      title={task ? 'Edit task' : 'New task'}
+      onClose={onClose}
+      overlay={
+        <GoalPickerModal
+          visible={showGoalPicker}
+          goals={goals.filter((g) => !g.isCompleted)}
+          selectedGoalId={taskGoalId}
+          onSelect={setTaskGoalId}
+          onClose={() => setShowGoalPicker(false)}
+        />
+      }
+    >
+      {/* title */}
+      <TextInput
+        style={[{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 15, paddingVertical: 15, color: Colors.textBright, fontSize: 15, fontWeight: '600', marginBottom: titleError ? 6 : 18 }, titleError && { borderColor: ROSE, borderWidth: 1.5 }]}
+        placeholder="What are you working on?" placeholderTextColor={Colors.subtext}
+        value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={100} returnKeyType="next"
+      />
+      {titleError && <Text style={{ color: ROSE, fontSize: 11, marginBottom: 18 }}>Task name can't be empty</Text>}
+
+      {/* priority */}
+      <Text style={monoLabel}>PRIORITY</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
+        {PRIORITIES.map(({ value, label }) => { const sel = priority === value; const color = priorityColor(value); return (
+          <TouchableOpacity key={value} onPress={() => setPriority(value)} style={{ flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10, backgroundColor: sel ? color + '22' : Colors.raised, borderWidth: 1, borderColor: sel ? color : 'transparent' }}>
+            <Text style={{ color, fontSize: 12, fontWeight: sel ? '700' : '600' }}>{label}</Text>
+          </TouchableOpacity>
+        ); })}
+      </View>
+
+      {/* recurring toggle */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, marginBottom: isRecurring ? 4 : 18 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring</Text>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Repeats automatically each day</Text>
+        </View>
+        <Switch
+          value={isRecurring}
+          onValueChange={(val) => { setIsRecurring(val); if (val) setDueDate(''); else setRecurringDays([]); }}
+          trackColor={{ false: Colors.inactive, true: Colors.primary }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+
+      {/* day selector — only when recurring is on */}
+      {isRecurring && (
+        <View style={{ marginBottom: 18 }}>
+          <Text style={[monoLabel, { marginTop: 8 }]}>REPEAT ON</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {ALL_DAYS.map((day) => {
+              const isSelected = recurringDays.length === 0 || recurringDays.includes(day);
+              return (
+                <TouchableOpacity
+                  key={day}
+                  onPress={() => {
+                    if (recurringDays.length === 0) {
+                      // Currently "every day" — deselect this one.
+                      setRecurringDays(ALL_DAYS.filter((d) => d !== day));
+                    } else if (recurringDays.includes(day)) {
+                      const next = recurringDays.filter((d) => d !== day);
+                      setRecurringDays(next.length === 0 ? [] : next);
+                    } else {
+                      const next = [...recurringDays, day];
+                      setRecurringDays(next.length === 7 ? [] : next);
+                    }
+                  }}
+                  style={{ flex: 1, aspectRatio: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: isSelected ? Colors.primary : Colors.border }}
+                >
+                  <Text style={{ color: isSelected ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{DOW_LABELS[day]}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 8 }}>
+            {recurringDays.length === 0 ? 'Every day' : recurringDays.map((d) => DAY_FULL_LABELS[d]).join(', ')}
+          </Text>
+        </View>
+      )}
+
+      {/* estimated focus time */}
+      <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+        <TouchableOpacity disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes <= 0 ? 0.4 : 1 }}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
+        </TouchableOpacity>
+        <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '600', minWidth: 84, textAlign: 'center', fontFamily: MONO }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
+        <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
+        </TouchableOpacity>
+        {estPlanLabel && (
+          <Text
+            style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}
+            accessibilityLabel={`Splits into ${estPlan && estPlan.length > 1 ? `${estPlan.length} sessions of ${estPlan.join(', ')} minutes` : `one session of ${estPlan?.[0]} minutes`}`}
+          >
+            ≈ {estPlanLabel}
+          </Text>
+        )}
+      </View>
+
+      {/* due date + category */}
+      <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={monoLabel}>DUE DATE</Text>
+          {dueDate ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+                <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
+                <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
               </TouchableOpacity>
+              {/* A time cannot outlive its day — the server rejects that pair. */}
+              <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
             </View>
-
-            <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 26 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              {/* title */}
-              <TextInput
-                style={[{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 15, paddingVertical: 15, color: Colors.textBright, fontSize: 15, fontWeight: '600', marginBottom: titleError ? 6 : 18 }, titleError && { borderColor: ROSE, borderWidth: 1.5 }]}
-                placeholder="What are you working on?" placeholderTextColor={Colors.subtext}
-                value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={100} returnKeyType="next"
-              />
-              {titleError && <Text style={{ color: ROSE, fontSize: 11, marginBottom: 18 }}>Task name can't be empty</Text>}
-
-              {/* priority */}
-              <Text style={monoLabel}>PRIORITY</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
-                {PRIORITIES.map(({ value, label }) => { const sel = priority === value; const color = priorityColor(value); return (
-                  <TouchableOpacity key={value} onPress={() => setPriority(value)} style={{ flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10, backgroundColor: sel ? color + '22' : Colors.raised, borderWidth: 1, borderColor: sel ? color : 'transparent' }}>
-                    <Text style={{ color, fontSize: 12, fontWeight: sel ? '700' : '600' }}>{label}</Text>
-                  </TouchableOpacity>
-                ); })}
-              </View>
-
-              {/* recurring toggle */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, marginBottom: isRecurring ? 4 : 18 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring</Text>
-                  <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Repeats automatically each day</Text>
-                </View>
-                <Switch
-                  value={isRecurring}
-                  onValueChange={(val) => { setIsRecurring(val); if (val) setDueDate(''); else setRecurringDays([]); }}
-                  trackColor={{ false: Colors.inactive, true: Colors.primary }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-
-              {/* day selector — only when recurring is on */}
-              {isRecurring && (
-                <View style={{ marginBottom: 18 }}>
-                  <Text style={[monoLabel, { marginTop: 8 }]}>REPEAT ON</Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {ALL_DAYS.map((day) => {
-                      const isSelected = recurringDays.length === 0 || recurringDays.includes(day);
-                      return (
-                        <TouchableOpacity
-                          key={day}
-                          onPress={() => {
-                            if (recurringDays.length === 0) {
-                              // Currently "every day" — deselect this one.
-                              setRecurringDays(ALL_DAYS.filter((d) => d !== day));
-                            } else if (recurringDays.includes(day)) {
-                              const next = recurringDays.filter((d) => d !== day);
-                              setRecurringDays(next.length === 0 ? [] : next);
-                            } else {
-                              const next = [...recurringDays, day];
-                              setRecurringDays(next.length === 7 ? [] : next);
-                            }
-                          }}
-                          style={{ flex: 1, aspectRatio: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: isSelected ? Colors.primary : Colors.border }}
-                        >
-                          <Text style={{ color: isSelected ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{DOW_LABELS[day]}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 8 }}>
-                    {recurringDays.length === 0 ? 'Every day' : recurringDays.map((d) => DAY_FULL_LABELS[d]).join(', ')}
-                  </Text>
-                </View>
-              )}
-
-              {/* estimated focus time */}
-              <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-                <TouchableOpacity disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes <= 0 ? 0.4 : 1 }}>
-                  <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
-                </TouchableOpacity>
-                <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '600', minWidth: 84, textAlign: 'center', fontFamily: MONO }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
-                <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
-                  <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
-                </TouchableOpacity>
-                {estPlanLabel && (
-                  <Text
-                    style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}
-                    accessibilityLabel={`Splits into ${estPlan && estPlan.length > 1 ? `${estPlan.length} sessions of ${estPlan.join(', ')} minutes` : `one session of ${estPlan?.[0]} minutes`}`}
-                  >
-                    ≈ {estPlanLabel}
-                  </Text>
-                )}
-              </View>
-
-              {/* due date + category */}
-              <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={monoLabel}>DUE DATE</Text>
-                  {dueDate ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
-                        <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
-                        <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
-                      </TouchableOpacity>
-                      {/* A time cannot outlive its day — the server rejects that pair. */}
-                      <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
-                    </View>
-                  ) : (
-                    <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
-                      <Ionicons name="calendar-outline" size={14} color={Colors.subtext} />
-                      <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>Set date</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={monoLabel}>SUBJECT</Text>
-                  <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap' }}>
-                    {tags.map((t) => (
-                      <TouchableOpacity key={t} onPress={() => toggleTag(t)} style={{ backgroundColor: Colors.primaryDim, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.primarySoft }}>{t}</Text>
-                      </TouchableOpacity>
-                    ))}
-                    <TouchableOpacity onPress={() => setTagEditorOpen((v) => !v)} style={{ backgroundColor: Colors.raised, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.subtext }}>+ Add</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-
-              {/* scheduled time — drives the Day timeline in the calendar */}
-              <View style={{ marginBottom: 18 }}>
-                <Text style={monoLabel}>TIME</Text>
-                {!dueDate ? (
-                  <Text style={{ color: Colors.subtext, fontSize: 12 }}>
-                    Pick a due date first — a time needs a day to sit on.
-                  </Text>
-                ) : (
-                  <>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <TouchableOpacity
-                        onPress={() => setShowTimePicker('start')}
-                        accessibilityRole="button"
-                        accessibilityLabel={startMinutes === null ? 'Set start time' : `Start time, ${formatClock(startMinutes)}`}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
-                          paddingHorizontal: 12, paddingVertical: 9,
-                          backgroundColor: startMinutes === null ? Colors.raised : Colors.primaryDim,
-                        }}
-                      >
-                        <Ionicons name="time-outline" size={14} color={startMinutes === null ? Colors.subtext : Colors.primarySoft} />
-                        <Text style={{ fontSize: 12.5, fontWeight: '600', color: startMinutes === null ? Colors.subtext : Colors.primarySoft }}>
-                          {startMinutes === null ? 'Start' : formatClock(startMinutes)}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <Ionicons name="arrow-forward" size={13} color={Colors.subtext} />
-
-                      <TouchableOpacity
-                        disabled={startMinutes === null}
-                        onPress={() => setShowTimePicker('end')}
-                        accessibilityRole="button"
-                        accessibilityLabel={endMinutes === null ? 'Set end time' : `End time, ${formatClock(endMinutes)}`}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
-                          paddingHorizontal: 12, paddingVertical: 9,
-                          backgroundColor: endMinutes === null ? Colors.raised : Colors.primaryDim,
-                          opacity: startMinutes === null ? 0.4 : 1,
-                        }}
-                      >
-                        <Ionicons name="time-outline" size={14} color={endMinutes === null ? Colors.subtext : Colors.primarySoft} />
-                        <Text style={{ fontSize: 12.5, fontWeight: '600', color: endMinutes === null ? Colors.subtext : Colors.primarySoft }}>
-                          {endMinutes === null ? 'End' : formatClock(endMinutes)}
-                        </Text>
-                      </TouchableOpacity>
-
-                      {(startMinutes !== null || endMinutes !== null) && (
-                        <TouchableOpacity onPress={clearSchedule} accessibilityRole="button" accessibilityLabel="Clear time">
-                          <Ionicons name="close-circle" size={16} color={Colors.subtext} />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-
-                    {timeError && (
-                      <Text style={{ color: ROSE, fontSize: 11.5, marginTop: 7 }}>{timeError}</Text>
-                    )}
-
-                    {showTimePicker && (
-                      <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginTop: 10, alignItems: 'center', overflow: 'hidden' }}>
-                        <DateTimePicker
-                          value={minutesToDate(showTimePicker === 'start' ? startMinutes : endMinutes)}
-                          mode="time"
-                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                          onChange={handleTimeChange}
-                          themeVariant={isDark ? 'dark' : 'light'}
-                          accentColor={Colors.primary}
-                        />
-                        {Platform.OS === 'ios' && (
-                          <TouchableOpacity
-                            onPress={() => setShowTimePicker(null)}
-                            accessibilityRole="button"
-                            style={{ paddingVertical: 10, alignSelf: 'stretch', alignItems: 'center' }}
-                          >
-                            <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '700' }}>Done</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    )}
-                  </>
-                )}
-              </View>
-              {/* category editor (revealed by "+ Add") */}
-              {tagEditorOpen && (
-                <View style={{ marginBottom: 18 }}>
-                  {allTagChips.length > 0 && (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                      {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
-                        <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
-                          <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
-                        </TouchableOpacity>
-                      ); })}
-                    </View>
-                  )}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New category…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
-                    <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="add" size={18} color={Colors.primarySoft} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              {showDatePicker && (
-                <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
-                  <DateTimePicker
-                    value={datePickerValue}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                    onChange={handleDateChange}
-                    minimumDate={new Date()}
-                    themeVariant={isDark ? 'dark' : 'light'}
-                    accentColor={Colors.primary}
-                  />
-                </View>
-              )}
-
-              {/* link to goal — no slot in the design; kept here when goals exist */}
-              {goals.length > 0 && (
-                <View style={{ marginBottom: 18 }}>
-                  <Text style={monoLabel}>GOAL</Text>
-                  <TouchableOpacity onPress={() => setShowGoalPicker(true)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13 }}>
-                    <Ionicons name="flag-outline" size={15} color={Colors.subtext} style={{ marginRight: 8 }} />
-                    <Text style={{ flex: 1, color: selectedGoal ? Colors.primarySoft : Colors.subtext, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{selectedGoal ? selectedGoal.title : 'Link to a goal (optional)'}</Text>
-                    <Ionicons name="chevron-forward" size={14} color={Colors.subtext} />
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* notes */}
-              <Text style={monoLabel}>NOTES</Text>
-              <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="Any notes for this task…" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
-
-              {/* create / save */}
-              <TouchableOpacity onPress={handleSave} disabled={!!timeError} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: timeError ? 0.5 : 1 }}>
-                <Ionicons name={task ? 'checkmark' : 'add'} size={16} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{task ? 'Save changes' : 'Create task'}</Text>
+          ) : (
+            <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+              <Ionicons name="calendar-outline" size={14} color={Colors.subtext} />
+              <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>Set date</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={monoLabel}>SUBJECT</Text>
+          <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap' }}>
+            {tags.map((t) => (
+              <TouchableOpacity key={t} onPress={() => toggleTag(t)} style={{ backgroundColor: Colors.primaryDim, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.primarySoft }}>{t}</Text>
               </TouchableOpacity>
-
-              {task && onDelete && (
-                <TouchableOpacity onPress={onDelete} style={{ marginTop: 12, paddingVertical: 13, borderRadius: 12, alignItems: 'center', backgroundColor: ROSE_DIM, borderWidth: 0.5, borderColor: ROSE + '40' }}>
-                  <Text style={{ color: ROSE, fontWeight: '700', fontSize: 14 }}>Delete Task</Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
+            ))}
+            <TouchableOpacity onPress={() => setTagEditorOpen((v) => !v)} style={{ backgroundColor: Colors.raised, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.subtext }}>+ Add</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
-      <GoalPickerModal visible={showGoalPicker} goals={goals.filter((g) => !g.isCompleted)} selectedGoalId={taskGoalId} onSelect={setTaskGoalId} onClose={() => setShowGoalPicker(false)} />
-    </Modal>
+
+      {/* scheduled time — drives the Day timeline in the calendar */}
+      <View style={{ marginBottom: 18 }}>
+        <Text style={monoLabel}>TIME</Text>
+        {!dueDate ? (
+          <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+            Pick a due date first — a time needs a day to sit on.
+          </Text>
+        ) : (
+          <>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => setShowTimePicker('start')}
+                accessibilityRole="button"
+                accessibilityLabel={startMinutes === null ? 'Set start time' : `Start time, ${formatClock(startMinutes)}`}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
+                  paddingHorizontal: 12, paddingVertical: 9,
+                  backgroundColor: startMinutes === null ? Colors.raised : Colors.primaryDim,
+                }}
+              >
+                <Ionicons name="time-outline" size={14} color={startMinutes === null ? Colors.subtext : Colors.primarySoft} />
+                <Text style={{ fontSize: 12.5, fontWeight: '600', color: startMinutes === null ? Colors.subtext : Colors.primarySoft }}>
+                  {startMinutes === null ? 'Start' : formatClock(startMinutes)}
+                </Text>
+              </TouchableOpacity>
+
+              <Ionicons name="arrow-forward" size={13} color={Colors.subtext} />
+
+              <TouchableOpacity
+                disabled={startMinutes === null}
+                onPress={() => setShowTimePicker('end')}
+                accessibilityRole="button"
+                accessibilityLabel={endMinutes === null ? 'Set end time' : `End time, ${formatClock(endMinutes)}`}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
+                  paddingHorizontal: 12, paddingVertical: 9,
+                  backgroundColor: endMinutes === null ? Colors.raised : Colors.primaryDim,
+                  opacity: startMinutes === null ? 0.4 : 1,
+                }}
+              >
+                <Ionicons name="time-outline" size={14} color={endMinutes === null ? Colors.subtext : Colors.primarySoft} />
+                <Text style={{ fontSize: 12.5, fontWeight: '600', color: endMinutes === null ? Colors.subtext : Colors.primarySoft }}>
+                  {endMinutes === null ? 'End' : formatClock(endMinutes)}
+                </Text>
+              </TouchableOpacity>
+
+              {(startMinutes !== null || endMinutes !== null) && (
+                <TouchableOpacity onPress={clearSchedule} accessibilityRole="button" accessibilityLabel="Clear time">
+                  <Ionicons name="close-circle" size={16} color={Colors.subtext} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {timeError && (
+              <Text style={{ color: ROSE, fontSize: 11.5, marginTop: 7 }}>{timeError}</Text>
+            )}
+
+            {showTimePicker && (
+              <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginTop: 10, alignItems: 'center', overflow: 'hidden' }}>
+                <DateTimePicker
+                  value={minutesToDate(showTimePicker === 'start' ? startMinutes : endMinutes)}
+                  mode="time"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={handleTimeChange}
+                  themeVariant={isDark ? 'dark' : 'light'}
+                  accentColor={Colors.primary}
+                />
+                {Platform.OS === 'ios' && (
+                  <TouchableOpacity
+                    onPress={() => setShowTimePicker(null)}
+                    accessibilityRole="button"
+                    style={{ paddingVertical: 10, alignSelf: 'stretch', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '700' }}>Done</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </>
+        )}
+      </View>
+      {/* category editor (revealed by "+ Add") */}
+      {tagEditorOpen && (
+        <View style={{ marginBottom: 18 }}>
+          {allTagChips.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
+                <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
+                  <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
+                </TouchableOpacity>
+              ); })}
+            </View>
+          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New category…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
+            <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="add" size={18} color={Colors.primarySoft} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {showDatePicker && (
+        <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
+          <DateTimePicker
+            value={datePickerValue}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            onChange={handleDateChange}
+            minimumDate={new Date()}
+            themeVariant={isDark ? 'dark' : 'light'}
+            accentColor={Colors.primary}
+          />
+        </View>
+      )}
+
+      {/* link to goal — no slot in the design; kept here when goals exist */}
+      {goals.length > 0 && (
+        <View style={{ marginBottom: 18 }}>
+          <Text style={monoLabel}>GOAL</Text>
+          <TouchableOpacity onPress={() => setShowGoalPicker(true)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13 }}>
+            <Ionicons name="flag-outline" size={15} color={Colors.subtext} style={{ marginRight: 8 }} />
+            <Text style={{ flex: 1, color: selectedGoal ? Colors.primarySoft : Colors.subtext, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{selectedGoal ? selectedGoal.title : 'Link to a goal (optional)'}</Text>
+            <Ionicons name="chevron-forward" size={14} color={Colors.subtext} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* notes */}
+      <Text style={monoLabel}>NOTES</Text>
+      <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="Any notes for this task…" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
+
+      {/* create / save */}
+      <TouchableOpacity onPress={handleSave} disabled={!!timeError} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: timeError ? 0.5 : 1 }}>
+        <Ionicons name={task ? 'checkmark' : 'add'} size={16} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{task ? 'Save changes' : 'Create task'}</Text>
+      </TouchableOpacity>
+
+      {task && onDelete && (
+        <TouchableOpacity onPress={onDelete} style={{ marginTop: 12, paddingVertical: 13, borderRadius: 12, alignItems: 'center', backgroundColor: ROSE_DIM, borderWidth: 0.5, borderColor: ROSE + '40' }}>
+          <Text style={{ color: ROSE, fontWeight: '700', fontSize: 14 }}>Delete Task</Text>
+        </TouchableOpacity>
+      )}
+    </FormSheet>
   );
 }
 
