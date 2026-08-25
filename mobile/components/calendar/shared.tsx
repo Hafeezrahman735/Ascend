@@ -17,13 +17,16 @@ import type {
  * in Month, Week and Day without three definitions drifting apart.
  */
 
-export type CalendarViewMode = 'day' | 'week' | 'month' | 'stats';
+// 'planning' replaced 'stats' as a tab: Stats did not disappear, it became one of
+// two modes inside Planning. Planning leads because deciding what to work on
+// comes before looking at any particular day.
+export type CalendarViewMode = 'planning' | 'day' | 'week' | 'month';
 
 export const VIEW_MODES: { key: CalendarViewMode; label: string }[] = [
+  { key: 'planning', label: 'Planning' },
   { key: 'day', label: 'Day' },
   { key: 'week', label: 'Week' },
   { key: 'month', label: 'Month' },
-  { key: 'stats', label: 'Stats' },
 ];
 
 export const TYPE_META: Record<

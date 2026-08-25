@@ -17,7 +17,7 @@ import {
 import MonthView from '../../components/calendar/MonthView';
 import WeekView from '../../components/calendar/WeekView';
 import DayView from '../../components/calendar/DayView';
-import StatsView from '../../components/calendar/StatsView';
+import PlanningView from '../../components/calendar/PlanningView';
 
 /**
  * Calendar tab — owns the view mode, the anchored date, and the fetch for the
@@ -30,7 +30,8 @@ export default function CalendarScreen() {
   // Week ranges follow the user's 'week starts on' setting.
   const weekStartsOn = useUserSettingsStore((s) => s.weekStartDay);
 
-  const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
+  // Planning opens first: what needs doing comes before which day it lands on.
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('planning');
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
@@ -53,7 +54,7 @@ export default function CalendarScreen() {
         end: getLocalDateString(endOfMonth(anchorDate)),
       };
     }
-    // Week view and Stats both operate on the anchored week.
+    // Week view and Planning both operate on the anchored week.
     return {
       start: getLocalDateString(startOfWeek(anchorDate, weekStartsOn)),
       end: getLocalDateString(endOfWeek(anchorDate, weekStartsOn)),
@@ -63,7 +64,11 @@ export default function CalendarScreen() {
   // Stats is the only view built from aggregates; every other view renders the
   // scheduled items that fetchRange returns.
   const loadVisibleRange = useCallback(
-    () => (viewMode === 'stats' ? fetchStats(start, end) : fetchRange(start, end)),
+    // Planning needs BOTH: stats for its Stats mode, and the range for the
+    // per-day planned hours in its Plan mode.
+    () => (viewMode === 'planning'
+      ? Promise.all([fetchStats(start, end), fetchRange(start, end)]).then(() => undefined)
+      : fetchRange(start, end)),
     [viewMode, start, end, fetchRange, fetchStats],
   );
 
@@ -212,7 +217,14 @@ export default function CalendarScreen() {
               onDeleteNote={handleDeleteNote}
             />
           )}
-          {viewMode === 'stats' && <StatsView stats={stats} />}
+          {viewMode === 'planning' && (
+            <PlanningView
+              stats={stats}
+              weekStart={startOfWeek(anchorDate, weekStartsOn)}
+              itemsByDate={itemsByDate}
+              onDayPress={openDay}
+            />
+          )}
         </ScrollView>
       )}
     </SafeAreaView>
