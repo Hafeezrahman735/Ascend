@@ -235,3 +235,40 @@ routes start from zero.
   as the cost of a separate Event model. It is the benefit. The cost sits on the
   other side: a Task-shaped event is *inside* accounting when it must not be.
 - **My D1 recommendation was weaker than the option the user picked.** See above.
+
+## D2 RESOLVED — Event model, built first
+
+Challenge raised with verified evidence, user decided twice: a first-class
+`Event` model, and it lands before placement. Settled; this section exists so
+nobody re-opens it.
+
+The consequence the user accepted, stated plainly so it is designed for rather
+than discovered: events will be creatable on a calendar where `ItemRow` and
+`TimelineView` have zero touch handlers. **An event you can create but cannot
+tap is an event you cannot edit, move, or delete.**
+
+That makes one thing non-optional in the design phase: creating an Event must
+come with a way to reach it again. Either the create sheet doubles as the edit
+sheet reached from somewhere, or `ItemRow` gains an `onPress` as part of this
+work. Shipping create-only would produce rows that are permanent by accident.
+
+### Scope, ordered
+
+1. `Event` model + migration
+2. Routes: create, update, delete, and inclusion in `GET /calendar`
+3. Integration tests against real Postgres for every one of them
+4. `CalendarItemType` gains `event`; the six switch surfaces in
+   `components/calendar/shared.tsx` each gain a branch
+5. Mobile store slice + create sheet in Planning
+6. A path back to an existing event (see above)
+
+### Carried forward from Phase 1, not dropped
+
+- **F1** — the read-only calendar. Not fixed by this plan, but item 6 above is
+  the minimum that keeps events from being write-once.
+- **F7** — no metric. Primary: share of active tasks carrying a `dueDate`.
+  Guardrail: focus sessions started per scheduled task.
+- **F8** — `/notes` has zero integration tests today; anything touching them
+  starts from zero.
+- Unscheduled notes (F3) are **deferred**. They are architecture, not wiring,
+  and they are not what the user asked to build first.
