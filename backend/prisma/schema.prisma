@@ -40,6 +40,7 @@ model User {
   friendshipsAddr       Friendship[]                 @relation("Addressee")
   friendshipsReq        Friendship[]                 @relation("Requester")
   notes                 Note[]
+  events                Event[]
   calendarLinks         ExternalCalendarConnection[]
   notifications         Notification[]
   refreshTokens         RefreshToken[]
@@ -182,19 +183,19 @@ model Task {
   // an hour across DST and by a whole working day across a timezone change.
   // 09:00 means 09:00 on the phone in the user’s hand.
   // Both null = untimed, which is the default and stays the common case.
-  startMinutes     Int?      @map("start_minutes")
-  endMinutes       Int?      @map("end_minutes")
-  priority         String    @default("medium") @db.VarChar(10)
-  isArchived       Boolean   @default(false) @map("is_archived")
-  isCompleted      Boolean   @default(false) @map("is_completed")
-  completedAt      DateTime? @map("completed_at")
-  sessionsOnTask   Int       @default(0) @map("sessions_on_task")
-  totalTimeOnTask  Int       @default(0) @map("total_time_on_task")
-  sessionDates     String[]  @default([]) @map("session_dates")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  order            Int?
-  taskGoalId       String?   @map("task_goal_id")
+  startMinutes    Int?      @map("start_minutes")
+  endMinutes      Int?      @map("end_minutes")
+  priority        String    @default("medium") @db.VarChar(10)
+  isArchived      Boolean   @default(false) @map("is_archived")
+  isCompleted     Boolean   @default(false) @map("is_completed")
+  completedAt     DateTime? @map("completed_at")
+  sessionsOnTask  Int       @default(0) @map("sessions_on_task")
+  totalTimeOnTask Int       @default(0) @map("total_time_on_task")
+  sessionDates    String[]  @default([]) @map("session_dates")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  order           Int?
+  taskGoalId      String?   @map("task_goal_id")
 
   // Recurring task fields
   isRecurring     Boolean  @default(false) @map("is_recurring")
@@ -368,6 +369,28 @@ model Note {
 
   @@index([userId, date])
   @@map("notes")
+}
+
+model Event {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id") @db.Uuid
+  title        String   @db.VarChar(200)
+  // 'YYYY-MM-DD', the same convention as Note.date and for the same reason: an
+  // event belongs to a calendar day, not an instant. Required, unlike a note —
+  // an event with no day is not a thing.
+  date         String   @db.VarChar(10)
+  // Minutes from local midnight (0-1439), both set or both null. Null is an
+  // all-day event; there is deliberately no isAllDay flag, which would be a
+  // second source of the same truth and could disagree with these two.
+  startMinutes Int?     @map("start_minutes")
+  endMinutes   Int?     @map("end_minutes")
+  isArchived   Boolean  @default(false) @map("is_archived")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("events")
 }
 
 model ExternalCalendarConnection {

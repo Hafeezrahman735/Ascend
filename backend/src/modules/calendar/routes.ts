@@ -134,7 +134,7 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
     const { start, end } = parseRange(req);
     const bounds = rangeBounds(start, end);
 
-    const [tasks, recurringInstances, recurringTemplates, goals, notes, connection] = await Promise.all([
+    const [tasks, recurringInstances, recurringTemplates, goals, notes, events, connection] = await Promise.all([
       // Standalone tasks: not recurring templates, not spawned instances.
       prisma.task.findMany({
         where: {
@@ -173,6 +173,12 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
       }),
       prisma.note.findMany({
         where: { userId, isArchived: false, date: { gte: start, lte: end } },
+      }),
+      // Events are stored with a 'YYYY-MM-DD' date string, so they range-filter
+      // by string comparison exactly like notes — no instant bounds involved.
+      prisma.event.findMany({
+        where: { userId, isArchived: false, date: { gte: start, lte: end } },
+        orderBy: [{ startMinutes: 'asc' }, { createdAt: 'asc' }],
       }),
       prisma.externalCalendarConnection.findUnique({
         where: { userId_provider: { userId, provider: 'google' } },
@@ -213,6 +219,7 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
       })),
       ...goals.map((g) => ({ type: 'goal_deadline', date: toDateKey(g.deadline!), data: g })),
       ...notes.map((n) => ({ type: 'note', date: n.date as string, data: n })),
+      ...events.map((e) => ({ type: 'event', date: e.date, data: e })),
     ];
 
     // Google events merge into the same array so the client treats external and
@@ -356,6 +363,150 @@ calendarRouter.delete('/notes/:id', async (req: Request, res: Response) => {
     if (handleAuthError(res, err)) return;
     console.error('[DELETE /notes/:id]', err);
     res.status(500).json({ success: false, error: 'Failed to delete note' });
+  }
+});
+
+// ─── Events ──────────────────────────────────────────────────────────────────
+// An Event is time that is spoken for but is not work you do: a dentist
+// appointment, a standup, a flight.
+//
+// Deliberately its own table rather than a `kind` flag on Task. Completing a
+// Task awards XP and posts "completed a task" to the user's followers
+// (modules/tasks/routes.ts). Under a flag, every one of those paths would have
+// to filter on it, and missing one ships the bug silently. A separate table
+// cannot have that class of defect at all.
+
+/** Minutes from local midnight. Same bound as Task.startMinutes. */
+const timeOfDay = z.number().int().min(0).max(1439);
+
+const createEventSchema = z.object({
+  // trim() before min(1) so a whitespace-only title is rejected rather than
+  // stored as a blank row that renders as an empty band on the timeline.
+  title: z.string().trim().min(1).max(200),
+  date: dateOnly,
+  startMinutes: timeOfDay.nullable().optional(),
+  endMinutes: timeOfDay.nullable().optional(),
+});
+
+const updateEventSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  date: dateOnly.optional(),
+  startMinutes: timeOfDay.nullable().optional(),
+  endMinutes: timeOfDay.nullable().optional(),
+});
+
+/**
+ * Both ends or neither, and the block must move forwards.
+ *
+ * Null/null is the all-day case and is legal. `end <= start` is REJECTED rather
+ * than clamped: endMinutes cannot exceed 1439, so an 11pm–1am event is simply
+ * not representable, and silently turning it into 11pm–11:59pm would be a lie
+ * about the user's day. Overnight events are out of scope for now.
+ */
+function validateEventSchedule(
+  startMinutes: number | null | undefined,
+  endMinutes: number | null | undefined,
+): string | null {
+  const start = startMinutes ?? null;
+  const end = endMinutes ?? null;
+  if (start === null && end === null) return null;
+  if (start === null || end === null) return 'A timed event needs both a start and an end time';
+  if (end <= start) return 'End time must be after start time';
+  return null;
+}
+
+calendarRouter.post('/events', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { title, date, startMinutes, endMinutes } = createEventSchema.parse(req.body);
+
+    const scheduleError = validateEventSchedule(startMinutes, endMinutes);
+    if (scheduleError) {
+      res.status(400).json({ success: false, error: scheduleError });
+      return;
+    }
+
+    const event = await prisma.event.create({
+      data: {
+        userId,
+        title,
+        date,
+        startMinutes: startMinutes ?? null,
+        endMinutes: endMinutes ?? null,
+      },
+    });
+
+    res.status(201).json({ success: true, data: event });
+  } catch (err) {
+    if (handleZodError(res, err)) return;
+    if (handleAuthError(res, err)) return;
+    console.error('[POST /events]', err);
+    res.status(500).json({ success: false, error: 'Failed to create event' });
+  }
+});
+
+calendarRouter.patch('/events/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id } = req.params;
+    const data = updateEventSchema.parse(req.body);
+
+    const existing = await prisma.event.findFirst({ where: { id, userId, isArchived: false } });
+    if (!existing) {
+      res.status(404).json({ success: false, error: 'Event not found' });
+      return;
+    }
+
+    // Validate the MERGED row, not the patch. Clearing only startMinutes on a
+    // timed event has to fail — checking the patch alone would let the row end
+    // up half-scheduled.
+    const mergedStart = data.startMinutes !== undefined ? data.startMinutes : existing.startMinutes;
+    const mergedEnd = data.endMinutes !== undefined ? data.endMinutes : existing.endMinutes;
+    const scheduleError = validateEventSchedule(mergedStart, mergedEnd);
+    if (scheduleError) {
+      res.status(400).json({ success: false, error: scheduleError });
+      return;
+    }
+
+    const event = await prisma.event.update({
+      where: { id },
+      data: {
+        ...(data.title !== undefined && { title: data.title }),
+        ...(data.date !== undefined && { date: data.date }),
+        ...(data.startMinutes !== undefined && { startMinutes: data.startMinutes }),
+        ...(data.endMinutes !== undefined && { endMinutes: data.endMinutes }),
+      },
+    });
+
+    res.json({ success: true, data: event });
+  } catch (err) {
+    if (handleZodError(res, err)) return;
+    if (handleAuthError(res, err)) return;
+    console.error('[PATCH /events/:id]', err);
+    res.status(500).json({ success: false, error: 'Failed to update event' });
+  }
+});
+
+calendarRouter.delete('/events/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id } = req.params;
+
+    // Scoped archive — no separate read, so another user's event can never be hit.
+    const result = await prisma.event.updateMany({
+      where: { id, userId, isArchived: false },
+      data: { isArchived: true },
+    });
+    if (result.count === 0) {
+      res.status(404).json({ success: false, error: 'Event not found' });
+      return;
+    }
+
+    res.json({ success: true, data: null });
+  } catch (err) {
+    if (handleAuthError(res, err)) return;
+    console.error('[DELETE /events/:id]', err);
+    res.status(500).json({ success: false, error: 'Failed to delete event' });
   }
 });
 
