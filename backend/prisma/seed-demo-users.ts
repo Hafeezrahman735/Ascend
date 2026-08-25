@@ -480,6 +480,11 @@ async function seedDemoUsers() {
     // a completed task keeps its original day, an open one is spread across the
     // week ahead, and roughly half of the dated ones get a time block so the Day
     // timeline and the Month workload shading have something to draw.
+    // Guarantee one unscheduled item per account. Keying off the LAST task
+    // only worked when that task happened to be open, which was true for one
+    // of the five — leaving Planning’s UNSCHEDULED list empty everywhere else.
+    const firstOpenIdx = u.tasks.findIndex((t) => !t.isCompleted);
+
     for (const [idx, t] of u.tasks.entries()) {
       const seed = `${u.username}:${t.title}`;
       const r = hashUnit(seed);
@@ -487,7 +492,7 @@ async function seedDemoUsers() {
       // Completed work sits on the day it was done; open work lands in the next
       // ten days. One task per account is deliberately left undated so the
       // Planning tab’s UNSCHEDULED list is never empty.
-      const leaveUndated = idx === u.tasks.length - 1 && !t.isCompleted;
+      const leaveUndated = idx === firstOpenIdx;
       const offset = t.isCompleted ? -t.daysAgo : Math.floor(r * 10);
       const dueDate = leaveUndated ? null : dueDateFor(offset);
 
