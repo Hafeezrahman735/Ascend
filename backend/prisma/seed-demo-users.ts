@@ -22,6 +22,58 @@ const day = (n: number) => new Date(now - n * 86400000); // n days ago
 // Shared password for all demo accounts (each login listed at the end of the run).
 const DEMO_PASSWORD = 'AscendDemo!2026';
 
+/**
+ * Stable pseudo-random in [0,1) from a string.
+ *
+ * Scheduling is DERIVED from this rather than hand-written per task, so the
+ * five accounts get a full calendar without 25 literal date edits — and it is
+ * deterministic, so re-running the seed does not reshuffle everyone’s week.
+ */
+function hashUnit(seed: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+/** Local calendar day n days from today, as the UTC-midnight Date dueDate expects. */
+function dueDateFor(offsetDays: number): Date {
+  const d = new Date(now + offsetDays * 86400000);
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
+/** 'YYYY-MM-DD' n days from today, for Note.date. */
+function dayKey(offsetDays: number): string {
+  const d = new Date(now + offsetDays * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Block lengths that produce a readable timeline rather than uniform bars. */
+const BLOCK_MINUTES = [30, 45, 60, 90, 120];
+
+const HABITS: { title: string; tags: string[]; days: string[]; startHour: number; minutes: number }[] = [
+  { title: 'Morning review', tags: ['routine'], days: ['mon', 'tue', 'wed', 'thu', 'fri'], startHour: 8, minutes: 20 },
+  { title: 'Flashcards', tags: ['study'], days: [], startHour: 19, minutes: 25 },
+  { title: 'Read 20 pages', tags: ['reading'], days: [], startHour: 21, minutes: 30 },
+  { title: 'Inbox zero', tags: ['work'], days: ['mon', 'wed', 'fri'], startHour: 17, minutes: 15 },
+  { title: 'Practice set', tags: ['cs'], days: ['tue', 'thu'], startHour: 16, minutes: 45 },
+];
+
+const NOTE_POOL: { content: string; isTodo: boolean }[] = [
+  { content: 'Bring the charger tomorrow', isTodo: true },
+  { content: 'Ask about the deadline extension', isTodo: true },
+  { content: 'Chapter 4 was harder than 3 — budget more time', isTodo: false },
+  { content: 'Book the study room for Thursday', isTodo: true },
+  { content: 'Felt sharpest in the first 40 minutes today', isTodo: false },
+  { content: 'Email the group about splitting sections', isTodo: true },
+  { content: 'Print the practice exam', isTodo: true },
+  { content: 'Afternoons keep getting eaten by meetings', isTodo: false },
+  { content: 'Review flashcards before bed', isTodo: true },
+  { content: 'Two short blocks worked better than one long one', isTodo: false },
+];
+
 interface AttachedStat { label: string; value: string }
 
 interface DemoPost {
@@ -328,7 +380,24 @@ const users: DemoUser[] = [
 // ── Seeder ──────────────────────────────────────────────────────────────────
 
 async function seedDemoUsers() {
-  console.log('Seeding demo users...\n');
+  // This writes real rows. The repo runs three databases (local, Railway
+  // staging, Railway production) off one DATABASE_URL, so a mistyped .env is
+  // the difference between seeding a sandbox and putting five fake accounts
+  // on a leaderboard real people can see. Local is allowed silently; anything
+  // else has to be asked for.
+  const dbUrl = process.env.DATABASE_URL ?? '';
+  const host = (dbUrl.match(/@([^/:?]+)/) ?? [])[1] ?? 'unknown';
+  const isLocal = /^(localhost|127\.0\.0\.1|::1)$/.test(host);
+  if (!isLocal && process.env.ALLOW_REMOTE_SEED !== '1') {
+    console.error(`\nRefusing to seed a remote database.\n`);
+    console.error(`  host: ${host}`);
+    console.error(`\nIf that is deliberate, re-run with ALLOW_REMOTE_SEED=1.`);
+    console.error(`Never point this at production — it deletes and rewrites`);
+    console.error(`every task, goal, session, note and post for the demo emails.\n`);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+  console.log(`Seeding demo users into ${host}...\n`);
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
   const created: { username: string; email: string; id: string }[] = [];
 
@@ -375,6 +444,8 @@ async function seedDemoUsers() {
     await prisma.task.deleteMany({ where: { userId: user.id } });
     await prisma.taskGoal.deleteMany({ where: { userId: user.id } });
     await prisma.socialPost.deleteMany({ where: { authorId: user.id } });
+    await prisma.note.deleteMany({ where: { userId: user.id } });
+    await prisma.userAchievement.deleteMany({ where: { userId: user.id } });
 
     // Sessions.
     for (const s of u.sessions) {
@@ -405,8 +476,28 @@ async function seedDemoUsers() {
       });
     }
 
-    // Tasks.
-    for (const t of u.tasks) {
+    // Tasks. Scheduling is derived so every account has a populated calendar:
+    // a completed task keeps its original day, an open one is spread across the
+    // week ahead, and roughly half of the dated ones get a time block so the Day
+    // timeline and the Month workload shading have something to draw.
+    for (const [idx, t] of u.tasks.entries()) {
+      const seed = `${u.username}:${t.title}`;
+      const r = hashUnit(seed);
+
+      // Completed work sits on the day it was done; open work lands in the next
+      // ten days. One task per account is deliberately left undated so the
+      // Planning tab’s UNSCHEDULED list is never empty.
+      const leaveUndated = idx === u.tasks.length - 1 && !t.isCompleted;
+      const offset = t.isCompleted ? -t.daysAgo : Math.floor(r * 10);
+      const dueDate = leaveUndated ? null : dueDateFor(offset);
+
+      // Times only make sense with a day attached.
+      const wantsTime = dueDate !== null && hashUnit(`${seed}:time`) < 0.55;
+      const startHour = 8 + Math.floor(hashUnit(`${seed}:hour`) * 10); // 08:00-17:00
+      const block = BLOCK_MINUTES[Math.floor(hashUnit(`${seed}:len`) * BLOCK_MINUTES.length)];
+      const startMinutes = wantsTime ? startHour * 60 : null;
+      const endMinutes = wantsTime ? Math.min(23 * 60 + 55, startHour * 60 + block) : null;
+
       await prisma.task.create({
         data: {
           userId: user.id,
@@ -415,11 +506,89 @@ async function seedDemoUsers() {
           tags: t.tags,
           priority: t.priority,
           estimatedMinutes: t.estimatedMinutes ?? null,
+          dueDate,
+          startMinutes,
+          endMinutes,
           isCompleted: t.isCompleted,
           completedAt: t.isCompleted ? day(Math.max(0, t.daysAgo - 1)) : null,
           sessionsOnTask: t.sessionsOnTask ?? 0,
+          totalTimeOnTask: (t.sessionsOnTask ?? 0) * 25 * MIN,
+          // Populates the per-task history the stats modal reads.
+          sessionDates: Array.from({ length: t.sessionsOnTask ?? 0 }, (_, i) => dayKey(-(t.daysAgo + i))),
           createdAt: day(t.daysAgo),
         },
+      });
+    }
+
+    // A recurring habit per account: a template plus today’s instance, which is
+    // the shape spawn-recurring produces. Without this the Day view’s
+    // "Recurring tasks" group is empty on every demo account.
+    const habit = HABITS[created.length % HABITS.length];
+    const template = await prisma.task.create({
+      data: {
+        userId: user.id,
+        title: habit.title,
+        tags: habit.tags,
+        priority: 'medium',
+        estimatedMinutes: habit.minutes,
+        isRecurring: true,
+        recurringDays: habit.days,
+        startMinutes: habit.startHour * 60,
+        endMinutes: habit.startHour * 60 + habit.minutes,
+        lastSpawnedDate: dayKey(0),
+        currentStreak: u.currentStreak,
+        longestStreak: u.longestStreak,
+        totalCompletions: u.currentStreak * 2,
+        totalFocusTimeMs: u.currentStreak * 2 * habit.minutes * MIN,
+        createdAt: day(30),
+      },
+    });
+    await prisma.task.create({
+      data: {
+        userId: user.id,
+        title: habit.title,
+        tags: habit.tags,
+        priority: 'medium',
+        estimatedMinutes: habit.minutes,
+        dueDate: dueDateFor(0),
+        startMinutes: habit.startHour * 60,
+        endMinutes: habit.startHour * 60 + habit.minutes,
+        parentTaskId: template.id,
+        lifetimeStreak: u.currentStreak,
+        lifetimeTotalCompletions: u.currentStreak * 2,
+        lifetimeTotalFocusTime: u.currentStreak * 2 * habit.minutes * MIN,
+        createdAt: day(0),
+      },
+    });
+
+    // Notes and to-dos across the visible fortnight.
+    for (let i = 0; i < 4; i += 1) {
+      const pick = NOTE_POOL[Math.floor(hashUnit(`${u.username}:note:${i}`) * NOTE_POOL.length)];
+      const offset = Math.floor(hashUnit(`${u.username}:noteday:${i}`) * 7) - 2;
+      await prisma.note.create({
+        data: {
+          userId: user.id,
+          content: pick.content,
+          date: dayKey(offset),
+          isTodo: pick.isTodo,
+          isCompleted: pick.isTodo && offset < 0,
+          createdAt: day(Math.max(0, -offset)),
+        },
+      });
+    }
+
+    // Unlock the achievements these stats actually earn. Awarding arbitrary
+    // ones would make the profile screen lie about how it got there.
+    const earned = await prisma.achievement.findMany();
+    for (const a of earned) {
+      const meets = a.category === 'STREAK' ? u.longestStreak >= a.threshold
+        : a.category === 'SESSIONS' ? u.totalSessions >= a.threshold
+        // threshold is HOURS in seed.ts; totalFocusTime is seconds.
+        : a.category === 'FOCUS_TIME' ? u.totalFocusTime >= a.threshold * HOURS
+        : false;
+      if (!meets) continue;
+      await prisma.userAchievement.create({
+        data: { userId: user.id, achievementId: a.id, unlockedAt: day(Math.floor(hashUnit(`${u.username}:${a.key}`) * 30)) },
       });
     }
 
