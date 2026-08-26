@@ -168,6 +168,21 @@ describe('needsUpdate', () => {
     expect(needsUpdate(before, after)).toBe(true);
   });
 
+  /**
+   * The phase end is derived from `settings`, not stored, so editing the work
+   * duration mid-session moves it. `useTimerLiveActivity` therefore has to watch
+   * `settings` — this pins the half of that which can be tested without a store.
+   */
+  it('pushes when the work duration is edited mid-session', () => {
+    const before = toActivityProps(running, T0)!;
+    const after = toActivityProps(
+      { ...running, settings: { ...settings, workDuration: 3000 } },
+      T0,
+    )!;
+    expect(after.rangeEndMs).toBe(T0 + 3000 * 1000);
+    expect(needsUpdate(before, after)).toBe(true);
+  });
+
   it('pushes when a resume moves the end of the session', () => {
     const before = toActivityProps(running, T0)!;
     // Paused for two minutes, then resumed: the end date has moved out.
@@ -180,8 +195,28 @@ describe('needsUpdate', () => {
 });
 
 describe('staleDateFor', () => {
-  it('marks content stale before ActivityKit silently drops the activity', () => {
+  /**
+   * The case this exists for: the phone is locked when the phase ends. `tick()`
+   * only runs on the foreground Timer screen, so `complete()` does not fire and
+   * nothing ends the card — it would sit at 00:00 insisting a finished session is
+   * still running. The stale date is the only lever iOS gives us with no app.
+   */
+  it('marks a running countdown stale the moment its phase ends', () => {
     const props = toActivityProps(running, T0)!;
+    expect(staleDateFor(props).getTime()).toBe(props.rangeEndMs);
+    expect(staleDateFor(props).getTime()).toBe(T0 + 1500 * 1000);
+  });
+
+  it('does not stale a paused card, which stays correct however long it sits', () => {
+    const props = toActivityProps(
+      { ...running, status: 'paused', startedAt: null, elapsedAtPause: 300 },
+      T0,
+    )!;
+    expect(staleDateFor(props).getTime()).toBeGreaterThan(props.rangeEndMs);
+  });
+
+  it('falls back to the ActivityKit ceiling for the endless stopwatch', () => {
+    const props = toActivityProps({ ...running, mode: 'stopwatch' }, T0)!;
     expect(staleDateFor(props).getTime()).toBe(T0 + STALE_AFTER_SECONDS * 1000);
     expect(STALE_AFTER_SECONDS).toBeLessThan(8 * 60 * 60);
   });

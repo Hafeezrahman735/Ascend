@@ -42,12 +42,22 @@ export function useTimerLiveActivity(): void {
     const unsubscribe = useTimerStore.subscribe((state, prev) => {
       // The fields that change what the card shows. `timeLeft` is deliberately
       // not among them: it changes every second and iOS already accounts for it.
+      //
+      // `settings` is here because the phase end is DERIVED from it, not stored:
+      // `remainingInPhase()` reads the durations on every call, so editing the
+      // work duration mid-session moves the in-app end date. The duration sheet
+      // is reachable while a session runs, and without this the card would keep
+      // counting to the old end — exactly the app/card disagreement this feature
+      // is not allowed to have. Comparing by reference is intentionally loose:
+      // the store replaces the object on every edit, and a spurious extra sync
+      // costs nothing because `needsUpdate` still gates the actual write.
       const changed =
         state.status !== prev.status ||
         state.startedAt !== prev.startedAt ||
         state.currentPhase !== prev.currentPhase ||
         state.mode !== prev.mode ||
-        state.plannedFocusSeconds !== prev.plannedFocusSeconds;
+        state.plannedFocusSeconds !== prev.plannedFocusSeconds ||
+        state.settings !== prev.settings;
 
       if (!changed) return;
 

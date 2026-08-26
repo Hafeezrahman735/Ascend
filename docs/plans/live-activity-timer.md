@@ -350,3 +350,73 @@ entitlements and provisioning are therefore unverified until an EAS build.
    real hardware, not a guess from here.
 5. Phase 2's interactive pause/resume buttons are **not** built.
    `addUserInteractionListener()` is the hook for it when that starts.
+
+---
+
+## Review pass (2026-08-26) — three defects found by re-reading the diff
+
+Found by review, not by running it: none of this has been on a device yet, so
+these were reasoned from the store rather than observed.
+
+### 1. Editing durations mid-session desynced the card
+
+The phase end is **derived** from `settings`, not stored — `remainingInPhase()`
+reads the durations on every call. The duration sheet on the Timer screen
+(`app/(tabs)/index.tsx:559`) is not gated on timer status, so it opens mid-run,
+and `setWorkDuration()` moves the in-app end date immediately.
+
+`useTimerLiveActivity`'s change check did not watch `settings`, so the card kept
+the old end date: go 25 → 50 minutes mid-session and the Lock Screen would hit
+00:00 twenty-five minutes early while the app kept counting. Exactly the
+app/card disagreement the design forbids.
+
+Fixed by adding `state.settings !== prev.settings` to the subscriber's change
+check. Reference comparison is deliberate — the store replaces the object on
+every edit, and a spurious sync costs nothing because `needsUpdate` still gates
+the write.
+
+**Note the same gap exists in `useTimerNotifications`, where it is deliberate**
+(`index.tsx:928`: "a running timer keeps its original alarm"). Now that the
+in-app clock does move, that older choice means the timer, the notification and
+the card can disagree three ways. Unresolved; it is a product decision, not a
+bug fix.
+
+### 2. A phase ending in the background left the card reading 00:00
+
+`tick()` is driven only from the Timer screen (`app/(tabs)/index.tsx:138`), so
+if the phone is locked when the phase ends, `complete()` never runs, `status`
+stays `running`, and nothing ends the card. The completion notification fires;
+the Lock Screen goes on insisting the session is live.
+
+`staleDate` is the only lever iOS offers with no app running, and it was being
+spent: `staleDateFor()` returned *session start + 7h50m* for every card,
+including a 25-minute pomodoro. It now returns `rangeEndMs` for a running
+countdown. Paused cards and the stopwatch keep the ActivityKit ceiling — a
+frozen card stays correct however long it sits, and a stopwatch has no end to be
+late for.
+
+This de-emphasises the card; it does not remove it. Ending it still requires the
+app to notice. A real fix is a background task or a push-updated activity, both
+out of scope here.
+
+### 3. `endLiveActivity()` was dead
+
+Exported, never called. Stop, completion and logout all end the card through the
+ordinary path — the store reaches a state with no session, `toActivityProps`
+returns null, `syncNow` ends it — and `reconcileNow` calls `endNow` directly.
+Removed rather than wired: a public ender is a second way to end the card, one
+callable without the store agreeing, which is how the two start disagreeing.
+
+### Not fixed
+
+`widgets/AscendTimerActivity.tsx` imports `@expo/ui`, which is not in
+`mobile/package.json`. It resolves because `expo-widgets` depends on it directly
+(`@expo/ui@~57.0.13`), so this is latent rather than broken — the same class as
+the `expo-constants` issue already fixed. Declaring it means a lockfile change;
+left for whenever dependencies are next touched.
+
+### Verification
+
+`tsc --noEmit` clean · 165/165 vitest pass (162 + 3 new) · `eslint` clean on all
+changed files. **The Phase 1 test gate above is still entirely unrun** — every
+one of these fixes is unverified on hardware, like the feature they patch.

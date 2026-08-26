@@ -90,12 +90,16 @@ async function syncNow(snap: TimerSnapshot, now: number): Promise<void> {
   }
 }
 
-/** Ends the card, if any. Called on stop, completion, logout and reconcile. */
-export function endLiveActivity(): Promise<void> {
-  if (!SUPPORTED) return Promise.resolve();
-  return enqueue(endNow);
-}
-
+/**
+ * Ends the card, if any.
+ *
+ * Deliberately not exported. Stop, completion and logout all end the card the
+ * same way every other state change works: they move the store to a state with
+ * no session, `toActivityProps` returns null for it, and `syncNow` lands here. A
+ * public `endLiveActivity()` would be a second way to do that — one that could
+ * be called without the store agreeing, which is how the card and the app start
+ * disagreeing. Always runs inside the queue, via its callers.
+ */
 async function endNow(): Promise<void> {
   if (!current) {
     forget();

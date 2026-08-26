@@ -144,10 +144,20 @@ export function toActivityProps(snap: TimerSnapshot, now: number): TimerActivity
 /**
  * When the system should start treating this card's content as stale.
  *
- * Only ever reached by a stopwatch left running for most of a day; a Pomodoro
- * phase ends long before it matters.
+ * A running countdown stops being accurate the instant the phase ends, and that
+ * moment can arrive while the app is suspended — `tick()` only runs on the Timer
+ * screen in the foreground, so nothing calls `complete()` until the user comes
+ * back. Without this the card would sit at 00:00 on the Lock Screen still
+ * claiming a finished session is under way. The stale date is the one lever iOS
+ * gives us to de-emphasise it with no app running.
+ *
+ * A paused card is frozen and stays correct however long it sits there, and a
+ * stopwatch has no end to be late for. Neither has a moment of going wrong, so
+ * both get the ActivityKit ceiling instead: only a stopwatch left running for
+ * most of a day ever reaches it.
  */
 export function staleDateFor(props: TimerActivityProps): Date {
+  if (props.countsDown && !props.isPaused) return new Date(props.rangeEndMs);
   return new Date(props.rangeStartMs + STALE_AFTER_SECONDS * 1000);
 }
 
