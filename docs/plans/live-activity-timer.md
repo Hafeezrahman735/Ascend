@@ -420,3 +420,59 @@ left for whenever dependencies are next touched.
 `tsc --noEmit` clean · 165/165 vitest pass (162 + 3 new) · `eslint` clean on all
 changed files. **The Phase 1 test gate above is still entirely unrun** — every
 one of these fixes is unverified on hardware, like the feature they patch.
+
+---
+
+## 2026-08-26 — the missing native module took the whole app down
+
+Reported from a real run (`npx expo start --dev-client -c`), so this one was
+observed rather than reasoned:
+
+```
+ERROR  [Error: Cannot find native module 'ExpoWidgets']
+  <global> (widgets\AscendTimerActivity.tsx:1)
+  <global> (services\liveActivity.ts:3)
+  <global> (hooks\useTimerLiveActivity.ts:6)
+  <global> (app\_layout.tsx:20)
+WARN   Route "./_layout.tsx" is missing the required default export.
+ERROR  [TypeError: Cannot read property 'ErrorBoundary' of undefined]
+```
+
+### Root cause
+
+The installed dev client was built **before** `expo-widgets` was added, and
+native modules ship inside the binary. `expo-widgets` runs
+`requireNativeModule('ExpoWidgets')` at the top of its own module graph
+(`build/ExpoWidgets.ios.js` is one line: `export default
+requireNativeModule('ExpoWidgets')`), which throws at *import* time when the
+module is not in the binary.
+
+Only a new dev build fixes the feature. Nothing in JS can conjure a native
+module.
+
+### The defect that made it fatal instead of merely absent
+
+The throw was not confined to this feature. `app/_layout.tsx` imports the hook,
+which imports the service, which imported the widget at module scope — so the
+throw escaped the root layout module, expo-router received `undefined` where the
+route's default export should be, and the app rendered nothing at all.
+
+That directly contradicts this file's own contract: *"no failure in this file may
+ever surface to the user or interfere with the timer."* A missing native module
+is precisely such a failure, and it was the one failure not absorbed.
+
+`services/liveActivity.ts` now loads the widget through a cached lazy `require()`
+inside a `try`. `undefined` means not yet tried, `null` means tried and
+unavailable, so the throw is paid for at most once and every entry point returns
+early. The app boots and the timer works; only the card is missing.
+
+This also closes a **production** hazard that had nothing to do with dev clients:
+an `eas update` carrying this JS to any build without `expo-widgets` would have
+bricked that build the same way.
+
+### Still true
+
+The feature itself remains unverified. A dev build is required before any of the
+Phase 1 test gate can run, and this fix does not change that — it only means a
+stale client shows a working app with no Lock Screen card, instead of a blank
+screen.

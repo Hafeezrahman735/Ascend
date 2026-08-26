@@ -1,6 +1,5 @@
 import { Platform } from 'react-native';
 
-import AscendTimerActivity from '../widgets/AscendTimerActivity';
 import {
   toActivityProps,
   staleDateFor,
@@ -8,7 +7,8 @@ import {
   type TimerActivityProps,
   type TimerSnapshot,
 } from '../lib/liveActivityState';
-import type { LiveActivity } from 'expo-widgets';
+// Type-only, so it erases at runtime and never touches the native module.
+import type { LiveActivity, LiveActivityFactory } from 'expo-widgets';
 
 /**
  * The bridge between the timer store and the Lock Screen card.
@@ -25,6 +25,46 @@ import type { LiveActivity } from 'expo-widgets';
  */
 
 const SUPPORTED = Platform.OS === 'ios';
+
+/**
+ * The widget, loaded on first use rather than at import.
+ *
+ * `expo-widgets` runs `requireNativeModule('ExpoWidgets')` at the top of its own
+ * module graph, which THROWS whenever the installed binary predates the
+ * dependency — a dev client built before it was added, or an OTA update pushed
+ * to a client that never had it. Importing the widget at module scope therefore
+ * did not merely disable this feature, it took the whole app down at launch: the
+ * throw escaped `app/_layout.tsx`, so expo-router received no default export for
+ * the root route and rendered nothing at all.
+ *
+ * A missing native module is exactly the kind of failure the rest of this file
+ * already absorbs, so it is absorbed here too. `undefined` means not yet tried;
+ * `null` means tried and unavailable, so the throw is never paid for twice.
+ */
+let factory: LiveActivityFactory<TimerActivityProps> | null | undefined;
+
+function widget(): LiveActivityFactory<TimerActivityProps> | null {
+  if (factory !== undefined) return factory;
+
+  try {
+    // Deliberately a lazy require. Metro still resolves it statically, so the
+    // widget layout is bundled and serialised exactly as it was before — only
+    // the moment of evaluation moves.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    factory = require('../widgets/AscendTimerActivity')
+      .default as LiveActivityFactory<TimerActivityProps>;
+  } catch (err) {
+    console.warn(
+      '[liveActivity] native module unavailable, no card will appear. ' +
+        'Expected if the dev client was built before expo-widgets was added:',
+      err,
+    );
+    factory = null;
+  }
+
+  // `?? null` only satisfies the compiler: both branches above have assigned.
+  return factory ?? null;
+}
 
 /** The handle to the card currently on screen, if we believe one exists. */
 let current: LiveActivity<TimerActivityProps> | null = null;
@@ -71,9 +111,12 @@ async function syncNow(snap: TimerSnapshot, now: number): Promise<void> {
     return;
   }
 
+  const activity = widget();
+  if (!activity) return;
+
   try {
     if (!current) {
-      current = AscendTimerActivity.start(next, undefined, staleDateFor(next));
+      current = activity.start(next, undefined, staleDateFor(next));
       lastProps = next;
       return;
     }
@@ -135,9 +178,12 @@ export function reconcileLiveActivity(snap: TimerSnapshot, now = Date.now()): Pr
 // Runs inside the queue, so it calls syncNow/endNow directly — going back
 // through the enqueuing wrappers would wait on the operation it is part of.
 async function reconcileNow(snap: TimerSnapshot, now: number): Promise<void> {
+  const activity = widget();
+  if (!activity) return;
+
   let live: LiveActivity<TimerActivityProps>[] = [];
   try {
-    live = AscendTimerActivity.getInstances();
+    live = activity.getInstances();
   } catch (err) {
     console.warn('[liveActivity] getInstances failed:', err);
     return;
