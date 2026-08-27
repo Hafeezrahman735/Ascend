@@ -34,7 +34,6 @@
     "expo-status-bar": "~57.0.1",
     "expo-updates": "~57.0.15",
     "expo-widgets": "~57.0.12",
-    "nativewind": "4.2.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
@@ -54,7 +53,6 @@
     "babel-preset-expo": "~57.0.0",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.1",
-    "tailwindcss": "3.4.0",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
   }
