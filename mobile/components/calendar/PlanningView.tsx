@@ -7,7 +7,7 @@ import type { CalendarEvent, CalendarItem, CalendarStats, Note } from '../../typ
 import { addDays, getLocalDateString, parseLocalDate } from '../../utils/date';
 import {
   getCalendarStyles, bookedMinutes, formatMinutes, formatSeconds,
-  isScheduledItem, isPastEvent, calendarItemKey,
+  countsTowardLoad, isPastEvent, calendarItemKey,
 } from './shared';
 import StatsView from './StatsView';
 
@@ -188,7 +188,7 @@ export default function PlanningView({
         isToday: key === today,
         isPast: key < today,
         booked: bookedMinutes(items),
-        count: items.filter(isScheduledItem).length,
+        count: items.filter(countsTowardLoad).length,
       };
     });
   }, [weekStart, itemsByDate]);

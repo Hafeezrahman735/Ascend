@@ -272,7 +272,12 @@ export default function CalendarScreen() {
           }
         >
           {viewMode === 'month' && (
-            <MonthView anchorDate={anchorDate} itemsByDate={itemsByDate} onDayPress={openDay} />
+            <MonthView
+              anchorDate={anchorDate}
+              itemsByDate={itemsByDate}
+              onDayPress={openDay}
+              onToggleNote={toggleNote}
+            />
           )}
           {viewMode === 'week' && (
             <WeekView

@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
-import type { CalendarItem } from '../../types';
+import type { CalendarItem, Note } from '../../types';
 import { eachDayOfRange, getLocalDateString, parseLocalDate, startOfMonth, endOfMonth } from '../../utils/date';
 import {
-  itemTitle, itemIsDone, typeColor, itemTimeRange, isScheduledItem,
-  calendarItemKey, formatMinutes, formatSeconds,
+  itemTitle, itemIsDone, typeColor, itemTimeRange, countsTowardLoad, isNote,
+  calendarItemKey, formatMinutes, formatSeconds, getCalendarStyles,
 } from './shared';
 
 const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -31,7 +31,7 @@ const BUSY_MINUTES = 4 * 60;
 type Load = 'empty' | 'light' | 'moderate' | 'busy';
 
 function dayLoad(items: CalendarItem[]): { load: Load; bookedMinutes: number } {
-  const scheduled = items.filter(isScheduledItem);
+  const scheduled = items.filter(countsTowardLoad);
   if (scheduled.length === 0) return { load: 'empty', bookedMinutes: 0 };
 
   let booked = 0;
@@ -78,12 +78,15 @@ export default function MonthView({
   anchorDate,
   itemsByDate,
   onDayPress,
+  onToggleNote,
 }: {
   anchorDate: Date;
   itemsByDate: Map<string, CalendarItem[]>;
   onDayPress: (date: string) => void;
+  onToggleNote: (note: Note) => void;
 }) {
   const Colors = useTheme();
+  const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
   const first = useMemo(() => startOfMonth(anchorDate), [anchorDate]);
   const days = useMemo(() => eachDayOfRange(first, endOfMonth(anchorDate)), [first, anchorDate]);
   const leadingBlanks = first.getDay();
@@ -99,7 +102,10 @@ export default function MonthView({
     : (days.includes(todayKey) ? todayKey : days[0]);
 
   const selectedItems = itemsByDate.get(selectedKey) ?? [];
-  const selectedScheduled = selectedItems.filter(isScheduledItem);
+  const selectedScheduled = selectedItems.filter(countsTowardLoad);
+  // Notes were absent from this panel entirely, which made Month the one
+  // view where a note could not be seen at all — not even a to-do.
+  const selectedNotes = selectedItems.filter(isNote).map((i) => i.data as Note);
   const { bookedMinutes } = dayLoad(selectedItems);
   const taskCount = selectedScheduled.filter(
     (i) => i.type === 'task' || i.type === 'habit_instance',
@@ -147,6 +153,10 @@ export default function MonthView({
           {days.map((dateKey) => {
             const dayItems = itemsByDate.get(dateKey) ?? [];
             const { load, bookedMinutes: booked } = dayLoad(dayItems);
+            // Notes deliberately do NOT shade the cell: the heat map answers
+            // "how heavy is this day", and a jotting is not weight. They get a
+            // dot instead, so a note-only day stops reading as a blank one.
+            const noteCount = dayItems.filter(isNote).length;
             const isSelected = dateKey === selectedKey;
             const isToday = dateKey === todayKey;
             const { bg, fg } = cellColors(load, Colors);
@@ -158,7 +168,7 @@ export default function MonthView({
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityState={{ selected: isSelected }}
-                  accessibilityLabel={`${parseLocalDate(dateKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}, ${load === 'empty' ? 'nothing scheduled' : `${booked > 0 ? `${Math.round(booked / 60 * 10) / 10} hours booked` : `${dayItems.length} scheduled`}`}`}
+                  accessibilityLabel={`${parseLocalDate(dateKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}, ${load === 'empty' && noteCount === 0 ? 'nothing scheduled' : `${booked > 0 ? `${Math.round(booked / 60 * 10) / 10} hours booked` : `${dayItems.length - noteCount} scheduled`}`}${noteCount > 0 ? `, ${noteCount} note${noteCount === 1 ? '' : 's'}` : ''}`}
                   style={{
                     aspectRatio: 1, borderRadius: 8,
                     alignItems: 'center', justifyContent: 'center',
@@ -174,6 +184,12 @@ export default function MonthView({
                   }}>
                     {parseLocalDate(dateKey).getDate()}
                   </Text>
+                  {noteCount > 0 && (
+                    <View style={{
+                      width: 4, height: 4, borderRadius: 2, marginTop: 2,
+                      backgroundColor: isSelected ? '#fff' : typeColor('note', Colors),
+                    }} />
+                  )}
                 </TouchableOpacity>
               </View>
             );
@@ -200,7 +216,7 @@ export default function MonthView({
             })}
           </Text>
           <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primarySoft }}>
-            {selectedScheduled.length} SCHEDULED
+            {selectedScheduled.length} SCHEDULED{selectedNotes.length > 0 ? ` · ${selectedNotes.length} NOTE${selectedNotes.length === 1 ? '' : 'S'}` : ''}
           </Text>
           <Ionicons name="chevron-forward" size={13} color={Colors.subtext} />
         </TouchableOpacity>
@@ -211,7 +227,7 @@ export default function MonthView({
           <StatTile value={String(eventCount)} label={eventCount === 1 ? 'event' : 'events'} accent={eventCount > 0} />
         </View>
 
-        {selectedScheduled.length === 0 ? (
+        {selectedScheduled.length === 0 && selectedNotes.length === 0 ? (
           <Text style={{ color: Colors.subtext, fontSize: 12.5 }}>Nothing on this day.</Text>
         ) : (
           selectedScheduled.slice(0, 4).map((item, idx) => {
@@ -254,6 +270,43 @@ export default function MonthView({
             +{selectedScheduled.length - 4} more
           </Text>
         )}
+
+        {/* To-dos stay toggleable, matching Week view. A plain note is not a
+            checkbox, so it gets a row rather than a control that does nothing. */}
+        {selectedNotes.map((note) => (
+          note.isTodo ? (
+            <TouchableOpacity
+              key={note.id}
+              onPress={() => onToggleNote(note)}
+              style={styles.todoRow}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: note.isCompleted }}
+            >
+              <Ionicons
+                name={note.isCompleted ? 'checkbox' : 'square-outline'}
+                size={15}
+                color={note.isCompleted ? Colors.accent : Colors.subtext}
+              />
+              <Text
+                numberOfLines={1}
+                style={{
+                  flex: 1, fontSize: 12,
+                  color: note.isCompleted ? Colors.subtext : Colors.text,
+                  textDecorationLine: note.isCompleted ? 'line-through' : 'none',
+                }}
+              >
+                {note.content}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View key={note.id} style={styles.todoRow} accessibilityRole="text">
+              <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
+              <Text numberOfLines={2} style={{ flex: 1, fontSize: 12, color: Colors.text }}>
+                {note.content}
+              </Text>
+            </View>
+          )
+        ))}
       </View>
     </View>
   );

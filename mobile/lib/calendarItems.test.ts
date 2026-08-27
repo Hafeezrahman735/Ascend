@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TYPE_META, DAY_GROUP_ORDER, calendarTaxonomyIsComplete, calendarItemKey,
-  isScheduledItem, itemTimeRange, itemIsDone, itemTitle, isPastEvent,
+  countsTowardLoad, isNote, itemTimeRange, itemIsDone, itemTitle, isPastEvent,
   bookedMinutes, groupItemsByDate,
 } from './calendarItems';
 import type { CalendarEvent, CalendarItem, CalendarItemType } from '../types';
@@ -86,14 +86,14 @@ describe('itemTimeRange for events', () => {
   });
 });
 
-describe('itemIsDone and isScheduledItem', () => {
+describe('itemIsDone and countsTowardLoad', () => {
   it('never reports an event as done — you do not complete an appointment', () => {
     expect(itemIsDone(eventItem())).toBe(false);
   });
 
   it('counts an event as occupying the day, and a note as not', () => {
-    expect(isScheduledItem(eventItem())).toBe(true);
-    expect(isScheduledItem({ type: 'note', date: '2026-08-25', data: {} })).toBe(false);
+    expect(countsTowardLoad(eventItem())).toBe(true);
+    expect(countsTowardLoad({ type: 'note', date: '2026-08-25', data: {} })).toBe(false);
   });
 
   it('titles an event by its title', () => {
@@ -162,6 +162,44 @@ describe('groupItemsByDate', () => {
     ]);
     expect(grouped.get('2026-08-25')?.map((i) => (i.data as CalendarEvent).id)).toEqual(['a', 'c']);
     expect(grouped.get('2026-08-26')).toHaveLength(1);
+  });
+});
+
+describe('countsTowardLoad is about weight, not visibility', () => {
+  /**
+   * This predicate used to be called `isScheduledItem`, and Week and Month both
+   * filtered their DISPLAY lists through it. The result: a plain note was
+   * unreachable outside Day view, a note-only day rendered an empty week column
+   * and an unshaded month cell, and Day view printed "Nothing on this day"
+   * directly above the notes it was holding. Splitting the predicate is the fix;
+   * these pin the contract so it cannot be re-merged by accident.
+   */
+  it('excludes only notes, and includes every other declared type', () => {
+    for (const type of DAY_GROUP_ORDER) {
+      const item: CalendarItem = { type, date: '2026-08-25', data: { title: 'x', content: 'x' } };
+      expect(countsTowardLoad(item), type).toBe(type !== 'note');
+    }
+  });
+
+  it('partitions every type exactly once — nothing is both, nothing is neither', () => {
+    for (const type of DAY_GROUP_ORDER) {
+      const item: CalendarItem = { type, date: '2026-08-25', data: { title: 'x', content: 'x' } };
+      expect(countsTowardLoad(item) !== isNote(item), type).toBe(true);
+    }
+  });
+
+  it('keeps a goal deadline visible — a due date is a commitment, not a jotting', () => {
+    const deadline: CalendarItem = {
+      type: 'goal_deadline', date: '2026-08-25', data: { id: 'g', title: 'Ship it', deadline: '2026-08-25' },
+    };
+    expect(countsTowardLoad(deadline)).toBe(true);
+    expect(isNote(deadline)).toBe(false);
+  });
+
+  it('does not let notes inflate booked time', () => {
+    const note: CalendarItem = { type: 'note', date: '2026-08-25', data: { id: 'n', content: 'x' } };
+    expect(bookedMinutes([note, note, note])).toBe(0);
+    expect(bookedMinutes([eventItem(), note])).toBe(60);
   });
 });
 

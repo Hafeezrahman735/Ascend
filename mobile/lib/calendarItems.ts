@@ -79,12 +79,23 @@ export function calendarItemKey(item: CalendarItem): string {
 }
 
 /**
- * Whether an item occupies the day, as opposed to being something jotted about
- * it. A day holding only notes still reads as empty, which is why several views
- * need this distinction and why it is named rather than repeated inline.
+ * Whether an item is a claim on the day, as opposed to something jotted about
+ * it — the question the heat map and the "hours booked" figures ask.
+ *
+ * NOT a visibility test, and the old name (`isScheduledItem`) invited exactly
+ * that misreading. Week and Month both filtered their DISPLAY lists through it,
+ * so notes silently vanished from two of the three views: a plain note was
+ * unreachable anywhere outside Day view, and a day holding nothing but notes
+ * rendered as an empty column and an unshaded cell. Deciding what to show is
+ * `items.length`; this decides what to COUNT.
  */
-export function isScheduledItem(item: CalendarItem): boolean {
+export function countsTowardLoad(item: CalendarItem): boolean {
   return item.type !== 'note';
+}
+
+/** A note or to-do — the inverse of the above, for views that group them out. */
+export function isNote(item: CalendarItem): boolean {
+  return item.type === 'note';
 }
 
 export function itemTitle(item: CalendarItem): string {

@@ -6,7 +6,7 @@ import type { CalendarItem, Note } from '../../types';
 import { addDays, eachDayOfRange, getLocalDateString, parseLocalDate } from '../../utils/date';
 import {
   getCalendarStyles, itemTitle, itemIsDone, typeColor, itemTimeRange,
-  isScheduledItem, calendarItemKey, formatMinutes,
+  countsTowardLoad, isNote, calendarItemKey, formatMinutes,
 } from './shared';
 
 /** Cards drawn in a column before it collapses into a "+N" line. */
@@ -46,11 +46,11 @@ export default function WeekView({
     : (days.includes(todayKey) ? todayKey : days[0]);
 
   const selectedItems = itemsByDate.get(selectedKey) ?? [];
-  const selectedScheduled = selectedItems.filter(isScheduledItem);
-  const selectedTodos = selectedItems
-    .filter((i) => i.type === 'note')
-    .map((i) => i.data as Note)
-    .filter((n) => n.isTodo);
+  const selectedScheduled = selectedItems.filter(countsTowardLoad);
+  // EVERY note, not just the to-dos. Filtering to `isTodo` here meant a plain
+  // note — the kind you write precisely so you will see it on the day — was
+  // unreachable from Week view entirely.
+  const selectedNotes = selectedItems.filter(isNote).map((i) => i.data as Note);
 
   return (
     <View>
@@ -58,7 +58,13 @@ export default function WeekView({
       <View style={{ flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingBottom: 18 }}>
         {days.map((dateKey) => {
           const dayItems = itemsByDate.get(dateKey) ?? [];
-          const cards = dayItems.filter(isScheduledItem);
+          // Commitments first, then what you wrote about the day. Notes were
+          // filtered out here entirely, so a day carrying three notes and
+          // nothing else showed an empty column.
+          const cards = [
+            ...dayItems.filter(countsTowardLoad),
+            ...dayItems.filter(isNote),
+          ];
           const day = parseLocalDate(dateKey);
           const isSelected = dateKey === selectedKey;
           const isToday = dateKey === todayKey;
@@ -71,7 +77,7 @@ export default function WeekView({
               activeOpacity={0.8}
               accessibilityRole="button"
               accessibilityState={{ selected: isSelected }}
-              accessibilityLabel={`${day.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}, ${cards.length} scheduled`}
+              accessibilityLabel={`${day.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}, ${cards.length} items`}
               style={{
                 flex: 1, minWidth: 0, borderRadius: 12, paddingBottom: 4,
                 backgroundColor: isSelected ? Colors.primaryDim : 'transparent',
@@ -155,12 +161,13 @@ export default function WeekView({
           }}>
             {parseLocalDate(selectedKey).toLocaleDateString(undefined, { weekday: 'long' }).toUpperCase()}
             {' · '}
-            {selectedScheduled.length} {selectedScheduled.length === 1 ? 'ITEM' : 'ITEMS'}
+            {selectedScheduled.length + selectedNotes.length}
+            {selectedScheduled.length + selectedNotes.length === 1 ? ' ITEM' : ' ITEMS'}
           </Text>
           <Ionicons name="chevron-forward" size={13} color={Colors.subtext} />
         </TouchableOpacity>
 
-        {selectedScheduled.length === 0 && selectedTodos.length === 0 && (
+        {selectedScheduled.length === 0 && selectedNotes.length === 0 && (
           <Text style={{ color: Colors.subtext, fontSize: 12.5 }}>
             Nothing on this day.
           </Text>
@@ -201,31 +208,42 @@ export default function WeekView({
         })}
 
         {/* To-dos stay toggleable here — the previous layout allowed it and
-            losing it would be a regression dressed up as a redesign. */}
-        {selectedTodos.map((note) => (
-          <TouchableOpacity
-            key={note.id}
-            onPress={() => onToggleNote(note)}
-            style={styles.todoRow}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: note.isCompleted }}
-          >
-            <Ionicons
-              name={note.isCompleted ? 'checkbox' : 'square-outline'}
-              size={15}
-              color={note.isCompleted ? Colors.accent : Colors.subtext}
-            />
-            <Text
-              numberOfLines={1}
-              style={{
-                flex: 1, fontSize: 12,
-                color: note.isCompleted ? Colors.subtext : Colors.text,
-                textDecorationLine: note.isCompleted ? 'line-through' : 'none',
-              }}
+            losing it would be a regression dressed up as a redesign. A plain
+            note is not a checkbox, so it renders as a row rather than being
+            given a control that would do nothing. */}
+        {selectedNotes.map((note) => (
+          note.isTodo ? (
+            <TouchableOpacity
+              key={note.id}
+              onPress={() => onToggleNote(note)}
+              style={styles.todoRow}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: note.isCompleted }}
             >
-              {note.content}
-            </Text>
-          </TouchableOpacity>
+              <Ionicons
+                name={note.isCompleted ? 'checkbox' : 'square-outline'}
+                size={15}
+                color={note.isCompleted ? Colors.accent : Colors.subtext}
+              />
+              <Text
+                numberOfLines={1}
+                style={{
+                  flex: 1, fontSize: 12,
+                  color: note.isCompleted ? Colors.subtext : Colors.text,
+                  textDecorationLine: note.isCompleted ? 'line-through' : 'none',
+                }}
+              >
+                {note.content}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View key={note.id} style={styles.todoRow} accessibilityRole="text">
+              <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
+              <Text numberOfLines={2} style={{ flex: 1, fontSize: 12, color: Colors.text }}>
+                {note.content}
+              </Text>
+            </View>
+          )
         ))}
       </View>
     </View>

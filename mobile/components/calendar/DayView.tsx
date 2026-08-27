@@ -5,7 +5,7 @@ import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem, CalendarItemType, Note } from '../../types';
 import {
   getCalendarStyles, DAY_GROUP_ORDER, TYPE_META, typeColor, itemTimeRange,
-  isScheduledItem, calendarItemKey,
+  countsTowardLoad, calendarItemKey,
 } from './shared';
 import ItemRow from './ItemRow';
 import TimelineView from './TimelineView';
@@ -60,16 +60,20 @@ export default function DayView({
 
   const notes = grouped.get('note') ?? [];
   const hasTimed = useMemo(() => dayItems.some((item) => itemTimeRange(item) !== null), [dayItems]);
-  // Notes are not "on the day" in the scheduling sense — a day holding only notes
-  // still reads as empty.
-  const hasAnything = useMemo(() => dayItems.some(isScheduledItem), [dayItems]);
-  const hasUnscheduled = untimedItems.some(isScheduledItem);
+  // Anything at all, notes included. This used to exclude notes, so a day
+  // holding only notes rendered "Nothing on this day" directly above the notes
+  // it was holding — the empty state contradicting the screen under it.
+  const hasAnything = dayItems.length > 0;
+  // The timeline draws time, so it needs a time-bearing item to be worth
+  // showing; a note-only day gets the agenda below and no empty grid.
+  const hasScheduled = useMemo(() => dayItems.some(countsTowardLoad), [dayItems]);
+  const hasUnscheduled = untimedItems.some(countsTowardLoad);
 
   return (
     <View style={{ paddingTop: 6 }}>
       {/* When the day is completely empty the box below says so; a second empty
           prompt from the timeline would just be noise. */}
-      {hasAnything && (
+      {hasScheduled && (
         <TimelineView dateKey={dateKey} items={dayItems} onItemPress={onItemPress} />
       )}
 
