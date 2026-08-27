@@ -278,7 +278,6 @@ export default function RootLayout() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="achievements" />
-        <Stack.Screen name="friend/[id]" />
         <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
         <Stack.Screen name="search" />
         <Stack.Screen name="user/[id]" />
