@@ -7,10 +7,49 @@ import { useAuthStore } from '../../stores/authStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useTheme } from '../../hooks/useTheme';
+import { Space, Radius } from '../../constants/spacing';
 import { getRank, RANK_META, getXpToNextRank, getXpProgressInRank } from '../../lib/rank';
 
 function fmtXP(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/**
+ * One number and what it counts.
+ *
+ * Left-aligned rather than centred: three centred tiles read as a KPI strip,
+ * where the eye has to re-find the baseline on every tile. Sharing a left edge
+ * lets them read as a column of evidence instead.
+ */
+function StatTile({ value, label, wide = false }: {
+  value: string;
+  label: string;
+  wide?: boolean;
+}) {
+  const Colors = useTheme();
+  return (
+    <View style={{
+      flex: wide ? undefined : 1,
+      backgroundColor: Colors.surface,
+      borderRadius: Radius.lg,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      paddingVertical: wide ? Space.xl : Space.lg,
+      paddingHorizontal: Space.lg,
+    }}>
+      <Text style={{
+        color: Colors.textBright,
+        fontSize: wide ? 34 : 24,
+        fontWeight: '700',
+        fontFamily: 'monospace',
+      }}>
+        {value}
+      </Text>
+      <Text style={{ color: Colors.text, fontSize: 12, marginTop: Space.xs }}>
+        {label}
+      </Text>
+    </View>
+  );
 }
 
 export default function AccountScreen() {
@@ -42,65 +81,68 @@ export default function AccountScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
       <View style={{
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: 20, paddingVertical: 14,
+        paddingHorizontal: Space.xl, paddingVertical: Space.lg,
       }}>
         <Text style={{ color: Colors.textBright, fontSize: 22, fontWeight: '700' }}>Profile</Text>
         <TouchableOpacity
           onPress={() => router.push('/settings')}
-          style={{ padding: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          style={{ padding: Space.sm }}
           hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
         >
           <Ionicons name="settings-outline" size={22} color={Colors.subtext} />
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        {/* Avatar + Name card */}
+      <ScrollView contentContainerStyle={{ paddingBottom: Space.page }}>
+        {/* Identity card — avatar beside the name, sharing one left edge. The
+            previous version stacked everything on the centreline, which reads
+            as a profile template and gives the name no more weight than the
+            handle under it. */}
         <View style={{
-          marginHorizontal: 16, marginTop: 4, marginBottom: 20,
-          backgroundColor: Colors.surface, borderRadius: 20,
+          marginHorizontal: Space.lg, marginTop: Space.xs, marginBottom: Space.xl,
+          backgroundColor: Colors.surface, borderRadius: Radius.xl,
           borderWidth: 1, borderColor: Colors.border,
-          padding: 24, alignItems: 'center', overflow: 'hidden',
+          padding: Space.xxl,
         }}>
-          <View style={{
-            position: 'absolute', top: -30, right: -30,
-            width: 120, height: 120, borderRadius: 60,
-            backgroundColor: Colors.primary + '18',
-          }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Space.lg }}>
+            <View style={{
+              width: 72, height: 72, borderRadius: Radius.lg,
+              backgroundColor: Colors.raised,
+              borderWidth: 2, borderColor: Colors.border,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 38 }}>{avatarEmoji}</Text>
+            </View>
 
-          <View style={{
-            width: 80, height: 80, borderRadius: 24,
-            backgroundColor: Colors.raised,
-            borderWidth: 2, borderColor: Colors.border,
-            alignItems: 'center', justifyContent: 'center',
-            marginBottom: 14,
-          }}>
-            <Text style={{ fontSize: 42 }}>{avatarEmoji}</Text>
-          </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 22, fontWeight: '800' }}>
+                {displayName}
+              </Text>
+              <Text style={{ color: Colors.text, fontSize: 14, marginTop: 2 }}>
+                @{handle}
+              </Text>
 
-          <Text style={{ color: Colors.textBright, fontSize: 22, fontWeight: '800' }}>
-            {displayName}
-          </Text>
-          <Text style={{ color: Colors.subtext, fontSize: 14, marginTop: 4 }}>
-            @{handle}
-          </Text>
-
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', gap: 6,
-            marginTop: 10, backgroundColor: Colors.raised,
-            borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6,
-          }}>
-            <Text style={{ fontSize: 16 }}>{RANK_META[rank].icon}</Text>
-            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>
-              {rank} · Level {level}
-            </Text>
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: Space.sm,
+                alignSelf: 'flex-start', marginTop: Space.sm,
+                backgroundColor: Colors.raised,
+                borderRadius: Radius.sm, paddingHorizontal: Space.md, paddingVertical: Space.xs,
+              }}>
+                <Text style={{ fontSize: 16 }}>{RANK_META[rank].icon}</Text>
+                <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>
+                  {rank} · Level {level}
+                </Text>
+              </View>
+            </View>
           </View>
 
           {/* XP bar */}
-          <View style={{ width: '100%', marginTop: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-              <Text style={{ color: Colors.subtext, fontSize: 12 }}>XP</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 12, fontFamily: 'monospace' }}>
+          <View style={{ width: '100%', marginTop: Space.xl }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: Space.sm }}>
+              <Text style={{ color: Colors.text, fontSize: 12 }}>XP</Text>
+              <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'monospace' }}>
                 {fmtXP(xpToNext)} to next rank
               </Text>
             </View>
@@ -114,35 +156,26 @@ export default function AccountScreen() {
           </View>
         </View>
 
-        {/* Stats row */}
-        <View style={{ flexDirection: 'row', marginHorizontal: 16, gap: 12, marginBottom: 20 }}>
-          {[
-            { value: String(totalSessions), label: 'Sessions' },
-            { value: `${Math.round(totalFocusMinutes / 60)}h`, label: 'Focus' },
-            { value: `${currentStreak}d`, label: 'Streak' },
-          ].map((stat) => (
-            <View key={stat.label} style={{
-              flex: 1, backgroundColor: Colors.surface, borderRadius: 14,
-              borderWidth: 1, borderColor: Colors.border,
-              paddingVertical: 16, alignItems: 'center',
-            }}>
-              <Text style={{ color: Colors.textBright, fontSize: 22, fontWeight: '700', fontFamily: 'monospace' }}>
-                {stat.value}
-              </Text>
-              <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 3 }}>{stat.label}</Text>
-            </View>
-          ))}
+        {/* Stats — bento rather than three equal tiles, so the headline number
+            carries the weight it earned instead of being one third of a strip. */}
+        <View style={{ marginHorizontal: Space.lg, marginBottom: Space.xl, gap: Space.md }}>
+          <StatTile wide value={`${Math.round(totalFocusMinutes / 60)}h`} label="Focus" />
+          <View style={{ flexDirection: 'row', gap: Space.md }}>
+            <StatTile value={String(totalSessions)} label="Sessions" />
+            <StatTile value={`${currentStreak}d`} label="Streak" />
+          </View>
         </View>
 
         {/* Settings shortcut */}
-        <View style={{ marginHorizontal: 16 }}>
+        <View style={{ marginHorizontal: Space.lg }}>
           <TouchableOpacity
             onPress={() => router.push('/settings')}
+            accessibilityRole="button"
             style={{
-              backgroundColor: Colors.surface, borderRadius: 14,
+              backgroundColor: Colors.surface, borderRadius: Radius.lg,
               borderWidth: 1, borderColor: Colors.border,
               flexDirection: 'row', alignItems: 'center',
-              paddingHorizontal: 18, paddingVertical: 16, gap: 14,
+              paddingHorizontal: Space.xl, paddingVertical: Space.lg, gap: Space.lg,
             }}
           >
             <Ionicons name="settings-outline" size={20} color={Colors.subtext} />
