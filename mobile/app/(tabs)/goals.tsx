@@ -45,6 +45,7 @@ import RankSection from '../../components/profile/CurrentRankSection';
 import { sectionLabel, fmtXP } from '../../components/profile/shared';
 import AchievementsRow from '../../components/achievements/AchievementsRow';
 import type { StreakState } from '../../types/profile';
+import { Font } from '../../constants/typography';
 
 // ─── Local types ─────────────────────────────────────────────────────────────
 
@@ -142,7 +143,7 @@ function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
       borderTopWidth: 0.5, borderTopColor: BORDER_SOFT,
     }}>
       <Pressable onPress={onFollowers} style={{ flex: 1, alignItems: 'center' }}>
-        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', fontFamily: 'monospace' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', fontFamily: Font.mono }}>
           {stats.followerCount}
         </Text>
         <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>
@@ -153,7 +154,7 @@ function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
       <View style={{ width: 0.5, backgroundColor: BORDER_SOFT }} />
 
       <Pressable onPress={onFollowing} style={{ flex: 1, alignItems: 'center' }}>
-        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', fontFamily: 'monospace' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', fontFamily: Font.mono }}>
           {stats.followingCount}
         </Text>
         <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>
@@ -592,7 +593,7 @@ function HeroCard({
             XP
           </Text>
           {!isNewUser && (
-            <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'monospace' }}>
+            <Text style={{ color: Colors.text, fontSize: 12, fontFamily: Font.mono }}>
               {fmtXP(xp)} / {fmtXP(xp + xpToNextRank)} XP
             </Text>
           )}
@@ -610,7 +611,7 @@ function HeroCard({
             Complete your first session to earn XP
           </Text>
         ) : nextRank ? (
-          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 6, fontFamily: 'monospace' }}>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 6, fontFamily: Font.mono }}>
             {fmtXP(xpToNextRank)} XP until {nextRank}
           </Text>
         ) : (
@@ -646,7 +647,7 @@ function HeroCard({
             borderRightWidth: i < 2 ? 1 : 0,
             borderRightColor: BORDER_SOFT,
           }}>
-            <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '700', fontFamily: 'monospace' }}>
+            <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '700', fontFamily: Font.mono }}>
               {stat.value}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 2 }}>{stat.label}</Text>
@@ -738,7 +739,7 @@ function StreakSection({
 
           <Text style={{
             color: currentStreak > 0 ? AMBER : Colors.subtext,
-            fontSize: 40, fontWeight: '800', fontFamily: 'monospace',
+            fontSize: 40, fontWeight: '800', fontFamily: Font.mono,
             marginTop: 4, opacity: currentStreak === 0 ? 0.5 : 1,
           }}>
             {currentStreak}
@@ -778,7 +779,7 @@ function StreakSection({
             borderWidth: 1, borderColor: Colors.border,
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <Text style={{ color: Colors.primary, fontSize: 22, fontWeight: '700', fontFamily: 'monospace' }}>
+            <Text style={{ color: Colors.primary, fontSize: 22, fontWeight: '700', fontFamily: Font.mono }}>
               {weeklyTotal}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 3, textAlign: 'center' }}>
@@ -792,7 +793,7 @@ function StreakSection({
             borderWidth: 1, borderColor: Colors.border,
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <Text style={{ color: TEAL, fontSize: 22, fontWeight: '700', fontFamily: 'monospace' }}>
+            <Text style={{ color: TEAL, fontSize: 22, fontWeight: '700', fontFamily: Font.mono }}>
               {longestStreak}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 3, textAlign: 'center' }}>

@@ -8,6 +8,7 @@ import { useGamificationStore } from '../../stores/gamificationStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useTheme } from '../../hooks/useTheme';
 import { Space, Radius } from '../../constants/spacing';
+import { Font } from '../../constants/typography';
 import AppPressable from '../../components/AppPressable';
 import { getRank, RANK_META, getXpToNextRank, getXpProgressInRank } from '../../lib/rank';
 
@@ -42,7 +43,7 @@ function StatTile({ value, label, wide = false }: {
         color: Colors.textBright,
         fontSize: wide ? 34 : 24,
         fontWeight: '700',
-        fontFamily: 'monospace',
+        fontFamily: Font.mono,
       }}>
         {value}
       </Text>
@@ -84,7 +85,9 @@ export default function AccountScreen() {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: Space.xl, paddingVertical: Space.lg,
       }}>
-        <Text style={{ color: Colors.textBright, fontSize: 22, fontWeight: '700' }}>Profile</Text>
+        <Text style={{ color: Colors.textBright, fontSize: 22, fontFamily: Font.display }}>
+          Profile
+        </Text>
         <AppPressable
           onPress={() => router.push('/settings')}
           accessibilityRole="button"
@@ -143,7 +146,7 @@ export default function AccountScreen() {
           <View style={{ width: '100%', marginTop: Space.xl }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: Space.sm }}>
               <Text style={{ color: Colors.text, fontSize: 12 }}>XP</Text>
-              <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'monospace' }}>
+              <Text style={{ color: Colors.text, fontSize: 12, fontFamily: Font.mono }}>
                 {fmtXP(xpToNext)} to next rank
               </Text>
             </View>

@@ -6,6 +6,7 @@ import {
   RANK_ORDER, RANK_META, RANK_THRESHOLDS, getXpToNextRank, type RankTier,
 } from '../../lib/rank';
 import { sectionLabel, fmtXP } from './shared';
+import { Font } from '../../constants/typography';
 
 /**
  * "Current Rank" card: the tier you are on, the five-tier ladder, and what the
@@ -62,7 +63,7 @@ function RankSection({
             }}>
               {currentRank}
             </Text>
-            <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 4, fontFamily: 'monospace' }}>
+            <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 4, fontFamily: Font.mono }}>
               Level {level} · {fmtXP(xp)} XP
             </Text>
           </View>
@@ -124,7 +125,7 @@ function RankSection({
                     borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4,
                     zIndex: 10, minWidth: 70, alignItems: 'center',
                   }}>
-                    <Text style={{ color: Colors.text, fontSize: 10, fontFamily: 'monospace' }}>
+                    <Text style={{ color: Colors.text, fontSize: 10, fontFamily: Font.mono }}>
                       {fmtXP(RANK_THRESHOLDS[tier])} XP
                     </Text>
                   </View>
@@ -143,7 +144,7 @@ function RankSection({
             <Text style={{ color: Colors.subtext, fontSize: 12 }}>
               Next: {nextRankTier}
             </Text>
-            <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'monospace' }}>
+            <Text style={{ color: Colors.text, fontSize: 12, fontFamily: Font.mono }}>
               {fmtXP(xpToNext)} XP needed
             </Text>
           </View>

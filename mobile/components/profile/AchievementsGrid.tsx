@@ -2,6 +2,7 @@ import { View, Text } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
 import type { OrderedAchievement } from '../../lib/achievementOrder';
 import { sectionLabel, fmtDate } from './shared';
+import { Font } from '../../constants/typography';
 
 /**
  * The full achievements grid — every achievement, earned and unearned, two
@@ -80,7 +81,7 @@ function AchievementItem({ achievement }: { achievement: OrderedAchievement }) {
             {typeof threshold === 'number' && (
               <Text style={{
                 color: Colors.subtext, fontSize: 10,
-                marginTop: 4, fontFamily: 'monospace',
+                marginTop: 4, fontFamily: Font.mono,
               }}>
                 {progressLabel()}
               </Text>

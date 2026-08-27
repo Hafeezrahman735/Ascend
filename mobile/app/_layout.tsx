@@ -3,6 +3,13 @@ import { View, Text, Pressable, ActivityIndicator, Alert, Linking } from 'react-
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useFonts } from 'expo-font';
+import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
+import {
+  Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import { Fraunces_400Regular, Fraunces_600SemiBold } from '@expo-google-fonts/fraunces';
+import { JetBrainsMono_400Regular, JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono';
 import { loadTokensFromStorage } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useGamificationStore } from '../stores/gamificationStore';
@@ -51,6 +58,18 @@ export default function RootLayout() {
   const isDark = useIsDark();
   const [isReady, setIsReady] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+
+  // Loaded at runtime rather than embedded via the expo-font config plugin, so
+  // this branch stays JS-only and shippable over an EAS Update. fontError is
+  // treated as "done": a font that fails to load must degrade to the system
+  // face, never hold the app on a spinner.
+  const [fontsLoaded, fontError] = useFonts({
+    SpaceGrotesk_500Medium, SpaceGrotesk_700Bold,
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
+    Fraunces_400Regular, Fraunces_600SemiBold,
+    JetBrainsMono_400Regular, JetBrainsMono_500Medium,
+  });
+  const fontsSettled = fontsLoaded || !!fontError;
   const router = useRouter();
   const segments = useSegments();
   const user = useAuthStore((s) => s.user);
@@ -208,7 +227,7 @@ export default function RootLayout() {
     }
   }, [isRetrying]);
 
-  if (!isReady) {
+  if (!isReady || !fontsSettled) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <StatusBar style={isDark ? 'light' : 'dark'} />

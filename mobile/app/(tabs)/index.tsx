@@ -19,6 +19,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useAppForeground } from '../../hooks/useAppState';
 import { useTheme } from '../../hooks/useTheme';
 import { Space, Radius } from '../../constants/spacing';
+import { Font } from '../../constants/typography';
 import AppPressable from '../../components/AppPressable';
 
 const { width } = Dimensions.get('window');
@@ -443,10 +444,12 @@ export default function TimerScreen() {
             <View style={{ position: 'absolute', alignItems: 'center' }}>
               <Text style={{
                 fontSize: isStopwatch && stopwatchElapsed >= 3600 ? 44 : 56,
-                fontWeight: '700',
+                fontFamily: Font.display,
                 color: Colors.textBright,
                 fontVariant: ['tabular-nums'],
-                letterSpacing: 2,
+                // Space Grotesk's digits already carry the vertical rhythm the
+                // old tracking was faking; 2 was pushing them apart.
+                letterSpacing: 1,
               }}>
                 {mainDisplay}
               </Text>

@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import {
-  View, Text, Modal, Dimensions, PanResponder, Platform,
+  View, Text, Modal, Dimensions, PanResponder,
   StyleSheet, TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../hooks/useTheme';
+import { Font } from '../constants/typography';
 
 /**
  * The bottom sheet and the stat cell, shared by the task and goal stats modals.
@@ -32,7 +33,7 @@ const SCREEN_H = Dimensions.get('window').height;
 const SHEET_MAX_H = SCREEN_H * 0.9;
 
 /** Monospace family for stat numerals / section labels (matches JetBrains Mono). */
-export const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
+export const MONO = Font.mono;
 
 export { SCREEN_H, SHEET_MAX_H };
 
