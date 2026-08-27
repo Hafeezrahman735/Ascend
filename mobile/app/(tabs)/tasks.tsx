@@ -38,7 +38,6 @@ import {
   useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
   getTagColor, getTagIcon, type TagColorKey,
 } from '../../utils/tagStyle';
-import { calcDaysUntilDue } from '../../store/selectors/tasks';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
@@ -51,158 +50,16 @@ const PRIORITIES = [
   { value: 'urgent', label: 'Urgent' },
 ] as const;
 const ALL_DAYS: DayOfWeek[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-
-// ─── Date helpers (no date-fns) ───────────────────────────────────────────────
-function getMonday(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay();
-  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-function isToday(ts: number): boolean {
-  const d = new Date(ts); const n = new Date();
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
-}
-function isThisWeek(ts: number): boolean {
-  const d = new Date(ts); const mon = getMonday(new Date()); const next = new Date(mon); next.setDate(next.getDate() + 7);
-  return d >= mon && d < next;
-}
-function isThisMonth(ts: number): boolean {
-  const d = new Date(ts); const n = new Date();
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth();
-}
-function filterByPeriod(sessions: SessionRecord[], period: string): SessionRecord[] {
-  if (period === 'today') return sessions.filter((s) => isToday(s.completedAt));
-  if (period === 'week')  return sessions.filter((s) => isThisWeek(s.completedAt));
-  if (period === 'month') return sessions.filter((s) => isThisMonth(s.completedAt));
-  return sessions;
-}
-function formatSeconds(seconds: number): string {
-  const h = Math.floor(seconds / 3600); const m = Math.round((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`; return `${m}m`;
-}
-function formatDuration(seconds: number): string {
-  if (seconds >= 3600) { const h = Math.floor(seconds/3600); const m = Math.round((seconds%3600)/60); return m > 0 ? `${h}h ${m}m` : `${h}h`; }
-  return `${Math.round(seconds/60)}m`;
-}
-function getDueChip(task: Task, c: ThemeColors): { label: string; bg: string; fg: string } | null {
-  if (!task.dueDate) return null;
-  if (task.isCompleted) return { label: '✓ Done', bg: c.tealDim, fg: c.accent };
-  const daysLeft = calcDaysUntilDue(task);
-  if (daysLeft === null) return null;
-  // Recurring instances are day-of habits, not deadlines — a past-due one is just a
-  // stale instance awaiting cleanup on the next spawn, so never flag it "overdue".
-  if (task.parentTaskId && daysLeft < 0) return null;
-  const dueDateOnly = task.dueDate.substring(0, 10);
-  const dayName = new Date(dueDateOnly + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-  if (daysLeft < 0) return { label: '⚠ Overdue', bg: c.ROSE_DIM, fg: c.ROSE };
-  if (daysLeft <= 3) return { label: `⚠ ${dayName}`, bg: c.ROSE_DIM, fg: c.ROSE };
-  return { label: `Due ${dayName}`, bg: c.inactive, fg: c.subtext };
-}
-
-// ─── Time-per-category grouping ────────────────────────────────────────────────
-function buildCategoryMap(sessions: SessionRecord[], tasks: Task[]): Record<string, number> {
-  const map: Record<string, number> = {};
-  for (const s of sessions) {
-    if (s.type !== 'focus') continue;
-    const task = tasks.find((t) => t.id === s.taskId);
-    const tag = task?.tags?.[0] ?? 'Untagged';
-    map[tag] = (map[tag] ?? 0) + s.durationSeconds;
-  }
-  return map;
-}
-
-// How many not-scheduled-today recurring rows to show before collapsing behind
-// "Show N more". Three keeps the tail short for someone with many habits.
 const DORMANT_VISIBLE = 3;
-// The main tab's Tasks zone holds four rows total: three real tasks plus up to
-// one recurring, so a habit is visible without opening the drill-down and today's
-// work still leads.
 const ZONE_TASK_SLOTS = 3;
 const ZONE_DORMANT_SLOTS = 1;
 
-// ─── Date helpers for hero card / pill strip ─────────────────────────────────
-function isYesterdayLocal(ts: number): boolean {
-  const d = new Date(ts); const y = new Date(); y.setDate(y.getDate() - 1);
-  return d.getFullYear() === y.getFullYear() && d.getMonth() === y.getMonth() && d.getDate() === y.getDate();
-}
-function startOfThisWeekMs(): number {
-  const d = new Date(); const day = d.getDay();
-  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); d.setHours(0, 0, 0, 0); return d.getTime();
-}
-function startOfWeekNMs(n: number): number { return startOfThisWeekMs() - n * 7 * 86_400_000; }
-
-function getLastWeekCompletionRate(tasks: Task[]): number | null {
-  const thisStart = startOfThisWeekMs(); const lastStart = startOfWeekNMs(1);
-  const active = tasks.filter((t) => !t.isArchived);
-  const planned = active.filter((t) => { const ts = new Date(t.createdAt).getTime(); return ts >= lastStart && ts < thisStart; });
-  if (planned.length === 0) return null;
-  const done = active.filter((t) => {
-    if (!t.isCompleted || !t.completedAt) return false;
-    const ts = new Date(t.completedAt).getTime(); return ts >= lastStart && ts < thisStart;
-  });
-  return Math.round((done.length / planned.length) * 100);
-}
-
-function diffCalendarDaysTasks(a: Date, b: Date): number {
-  const aD = new Date(a.getFullYear(), a.getMonth(), a.getDate());
-  const bD = new Date(b.getFullYear(), b.getMonth(), b.getDate());
-  return Math.round((aD.getTime() - bD.getTime()) / 86_400_000);
-}
-
-// ─── Peak focus ───────────────────────────────────────────────────────────────
-// Returns the hour-of-day (0–23) with the most sessions. Needs ≥5 sessions total.
-function getPeakHour(sessions: SessionRecord[]): number | null {
-  if (sessions.length < 5) return null;
-  const counts: Record<number, number> = {};
-  for (const s of sessions) {
-    const h = new Date(s.completedAt).getHours();
-    counts[h] = (counts[h] ?? 0) + 1;
-  }
-  let peak = -1; let max = 0;
-  for (const [h, c] of Object.entries(counts)) {
-    if (c > max) { max = c; peak = Number(h); }
-  }
-  return peak >= 0 ? peak : null;
-}
-
-// Converts a 24h integer to a 2-hour window string.
-// Examples: 9 → "9 – 11am", 21 → "9 – 11pm", 22 → "10pm – 12am", 23 → "11pm – 1am"
-function formatPeakWindow(hour: number): string {
-  const end = (hour + 2) % 24;
-  const sSuffix = hour < 12 ? 'am' : 'pm';
-  const eSuffix = end  < 12 ? 'am' : 'pm';
-  const sDisplay = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  const eDisplay = end  === 0 ? 12 : end  > 12 ? end  - 12 : end;
-  return sSuffix === eSuffix
-    ? `${sDisplay} – ${eDisplay}${eSuffix}`
-    : `${sDisplay}${sSuffix} – ${eDisplay}${eSuffix}`;
-}
-
-// ─── Completion rate ──────────────────────────────────────────────────────────
-// "Planned" = created in the period; "Completed" = completedAt in the period.
-// Returns null (→ "—") when no tasks were planned; 0 when planned > 0 but none done.
-function getCompletionRate(tasks: Task[], period: string): number | null {
-  const active = tasks.filter((t) => !t.isArchived);
-  const planned = active.filter((t) => {
-    const ts = new Date(t.createdAt).getTime();
-    if (period === 'today') return isToday(ts);
-    if (period === 'week')  return isThisWeek(ts);
-    if (period === 'month') return isThisMonth(ts);
-    return true;
-  });
-  if (planned.length === 0) return null;
-  const completed = active.filter((t) => {
-    if (!t.isCompleted || !t.completedAt) return false;
-    const ts = new Date(t.completedAt).getTime();
-    if (period === 'today') return isToday(ts);
-    if (period === 'week')  return isThisWeek(ts);
-    if (period === 'month') return isThisMonth(ts);
-    return true;
-  });
-  return Math.round((completed.length / planned.length) * 100);
-}
+import {
+  getMonday, isToday, filterByPeriod, formatSeconds,
+  formatDuration, getDueChip, buildCategoryMap, isYesterdayLocal,
+  startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
+  diffCalendarDaysTasks, getPeakHour, formatPeakWindow, getCompletionRate,
+} from '../../lib/taskMetrics';
 
 
 // ─── ZoneHeader ───────────────────────────────────────────────────────────────
