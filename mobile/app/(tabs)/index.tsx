@@ -17,6 +17,7 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useAppForeground } from '../../hooks/useAppState';
 import { useTheme } from '../../hooks/useTheme';
+import { Space, Radius } from '../../constants/spacing';
 
 const { width } = Dimensions.get('window');
 
@@ -54,9 +55,9 @@ function StepperRow({ label, value, min, max, step, onChange }: {
         <TouchableOpacity
           onPress={() => onChange(Math.max(min, value - step))}
           style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
             backgroundColor: Colors.darkBg,
             alignItems: 'center',
             justifyContent: 'center',
@@ -77,9 +78,9 @@ function StepperRow({ label, value, min, max, step, onChange }: {
         <TouchableOpacity
           onPress={() => onChange(Math.min(max, value + step))}
           style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
             backgroundColor: Colors.darkBg,
             alignItems: 'center',
             justifyContent: 'center',
@@ -346,7 +347,7 @@ export default function TimerScreen() {
 
         {/* HEADER */}
         <View style={{ alignItems: 'center', paddingVertical: 10 }}>
-          <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '500', letterSpacing: 0.5, opacity: 0.8 }}>
+          <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '500', letterSpacing: 0.5 }}>
             Stay focused, stay unstoppable
           </Text>
         </View>
@@ -416,11 +417,10 @@ export default function TimerScreen() {
               </Text>
               <Text style={{
                 color: Colors.text,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: '600',
-                letterSpacing: 2.5,
-                marginTop: 6,
-                opacity: 0.7,
+                letterSpacing: 1,
+                marginTop: Space.sm,
               }}>
                 {phaseLabel}
               </Text>
@@ -544,11 +544,10 @@ export default function TimerScreen() {
             </TouchableOpacity>
             <Text style={{
               color: Colors.text,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: '700',
-              letterSpacing: 1.8,
-              opacity: 0.6,
-              marginTop: 6,
+              letterSpacing: 1,
+              marginTop: Space.sm,
             }}>
               {isStopwatch
                 ? (isRunning ? 'PAUSE & SAVE' : 'START')
@@ -595,11 +594,11 @@ export default function TimerScreen() {
           activeOpacity={0.7}
           style={{
             backgroundColor: Colors.surface,
-            borderRadius: 22,
+            borderRadius: Radius.xl,
             borderWidth: 1,
             borderColor: Colors.border,
-            padding: 16,
-            marginTop: 14,
+            padding: Space.lg,
+            marginTop: Space.lg,
             shadowColor: Colors.primary,
             shadowOffset: { width: 0, height: 0 },
             shadowOpacity: 0.1,
@@ -609,11 +608,10 @@ export default function TimerScreen() {
         >
           <Text style={{
             color: Colors.text,
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: '700',
-            letterSpacing: 1.8,
-            opacity: 0.5,
-            marginBottom: 4,
+            letterSpacing: 1,
+            marginBottom: Space.xs,
           }}>
             CURRENT TASK
           </Text>
@@ -634,7 +632,7 @@ export default function TimerScreen() {
               explain why — which reads as a bug rather than a feature. */}
           {selectedTask && !isStopwatch && (
             <Text
-              style={{ color: Colors.subtext, fontSize: 11, marginTop: 6 }}
+              style={{ color: Colors.text, fontSize: 12, marginTop: Space.sm }}
               numberOfLines={2}
             >
               {planLabel
@@ -682,11 +680,11 @@ export default function TimerScreen() {
           <View style={{
             flex: 1,
             backgroundColor: Colors.darkCard,
-            borderRadius: 20,
+            borderRadius: Radius.lg,
             borderWidth: 1,
             borderColor: Colors.border,
-            paddingVertical: 16,
-            paddingHorizontal: 12,
+            paddingVertical: Space.lg,
+            paddingHorizontal: Space.md,
             alignItems: 'center',
             marginRight: 6,
           }}>
@@ -695,11 +693,10 @@ export default function TimerScreen() {
             </Text>
             <Text style={{
               color: Colors.text,
-              fontSize: 9,
+              fontSize: 12,
               fontWeight: '600',
               letterSpacing: 0.5,
-              opacity: 0.5,
-              marginTop: 4,
+              marginTop: Space.xs,
               textAlign: 'center',
             }}>
               Focus Time Today
@@ -710,11 +707,11 @@ export default function TimerScreen() {
           <View style={{
             flex: 1,
             backgroundColor: Colors.darkCard,
-            borderRadius: 20,
+            borderRadius: Radius.lg,
             borderWidth: 1,
             borderColor: Colors.border,
-            paddingVertical: 16,
-            paddingHorizontal: 12,
+            paddingVertical: Space.lg,
+            paddingHorizontal: Space.md,
             alignItems: 'center',
             marginLeft: 6,
           }}>
@@ -723,11 +720,10 @@ export default function TimerScreen() {
             </Text>
             <Text style={{
               color: Colors.text,
-              fontSize: 9,
+              fontSize: 12,
               fontWeight: '600',
               letterSpacing: 0.5,
-              opacity: 0.5,
-              marginTop: 4,
+              marginTop: Space.xs,
               textAlign: 'center',
             }}>
               Sessions Completed
@@ -753,7 +749,7 @@ export default function TimerScreen() {
               </Text>
 
               {tasks.filter((t) => !t.isArchived && !t.isCompleted).length === 0 ? (
-                <Text style={{ color: Colors.text, opacity: 0.5, textAlign: 'center', paddingVertical: 24 }}>
+                <Text style={{ color: Colors.text, textAlign: 'center', paddingVertical: Space.xxl }}>
                   No tasks available
                 </Text>
               ) : (
@@ -792,7 +788,7 @@ export default function TimerScreen() {
                           {task.title}
                         </Text>
                         {task.estimatedMinutes ? (
-                          <Text style={{ color: Colors.text, fontSize: 12, opacity: 0.5, marginLeft: 8 }}>
+                          <Text style={{ color: Colors.text, fontSize: 12, marginLeft: Space.sm }}>
                             {task.estimatedMinutes}m
                           </Text>
                         ) : null}
