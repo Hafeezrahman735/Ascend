@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
   useAnimatedProps,
+  useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,6 +32,22 @@ const CY = SIZE / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+// ─── Ring glow ────────────────────────────────────────────────────────────────
+// The only glow left on this screen that changes, and the only one carrying
+// meaning: it is the timer's status light. Bright while something is counting,
+// dim when nothing is. Everything else on the screen stopped emitting light —
+// static furniture that glows is decoration, and this screen has to be able to
+// disappear during a session.
+const RING_GLOW_RUNNING = 0.2;
+const RING_GLOW_IDLE = 0.08;
+const RING_GLOW_FADE_MS = 420;
+
+// Android ignores shadowOpacity and reads elevation instead, so the same two
+// states are expressed on both scales rather than letting one platform lose the
+// distinction entirely.
+const RING_ELEVATION_RUNNING = 12;
+const RING_ELEVATION_IDLE = 5;
 
 function StepperRow({ label, value, min, max, step, onChange }: {
   label: string;
@@ -264,6 +281,25 @@ export default function TimerScreen() {
   const isPaused = status === 'paused';
   const isStopwatch = mode === 'stopwatch';
 
+  // Status light. `isRunning` covers the stopwatch too — it drives the same
+  // store status — so counting up and counting down both read as "live".
+  const ringGlow = useSharedValue(RING_GLOW_IDLE);
+  const ringElevation = useSharedValue(RING_ELEVATION_IDLE);
+
+  useEffect(() => {
+    const opts = { duration: RING_GLOW_FADE_MS };
+    ringGlow.value = withTiming(isRunning ? RING_GLOW_RUNNING : RING_GLOW_IDLE, opts);
+    ringElevation.value = withTiming(
+      isRunning ? RING_ELEVATION_RUNNING : RING_ELEVATION_IDLE,
+      opts,
+    );
+  }, [isRunning, ringGlow, ringElevation]);
+
+  const ringGlowStyle = useAnimatedStyle(() => ({
+    shadowOpacity: ringGlow.value,
+    elevation: ringElevation.value,
+  }));
+
   const formatGlobalTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
@@ -354,17 +390,15 @@ export default function TimerScreen() {
 
         {/* MAIN TIMER RING */}
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{
+          <Animated.View style={[{
             width: SIZE,
             height: SIZE,
             alignItems: 'center',
             justifyContent: 'center',
             shadowColor: Colors.primary,
             shadowOffset: { width: 0, height: 0 },
-            shadowOpacity: 0.35,
-            shadowRadius: 24,
-            elevation: 12,
-          }}>
+            shadowRadius: 16,
+          }, ringGlowStyle]}>
             <Svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
               <Circle
                 cx={CX}
@@ -425,7 +459,7 @@ export default function TimerScreen() {
                 {phaseLabel}
               </Text>
             </View>
-          </View>
+          </Animated.View>
         </View>
 
         {/* SEQUENCE ROW — the task plan when one is loaded, else the pomodoro cycle */}
@@ -459,11 +493,6 @@ export default function TimerScreen() {
                       borderRadius: 3,
                       backgroundColor: isCurrent ? Colors.accent : Colors.inactive,
                       marginHorizontal: 3,
-                      shadowColor: isCurrent ? Colors.accent : 'transparent',
-                      shadowOffset: { width: 0, height: 0 },
-                      shadowOpacity: isCurrent ? 0.6 : 0,
-                      shadowRadius: 6,
-                      elevation: isCurrent ? 4 : 0,
                     }}
                   />
                 );
@@ -477,11 +506,6 @@ export default function TimerScreen() {
                     borderRadius: 3,
                     backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
                     marginHorizontal: 3,
-                    shadowColor: i < completedDots ? Colors.accent : 'transparent',
-                    shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: i < completedDots ? 0.6 : 0,
-                    shadowRadius: 6,
-                    elevation: i < completedDots ? 4 : 0,
                   }}
                 />
               ))}
@@ -531,9 +555,9 @@ export default function TimerScreen() {
                 justifyContent: 'center',
                 shadowColor: Colors.primary,
                 shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.5,
-                shadowRadius: 18,
-                elevation: 14,
+                shadowOpacity: 0.25,
+                shadowRadius: 12,
+                elevation: 8,
               }}
             >
               <Ionicons
@@ -599,11 +623,6 @@ export default function TimerScreen() {
             borderColor: Colors.border,
             padding: Space.lg,
             marginTop: Space.lg,
-            shadowColor: Colors.primary,
-            shadowOffset: { width: 0, height: 0 },
-            shadowOpacity: 0.1,
-            shadowRadius: 14,
-            elevation: 4,
           }}
         >
           <Text style={{
