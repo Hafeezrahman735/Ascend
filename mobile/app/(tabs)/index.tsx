@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Dimensions, Modal, ScrollView, Alert, AppState } from 'react-native';
+import { View, Text, Dimensions, Modal, ScrollView, Alert, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
@@ -19,6 +19,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useAppForeground } from '../../hooks/useAppState';
 import { useTheme } from '../../hooks/useTheme';
 import { Space, Radius } from '../../constants/spacing';
+import AppPressable from '../../components/AppPressable';
 
 const { width } = Dimensions.get('window');
 
@@ -69,7 +70,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
     }}>
       <Text style={{ color: Colors.text, fontSize: 15 }}>{label}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity
+        <AppPressable
           onPress={() => onChange(Math.max(min, value - step))}
           style={{
             width: 44,
@@ -81,7 +82,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
           }}
         >
           <Ionicons name="remove" size={18} color={Colors.text} />
-        </TouchableOpacity>
+        </AppPressable>
         <Text style={{
           color: Colors.textBright,
           fontSize: 18,
@@ -92,7 +93,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
         }}>
           {value}
         </Text>
-        <TouchableOpacity
+        <AppPressable
           onPress={() => onChange(Math.min(max, value + step))}
           style={{
             width: 44,
@@ -104,7 +105,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
           }}
         >
           <Ionicons name="add" size={18} color={Colors.text} />
-        </TouchableOpacity>
+        </AppPressable>
       </View>
     </View>
   );
@@ -518,9 +519,8 @@ export default function TimerScreen() {
           alignItems: 'center',
           paddingVertical: 8,
         }}>
-          <TouchableOpacity
+          <AppPressable
             onPress={isStopwatch ? handleStopwatchDiscard : handleSkip}
-            activeOpacity={0.7}
             disabled={isStopwatch && stopwatchElapsed === 0 && !isRunning}
             style={{
               width: 50,
@@ -532,20 +532,18 @@ export default function TimerScreen() {
               borderWidth: 1,
               borderColor: Colors.border,
               marginRight: 32,
-              opacity: isStopwatch && stopwatchElapsed === 0 && !isRunning ? 0.4 : 1,
             }}
           >
             <Ionicons name={isStopwatch ? 'refresh' : 'play-skip-forward'} size={20} color={Colors.text} />
-          </TouchableOpacity>
+          </AppPressable>
 
           <View style={{ alignItems: 'center' }}>
-            <TouchableOpacity
+            <AppPressable
               onPress={
                 isStopwatch
                   ? (isRunning ? handleStopwatchPause : handleStopwatchStart)
                   : (isRunning ? handlePause : isPaused ? handleResume : handleStart)
               }
-              activeOpacity={0.8}
               style={{
                 width: 72,
                 height: 72,
@@ -565,7 +563,7 @@ export default function TimerScreen() {
                 size={32}
                 color="#FFFFFF"
               />
-            </TouchableOpacity>
+            </AppPressable>
             <Text style={{
               color: Colors.text,
               fontSize: 12,
@@ -579,14 +577,13 @@ export default function TimerScreen() {
             </Text>
           </View>
 
-          <TouchableOpacity
+          <AppPressable
             onPress={() => {
               setDraftFocus(Math.round(settings.workDuration / 60));
               setDraftShort(Math.round(settings.shortBreakDuration / 60));
               setDraftLong(Math.round(settings.longBreakDuration / 60));
               setShowDurationModal(true);
             }}
-            activeOpacity={0.7}
             style={{
               width: 50,
               height: 50,
@@ -609,13 +606,14 @@ export default function TimerScreen() {
                 backgroundColor: Colors.accent,
               }} />
             )}
-          </TouchableOpacity>
+          </AppPressable>
         </View>
 
         {/* TASK CARD */}
-        <TouchableOpacity
+        <AppPressable
           onPress={() => setShowTaskPicker(true)}
-          activeOpacity={0.7}
+          accessibilityRole="button"
+          scaleOnPress={false}
           style={{
             backgroundColor: Colors.surface,
             borderRadius: Radius.xl,
@@ -688,7 +686,7 @@ export default function TimerScreen() {
               </Text>
             </View>
           ) : null}
-        </TouchableOpacity>
+        </AppPressable>
 
         {/* STATS SECTION */}
         <View style={{
@@ -776,7 +774,7 @@ export default function TimerScreen() {
                   {tasks.filter((t) => !t.isArchived && !t.isCompleted).map((task) => {
                     const isSelected = task.id === selectedTaskId;
                     return (
-                      <TouchableOpacity
+                      <AppPressable
                         key={task.id}
                         onPress={() => {
                           selectTask(task.id);
@@ -811,7 +809,7 @@ export default function TimerScreen() {
                             {task.estimatedMinutes}m
                           </Text>
                         ) : null}
-                      </TouchableOpacity>
+                      </AppPressable>
                     );
                   })}
                 </ScrollView>
@@ -819,7 +817,7 @@ export default function TimerScreen() {
 
               <View style={{ flexDirection: 'row', marginTop: 16 }}>
                 {selectedTaskId ? (
-                  <TouchableOpacity
+                  <AppPressable
                     onPress={() => {
                       selectTask(null);
                       setShowTaskPicker(false);
@@ -835,9 +833,9 @@ export default function TimerScreen() {
                     }}
                   >
                     <Text style={{ color: Colors.text, fontWeight: '600' }}>Deselect</Text>
-                  </TouchableOpacity>
+                  </AppPressable>
                 ) : null}
-                <TouchableOpacity
+                <AppPressable
                   onPress={() => setShowTaskPicker(false)}
                   style={{
                     flex: selectedTaskId ? 1 : undefined,
@@ -849,7 +847,7 @@ export default function TimerScreen() {
                   }}
                 >
                   <Text style={{ color: Colors.text, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
+                </AppPressable>
               </View>
             </View>
           </View>
@@ -895,12 +893,11 @@ export default function TimerScreen() {
               />
 
               {/* Mode toggle — switch between the countdown timer and the count-up stopwatch */}
-              <TouchableOpacity
+              <AppPressable
                 onPress={() => {
                   setMode(isStopwatch ? 'pomodoro' : 'stopwatch');
                   setShowDurationModal(false);
                 }}
-                activeOpacity={0.8}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
@@ -917,10 +914,10 @@ export default function TimerScreen() {
                 <Text style={{ color: Colors.primarySoft, fontWeight: '700' }}>
                   {isStopwatch ? 'Switch to Timer' : 'Switch to Stopwatch'}
                 </Text>
-              </TouchableOpacity>
+              </AppPressable>
 
               <View style={{ flexDirection: 'row', marginTop: 16 }}>
-                <TouchableOpacity
+                <AppPressable
                   onPress={() => setShowDurationModal(false)}
                   style={{
                     flex: 1,
@@ -933,8 +930,8 @@ export default function TimerScreen() {
                   }}
                 >
                   <Text style={{ color: Colors.text, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
+                </AppPressable>
+                <AppPressable
                   onPress={() => {
                     setWorkDuration(draftFocus);
                     setShortBreakDuration(draftShort);
@@ -956,7 +953,7 @@ export default function TimerScreen() {
                   }}
                 >
                   <Text style={{ color: '#fff', fontWeight: '700' }}>Confirm</Text>
-                </TouchableOpacity>
+                </AppPressable>
               </View>
             </View>
           </View>

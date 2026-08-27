@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,6 +8,7 @@ import { useGamificationStore } from '../../stores/gamificationStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useTheme } from '../../hooks/useTheme';
 import { Space, Radius } from '../../constants/spacing';
+import AppPressable from '../../components/AppPressable';
 import { getRank, RANK_META, getXpToNextRank, getXpProgressInRank } from '../../lib/rank';
 
 function fmtXP(n: number): string {
@@ -84,7 +85,7 @@ export default function AccountScreen() {
         paddingHorizontal: Space.xl, paddingVertical: Space.lg,
       }}>
         <Text style={{ color: Colors.textBright, fontSize: 22, fontWeight: '700' }}>Profile</Text>
-        <TouchableOpacity
+        <AppPressable
           onPress={() => router.push('/settings')}
           accessibilityRole="button"
           accessibilityLabel="Settings"
@@ -92,7 +93,7 @@ export default function AccountScreen() {
           hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
         >
           <Ionicons name="settings-outline" size={22} color={Colors.subtext} />
-        </TouchableOpacity>
+        </AppPressable>
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: Space.page }}>
@@ -168,9 +169,10 @@ export default function AccountScreen() {
 
         {/* Settings shortcut */}
         <View style={{ marginHorizontal: Space.lg }}>
-          <TouchableOpacity
+          <AppPressable
             onPress={() => router.push('/settings')}
             accessibilityRole="button"
+            scaleOnPress={false}
             style={{
               backgroundColor: Colors.surface, borderRadius: Radius.lg,
               borderWidth: 1, borderColor: Colors.border,
@@ -181,7 +183,7 @@ export default function AccountScreen() {
             <Ionicons name="settings-outline" size={20} color={Colors.subtext} />
             <Text style={{ flex: 1, color: Colors.textBright, fontSize: 15 }}>Account & Settings</Text>
             <Ionicons name="chevron-forward" size={16} color={Colors.subtext} />
-          </TouchableOpacity>
+          </AppPressable>
         </View>
       </ScrollView>
     </SafeAreaView>
