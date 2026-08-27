@@ -15,10 +15,31 @@ async function persistGoals(goals: TaskGoal[], userId: string | null | undefined
   }
 }
 
+/**
+ * Fills in fields a cache written by an older build cannot have.
+ *
+ * The cast below is a lie by necessity — this is unvalidated JSON from disk,
+ * and every field added to `TaskGoal` after a release is absent from every
+ * cache written before it. `hydrateGoals` seeds the UI from this before any
+ * fetch lands, so an absent number reaches a formatter: `formatSeconds` on
+ * `undefined` computes NaN and renders the literal string "NaNm" to every
+ * existing user on first launch after the update.
+ *
+ * Defaulting here rather than declaring the fields optional keeps the fallback
+ * in one place instead of spreading `?? 0` through every consumer.
+ */
+function normaliseCachedGoal(goal: TaskGoal): TaskGoal {
+  return {
+    ...goal,
+    totalFocusSeconds: goal.totalFocusSeconds ?? 0,
+    elapsedDays: goal.elapsedDays ?? 0,
+  };
+}
+
 async function readCachedGoals(userId: string): Promise<TaskGoal[] | null> {
   try {
     const raw = await AsyncStorage.getItem(GOALS_CACHE_KEY(userId));
-    return raw ? (JSON.parse(raw) as TaskGoal[]) : null;
+    return raw ? (JSON.parse(raw) as TaskGoal[]).map(normaliseCachedGoal) : null;
   } catch {
     await AsyncStorage.removeItem(GOALS_CACHE_KEY(userId)).catch(() => {});
     return null;
@@ -100,6 +121,8 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       linkedTaskCount: 0,
       completedTaskCount: 0,
       actualSessions: 0,
+      totalFocusSeconds: 0,
+      elapsedDays: 0,
       taskProgress: 0,
       sessionProgress: data.targetSessions ? 0 : null,
       overallProgress: 0,

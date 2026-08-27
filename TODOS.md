@@ -126,3 +126,75 @@ Full plan: `docs/plans/adaptive-session-plan.md`
   to the one TaskFormModal already had. Fixing all three means either keying the
   sheets to remount or rendering them conditionally, which costs the dismiss
   animation. Held at `warn` with the other 79.
+
+---
+
+## Goal stats modal (shipped to staging) — deferrals from the /autoplan review
+
+Full review: `docs/plans/goal-stats-modal.md`. Recorded here because each was a
+decision, not an oversight.
+
+### F1 — a habit-linked goal reports contradictory numbers
+
+`loadGoalCounts` filters `isArchived: false` for task counts
+(`backend/src/lib/goalProgress.ts:95`) but deliberately does NOT for sessions
+(`:117-123`, with a comment explaining why: time already spent does not become
+un-spent when its row is archived).
+
+A goal linked to a **recurring habit** therefore counts only today's live
+instance in `linkedTaskCount` while counting every session ever in
+`actualSessions` and `totalFocusSeconds`. It renders as "0/1 tasks · 47 sessions
+· 23h focus", and `taskProgress` swings between 0 and 1 as instances spawn and
+archive each day.
+
+The stats modal **labels** this ("all time, every instance") rather than fixing
+it. The real fix is a decision about what a habit-linked goal's progress should
+*mean* — arguably it should be sessions-only, since the task count is
+structurally meaningless for a habit — and that changes behaviour for every
+existing goal of that shape. Too big to ride along with a display feature.
+
+### Goal completion is logged, never celebrated — the next feature
+
+The strongest finding in the whole review, and mostly already built:
+
+- `goalProgress.ts:196-227` auto-completes a goal, awards `GOAL_COMPLETION_XP`,
+  emits `FEED_CREATE`, and emits `TASK_GOAL_COMPLETED` carrying
+  `completedTaskCount`, `linkedTaskCount`, `actualSessions`, `targetSessions`,
+  `progressMode` — the exact numbers the new modal shows.
+- On mobile it surfaces only as a `RecentActivity` row
+  (`components/RecentActivity.tsx:22,44`) rendered with `limit={4}` — the same
+  visual weight as "Focused 25m", and pushed out of the list by the very
+  sessions that completed the goal.
+- `components/RewardModal.tsx` is **dead code**, zero call sites.
+- `UnlockOverlay` is achievement-only.
+
+**`TASK_GOAL_COMPLETED` has no client transport.** `index.ts:188-190` wires it
+to `handleAllNotifications` only — unlike `SESSION_COMPLETED` (`:182`) and
+`FRIEND_SESSION_STARTED` (`:199`), it never reaches
+`handleSocialBroadcast(io, ...)`. So this is not "just a client subscriber": it
+needs the server wiring, a socket handler, and an integration test.
+
+`GoalStatsModal`'s body was built to be reusable as that overlay's content.
+
+### Per-goal charts are possible but would disagree with the headline
+
+`SessionRecord` (`store/sync.ts:6-13`) carries `taskId`, and `Task` carries
+`taskGoalId`, so a per-goal time series is a client-side groupBy over data
+already in memory — no route needed. But the join runs through the client's
+task list, which **excludes archived tasks**, while the server's
+`totalFocusSeconds` includes them. A sparkline built this way would undercount
+and its total would not equal the number printed above it. Same defect class as
+F1. `lastSessionOnGoal` accepts this gap deliberately and is used only to pick a
+sentence, never to derive a displayed total.
+
+### Two `StatBox` implementations
+
+`components/SheetPrimitives.tsx` (icon/label/value/sub/big) and
+`app/user/[id].tsx:19` (label/value). Different shapes for different surfaces;
+unifying them is a separate refactor and was explicitly out of this blast radius.
+
+### Contract coverage is a key-set assertion, not a type check
+
+`stats.integration.test.ts` now asserts the exact key set `serializeGoal`
+returns, which catches a field added on one side and not the other. It does not
+check types. A shared schema (zod on both sides) would, and is the real fix.

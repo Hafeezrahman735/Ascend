@@ -330,6 +330,24 @@ export interface TaskGoal {
   linkedTaskCount: number;
   completedTaskCount: number;
   actualSessions: number;
+  /**
+   * Credited focus seconds across every session logged against this goal's
+   * tasks. SECONDS — note `gamificationStore.totalFocusMinutes` is minutes;
+   * comparing the two without converting is wrong by a factor of 60.
+   *
+   * Counts sessions on ARCHIVED tasks too, unlike the task counts above, which
+   * exclude them (`backend/src/lib/goalProgress.ts:95` vs `:117-123`). For a
+   * goal linked to a recurring habit that means this keeps every session ever
+   * while `linkedTaskCount` sees only today's live instance. Deliberate on the
+   * server, and the reason anything displaying it has to say "all time".
+   */
+  totalFocusSeconds: number;
+  /**
+   * Wall-clock days from creation to completion, or to now while still open.
+   * On an in-flight goal this is "days since you made this", which reads as an
+   * accusation — only render it on a completed goal.
+   */
+  elapsedDays: number;
   taskProgress: number;
   /** null when the goal has no session target. */
   sessionProgress: number | null;

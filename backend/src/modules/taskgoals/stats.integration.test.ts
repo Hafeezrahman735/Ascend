@@ -57,7 +57,7 @@ async function getGoal(user: Awaited<ReturnType<typeof createUser>>, goalId: str
   return res.body.data.find((g: { id: string }) => g.id === goalId);
 }
 
-describe('GET /task-goals/:id — focus time', () => {
+describe('GET /task-goals — focus time', () => {
   it('sums sessions of DIFFERENT lengths', async () => {
     // 20 + 25 + 15 = 60 minutes across 3 sessions. A count alone would say "3",
     // which is the same number a goal of three 5-minute sessions would report.
@@ -135,7 +135,7 @@ describe('GET /task-goals/:id — focus time', () => {
   });
 });
 
-describe('GET /task-goals/:id — elapsed days', () => {
+describe('GET /task-goals — elapsed days', () => {
   it('is zero for a goal created today, never negative', async () => {
     const user = await createUser();
     const goalId = await createGoal(user, 'Fresh');
@@ -175,5 +175,46 @@ describe('goal progress is unchanged by the time stat', () => {
     expect(goal.totalFocusSeconds).toBe(120 * MIN);
     expect(goal.overallProgress).toBeCloseTo(0.5, 5);
     expect(goal.isCompleted).toBe(false);
+  });
+});
+
+describe('the wire contract', () => {
+  /**
+   * The mobile `TaskGoal` interface is hand-maintained against `serializeGoal`
+   * with no runtime validation on either side, so a field can be added to the
+   * server and silently ignored by the client indefinitely. That is not a
+   * hypothetical: `totalFocusSeconds` and `elapsedDays` shipped from here and
+   * were dropped by the client for months, because nothing compared the shapes.
+   *
+   * This asserts the exact key set. It fails when the server grows a field
+   * (reminding whoever added it to mirror it in `mobile/types/index.ts`) and
+   * when one is removed (catching a client left reading a field that is gone).
+   * Add to BOTH sides deliberately, or not at all.
+   */
+  it('serialises exactly the keys the mobile client declares', async () => {
+    const user = await createUser();
+    const goalId = await createGoal(user, 'Contract');
+    const goal = await getGoal(user, goalId);
+
+    expect(Object.keys(goal).sort()).toEqual([
+      'actualSessions',
+      'completedAt',
+      'completedTaskCount',
+      'createdAt',
+      'deadline',
+      'elapsedDays',
+      'id',
+      'isArchived',
+      'isCompleted',
+      'linkedTaskCount',
+      'overallProgress',
+      'progressMode',
+      'sessionProgress',
+      'tag',
+      'targetSessions',
+      'taskProgress',
+      'title',
+      'totalFocusSeconds',
+    ]);
   });
 });

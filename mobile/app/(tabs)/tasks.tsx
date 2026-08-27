@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow';
 import {
   View, Text, TouchableOpacity, ScrollView, Modal, TextInput,
-  Alert, Platform, Dimensions, PanResponder, Animated,
-  StyleSheet, TouchableWithoutFeedback, KeyboardAvoidingView, ActivityIndicator, Switch,
+  Alert, Platform, Animated,
+  StyleSheet, KeyboardAvoidingView, ActivityIndicator, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,9 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import RecentActivity from '../../components/RecentActivity';
 import FormSheet from '../../components/FormSheet';
+import { BottomSheet, StatBox, SCREEN_H, MONO } from '../../components/SheetPrimitives';
+import GoalStatsModal from '../../components/GoalStatsModal';
+import { lastSessionOnGoal, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
@@ -40,15 +43,6 @@ import { calcDaysUntilDue } from '../../store/selectors/tasks';
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
 // them from `Colors` (AMBER maps to Colors.warning to preserve the exact dark hue).
-const SCREEN_H = Dimensions.get('window').height;
-// No bottom sheet may grow past this. A sheet is anchored at bottom:0 and only
-// had a minHeight, so tall content (a recurring task carries a streak card, a
-// lifetime-focus card AND notes) grew it upward past the top of the screen. The
-// title, the close button, the drag handle and the tappable backdrop all live in
-// that overflow, so every way out of the sheet disappeared at once.
-const SHEET_MAX_H = SCREEN_H * 0.9;
-// Monospace family for stat numerals / section labels (matches the design's JetBrains Mono).
-const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const DAY_LABELS = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
 const PRIORITIES = [
   { value: 'low', label: 'Low' },
@@ -210,36 +204,6 @@ function getCompletionRate(tasks: Task[], period: string): number | null {
   return Math.round((completed.length / planned.length) * 100);
 }
 
-// ─── BottomSheet ──────────────────────────────────────────────────────────────
-function BottomSheet({ visible, onClose, children, sheetHeight }: {
-  visible: boolean; onClose: () => void; children: React.ReactNode; sheetHeight: number;
-}) {
-  const Colors = useTheme();
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
-  const panResponder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (_, g) => g.dy > 5,
-    onPanResponderRelease: (_, g) => { if (g.dy > 80 || g.vy > 0.5) onCloseRef.current(); },
-  })).current;
-  return (
-    <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
-      <View style={{ flex: 1 }}>
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
-        </TouchableWithoutFeedback>
-        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
-          <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: Colors.border, minHeight: Math.min(sheetHeight, SHEET_MAX_H), maxHeight: SHEET_MAX_H }}>
-            <View {...panResponder.panHandlers} style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-              <View style={{ width: 38, height: 4, borderRadius: 3, backgroundColor: Colors.inactive }} />
-            </View>
-            {children}
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 // ─── ZoneHeader ───────────────────────────────────────────────────────────────
 function ZoneHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => void }) {
@@ -256,24 +220,6 @@ function ZoneHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => voi
   );
 }
 
-// ─── StatBox ──────────────────────────────────────────────────────────────────
-// One cell of the task-stats grid. `big` renders a headline numeral (display font);
-// otherwise a compact mono value. Featured cells pass a tinted bg + colored border.
-function StatBox({ bg, border, icon, iconColor, label, labelColor, value, sub, big, Colors }: {
-  bg: string; border: string; icon: keyof typeof Ionicons.glyphMap; iconColor: string;
-  label: string; labelColor: string; value: string; sub?: string; big?: boolean; Colors: ThemeColors;
-}) {
-  return (
-    <View style={{ flexGrow: 1, flexBasis: '47%', backgroundColor: bg, borderWidth: 1, borderColor: border, borderRadius: 15, padding: 14 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-        <Ionicons name={icon} size={14} color={iconColor} />
-        <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1, color: labelColor, fontFamily: MONO }}>{label}</Text>
-      </View>
-      <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: big ? 30 : 19, letterSpacing: big ? -1 : 0, fontFamily: big ? undefined : MONO }}>{value}</Text>
-      {sub && <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 3 }}>{sub}</Text>}
-    </View>
-  );
-}
 
 // ─── TaskStatsModal ───────────────────────────────────────────────────────────
 // sessionLengthMinutes stays in the prop type (callers still pass it) but is not
@@ -1524,7 +1470,7 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
 }
 
 // ─── Card 2: Goal Progress ────────────────────────────────────────────────────
-function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPress: () => void }) {
+function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPress: (goalId: string) => void }) {
   const Colors = useTheme();
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const activeGoals = goals.filter((g) => !g.isCompleted && !g.isArchived);
@@ -1551,7 +1497,7 @@ function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPre
   const milestones = [25, 50, 75, 100];
 
   return (
-    <TouchableOpacity activeOpacity={0.85} onPress={onGoalPress} style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.primary }]}>
+    <TouchableOpacity activeOpacity={0.85} onPress={() => onGoalPress(goal.id)} accessibilityRole="button" accessibilityLabel={`View goal ${goal.title}`} style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.primary }]}>
       <HeroLabel text="🎯 Goal progress" />
       <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 12 }} numberOfLines={2}>{goal.title}</Text>
       <View style={{ height: 7, backgroundColor: Colors.inactive, borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
@@ -1733,7 +1679,7 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
   activeCard: HeroCardType; setCard: (c: HeroCardType) => void;
   tasks: Task[]; goals: TaskGoal[]; sessionHistory: SessionRecord[]; peakHour: number | null;
   currentStreak: number; longestStreak: number; hasActivity: boolean;
-  onSelectAndFocus: (id: string) => void; onGoalPress: () => void; onFocus: () => void;
+  onSelectAndFocus: (id: string) => void; onGoalPress: (goalId: string) => void; onFocus: () => void;
 }) {
   const Colors = useTheme();
   // Only include cards that have real content — prevents empty cards (urgency with no
@@ -1928,6 +1874,10 @@ export default function TasksScreen() {
   const [taskFilter, setTaskFilter] = useState<'all' | 'active' | 'pending' | 'done'>('all');
   const [showAllDormant, setShowAllDormant] = useState(false);
   const [statsTask, setStatsTask] = useState<Task | null>(null);
+  // Held as an ID, not the goal object: GoalStatsModal reads the goal live from
+  // the store so it cannot show numbers that went stale while it was open, or
+  // render a goal that was deleted underneath it.
+  const [statsGoalId, setStatsGoalId] = useState<string | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
   const [formTask, setFormTask] = useState<Task | null>(null);
   const [showGoalForm, setShowGoalForm] = useState(false);
@@ -2079,6 +2029,23 @@ export default function TasksScreen() {
   );
 
   // ── Handlers ──
+  /**
+   * The inline action offered by the goal modal's status line.
+   *
+   * Every branch closes the sheet first: all three destinations are themselves
+   * modal or navigational, and two sheets open at once is the stacking bug
+   * FormSheet already documents.
+   */
+  const handleGoalAction = useCallback((action: GoalStatusAction, goalId: string) => {
+    setStatsGoalId(null);
+    if (action === 'start-session') { router.push('/'); return; }
+    // Linking and rescheduling both happen in a form. A task is linked from the
+    // TASK form (that is where taskGoalId lives), a deadline from the GOAL form.
+    if (action === 'link-task') { setFormTask(null); setShowFormModal(true); return; }
+    const goal = goals.find((g) => g.id === goalId);
+    if (goal) { setFormGoal(goal); setShowGoalForm(true); }
+  }, [router, goals]);
+
   const openCreate = useCallback(() => { setFormTask(null); setShowFormModal(true); }, []);
   const openEdit = useCallback((task: Task) => { setFormTask(task); setShowFormModal(true); }, []);
 
@@ -2219,15 +2186,16 @@ export default function TasksScreen() {
                 <Text style={{ color: Colors.subtext, fontSize: 13 }}>No goals yet. Group your tasks into something worth finishing.</Text>
               </View>
             ) : goals.map((g) => (
-              // Tap to edit. GoalFormModal already supported editing (it takes a
-              // `goal` prop and pre-fills every field) — it was simply never
-              // opened with one, so goals could be created but never changed.
+              // Tap opens stats; editing moved to the modal's footer link, the
+              // same split TaskRow/TaskStatsModal already uses. Long-press is
+              // NOT available as a second hatch here — `onLongPressTag` on the
+              // card below already owns that gesture.
               <TouchableOpacity
                 key={g.id}
                 activeOpacity={0.85}
-                onPress={() => { setFormGoal(g); setShowGoalForm(true); }}
+                onPress={() => setStatsGoalId(g.id)}
                 accessibilityRole="button"
-                accessibilityLabel={`Edit goal ${g.title}`}
+                accessibilityLabel={`View goal ${g.title}`}
               >
                 <GoalCard goal={g} onLongPressTag={setOverrideTag} />
               </TouchableOpacity>
@@ -2468,7 +2436,7 @@ export default function TasksScreen() {
           longestStreak={longestStreak}
           hasActivity={hasActivity}
           onSelectAndFocus={selectAndFocus}
-          onGoalPress={() => setActiveView('goal-detail')}
+          onGoalPress={(goalId) => setStatsGoalId(goalId)}
           onFocus={goToFocus}
         />
 
@@ -2542,7 +2510,14 @@ export default function TasksScreen() {
             <View style={[styles.card]}>
               {goals.filter((g) => !g.isCompleted && !g.isArchived).slice(0, 3).map((goal, i, arr) => (
                 <View key={goal.id}>
-                  <GoalZoneRow goal={goal} />
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setStatsGoalId(goal.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View goal ${goal.title}`}
+                  >
+                    <GoalZoneRow goal={goal} />
+                  </TouchableOpacity>
                   {i < arr.length - 1 && (
                     <View style={{ height: 0.5, backgroundColor: Colors.border, marginVertical: 14 }} />
                   )}
@@ -2594,6 +2569,17 @@ export default function TasksScreen() {
 
       {/* Modals */}
       {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+      <GoalStatsModal
+        goalId={statsGoalId}
+        lastSessionAt={lastSessionOnGoal(statsGoalId, tasks, sessionHistory)}
+        onClose={() => setStatsGoalId(null)}
+        onAction={handleGoalAction}
+        onEdit={(goalId) => {
+          setStatsGoalId(null);
+          const g = goals.find((x) => x.id === goalId);
+          if (g) { setFormGoal(g); setShowGoalForm(true); }
+        }}
+      />
       <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
       <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
       <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />

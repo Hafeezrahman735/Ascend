@@ -49,6 +49,37 @@ const updateSchema = z.object({
   completedAt:    z.string().datetime({ offset: true }).optional().nullable(),
 });
 
+/**
+ * Exactly what a goal looks like on the wire.
+ *
+ * Stated as a type rather than left to inference because the mobile `TaskGoal`
+ * interface is hand-maintained against it with no runtime validation on either
+ * side. That gap is not hypothetical: `totalFocusSeconds` and `elapsedDays`
+ * were served here and silently dropped by the client for months, because
+ * nothing anywhere compares the two shapes. An explicit type plus the key-set
+ * assertion in `stats.integration.test.ts` is the cheap half of closing it.
+ */
+export interface SerializedGoal {
+  id: string;
+  title: string;
+  tag: string | null;
+  targetSessions: number | null;
+  progressMode: 'tasks' | 'sessions' | 'both';
+  deadline: string | null;
+  isCompleted: boolean;
+  completedAt: string | null;
+  isArchived: boolean;
+  createdAt: string;
+  linkedTaskCount: number;
+  completedTaskCount: number;
+  actualSessions: number;
+  totalFocusSeconds: number;
+  elapsedDays: number;
+  taskProgress: number;
+  sessionProgress: number | null;
+  overallProgress: number;
+}
+
 /** Shape one goal for the wire, with server-computed progress attached. */
 function serializeGoal(
   goal: {
@@ -64,7 +95,7 @@ function serializeGoal(
     createdAt: Date;
   },
   counts: { linkedTaskCount: number; completedTaskCount: number; actualSessions: number; totalFocusSeconds: number },
-) {
+): SerializedGoal {
   const progress = computeProgress(goal.progressMode, goal.targetSessions, counts);
   return {
     id:                 goal.id,
