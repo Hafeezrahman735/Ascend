@@ -1395,21 +1395,31 @@ export default function SocialScreen() {
 
       {/* Tab switcher */}
       <View style={{ flexDirection: 'row', marginHorizontal: 16, marginBottom: 4, backgroundColor: SURFACE, borderRadius: 24, padding: 4 }}>
-        {([['feed', '📰 Feed'], ['leaderboard', '🏆 Leaderboard']] as const).map(([tab, label]) => (
-          <Pressable
-            key={tab}
-            onPress={() => setActiveTab(tab)}
-            style={{
-              flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20,
-              backgroundColor: activeTab === tab ? Colors.primary : 'transparent',
-              ...(activeTab === tab ? { shadowColor: Colors.primary, shadowOpacity: 0.5, shadowRadius: 8, elevation: 4 } : {}),
-            }}
-          >
-            <Text style={{ color: activeTab === tab ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '600' }}>
-              {label}
-            </Text>
-          </Pressable>
-        ))}
+        {([
+          ['feed', 'Feed', 'newspaper-outline'],
+          ['leaderboard', 'Leaderboard', 'podium-outline'],
+        ] as const).map(([tab, label, icon]) => {
+          const isActive = activeTab === tab;
+          const tint = isActive ? '#fff' : Colors.subtext;
+          return (
+            <Pressable
+              key={tab}
+              onPress={() => setActiveTab(tab)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: isActive }}
+              style={{
+                flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                gap: 6, paddingVertical: 8, borderRadius: 20,
+                backgroundColor: isActive ? Colors.primary : 'transparent',
+              }}
+            >
+              <Ionicons name={icon} size={14} color={tint} />
+              <Text style={{ color: tint, fontSize: 13, fontWeight: '600' }}>
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <View style={{ flex: 1 }}>

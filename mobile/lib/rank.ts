@@ -16,6 +16,9 @@
  * two drift a user sees one rank on their profile and a different one on their
  * own post.
  */
+import type { ComponentProps } from 'react';
+import type { Ionicons } from '@expo/vector-icons';
+
 export const RANK_ORDER = ['Rookie', 'Steady', 'Elite', 'Legend', 'Champion'] as const;
 export type RankTier = (typeof RANK_ORDER)[number];
 
@@ -27,12 +30,22 @@ export const RANK_THRESHOLDS: Record<RankTier, number> = {
   Champion: 10000,
 };
 
-export const RANK_META: Record<RankTier, { icon: string; label: string }> = {
-  Rookie: { icon: '🌱', label: 'Rookie' },
-  Steady: { icon: '📈', label: 'Steady' },
-  Elite: { icon: '⚡', label: 'Elite' },
-  Legend: { icon: '🏆', label: 'Legend' },
-  Champion: { icon: '👑', label: 'Champion' },
+/**
+ * Rank icons are Ionicons glyph names, not emoji.
+ *
+ * Emoji render in whatever the platform's emoji font decides, cannot take a
+ * colour or a stroke weight, and announce to VoiceOver as their Unicode name
+ * ("seedling") rather than as the rank. The type is imported for its shape
+ * only, so this stays a logic module with no runtime UI dependency.
+ */
+export type RankIcon = ComponentProps<typeof Ionicons>['name'];
+
+export const RANK_META: Record<RankTier, { icon: RankIcon; label: string }> = {
+  Rookie: { icon: 'leaf-outline', label: 'Rookie' },
+  Steady: { icon: 'trending-up', label: 'Steady' },
+  Elite: { icon: 'flash', label: 'Elite' },
+  Legend: { icon: 'trophy', label: 'Legend' },
+  Champion: { icon: 'diamond', label: 'Champion' },
 };
 
 export function getRank(xp: number): RankTier {

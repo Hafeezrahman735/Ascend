@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import {
   RANK_ORDER, RANK_META, RANK_THRESHOLDS, getXpToNextRank, type RankTier,
@@ -65,7 +66,7 @@ function RankSection({
               Level {level} · {fmtXP(xp)} XP
             </Text>
           </View>
-          <Text style={{ fontSize: 44 }}>{RANK_META[currentRank].icon}</Text>
+          <Ionicons name={RANK_META[currentRank].icon} size={44} color={GOLD} />
         </View>
 
         {/* Divider */}
@@ -101,7 +102,11 @@ function RankSection({
                   borderColor: isCurrent ? `${GOLD}55` : Colors.border,
                   opacity: isPast ? 0.45 : 1,
                 }}>
-                  <Text style={{ fontSize: 14 }}>{RANK_META[tier].icon}</Text>
+                  <Ionicons
+                    name={RANK_META[tier].icon}
+                    size={14}
+                    color={isCurrent ? GOLD : Colors.subtext}
+                  />
                   <Text style={{
                     fontSize: 9, marginTop: 3, fontWeight: '600',
                     color: isCurrent ? GOLD : Colors.subtext,

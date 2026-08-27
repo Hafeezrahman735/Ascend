@@ -131,7 +131,7 @@ export default function AccountScreen() {
                 backgroundColor: Colors.raised,
                 borderRadius: Radius.sm, paddingHorizontal: Space.md, paddingVertical: Space.xs,
               }}>
-                <Text style={{ fontSize: 16 }}>{RANK_META[rank].icon}</Text>
+                <Ionicons name={RANK_META[rank].icon} size={16} color={Colors.text} />
                 <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>
                   {rank} · Level {level}
                 </Text>

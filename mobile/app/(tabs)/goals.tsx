@@ -477,7 +477,7 @@ function RankUpOverlay({ tier, reduceMotion }: { tier: RankTier; reduceMotion: b
       alignItems: 'center', justifyContent: 'center', zIndex: 100,
     }]}>
       <Animated.View style={[iconStyle, { alignItems: 'center' }]}>
-        <Text style={{ fontSize: 80 }}>{RANK_META[tier].icon}</Text>
+        <Ionicons name={RANK_META[tier].icon} size={80} color={GOLD} />
         <Text style={{
           color: GOLD, fontSize: 30, fontWeight: '800',
           marginTop: 20, letterSpacing: 2, textTransform: 'uppercase',
@@ -570,7 +570,7 @@ function HeroCard({
             borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5,
             flexDirection: 'row', alignItems: 'center', gap: 4,
           }}>
-            <Text style={{ fontSize: 14 }}>{RANK_META[rank].icon}</Text>
+            <Ionicons name={RANK_META[rank].icon} size={14} color={GOLD} />
             <Text style={{ color: GOLD, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
               {rank.toUpperCase()}
             </Text>

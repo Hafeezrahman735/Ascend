@@ -456,7 +456,7 @@ export default function SettingsScreen() {
               @{handle} · Lv. {level}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 5 }}>
-              <Text style={{ fontSize: 13 }}>{RANK_META[rank].icon}</Text>
+              <Ionicons name={RANK_META[rank].icon} size={13} color={Colors.text} />
               <Text style={{ color: Colors.text, fontSize: 12, fontWeight: '600' }}>{rank}</Text>
             </View>
           </View>
