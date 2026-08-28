@@ -4,6 +4,7 @@ import {
   StyleSheet, TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle } from 'react-native-svg';
 import { useTheme, type ThemeColors } from '../hooks/useTheme';
 import { Font } from '../constants/typography';
 
@@ -67,27 +68,146 @@ export function BottomSheet({ visible, onClose, children, sheetHeight }: {
   );
 }
 
+// ─── Bento ────────────────────────────────────────────────────────────────────
 /**
- * One cell of a stats grid. `big` renders a headline numeral (display font);
- * otherwise a compact mono value. Featured cells pass a tinted bg + colored
- * border.
+ * The stat grid used by the task and goal stats sheets.
  *
- * `Colors` is a prop rather than a `useTheme()` call because that is how the
- * original was written and every call site already passes it. Changing the
- * signature is a separate refactor.
+ * Replaces the six equal `StatBox` cells at `flexBasis: '47%'`, which was a
+ * table rather than a bento: every cell the same size says every number has the
+ * same importance, which was never true. Here a parent sets `flex` per cell, so
+ * size carries rank. `StatBox` went with them — the task and goal sheets were
+ * its only two consumers, and both now use these. (The `StatBox` in
+ * app/user/[id].tsx is a different, local component.)
+ *
+ * Two fixes are baked in rather than left to call sites:
+ *
+ *   1. **Labels are legible.** The old label was 9px `subtext` on `raised` —
+ *      about 2.6:1, against a 4.5:1 floor, and too small to qualify as large
+ *      text. These are 11px on `Colors.text` (9.9:1).
+ *   2. **Cells are compact.** Padding and type are a step down from `StatBox`
+ *      so a six-cell grid does not fill the sheet before the content does.
+ *
  */
-export function StatBox({ bg, border, icon, iconColor, label, labelColor, value, sub, big, Colors }: {
-  bg: string; border: string; icon: keyof typeof Ionicons.glyphMap; iconColor: string;
-  label: string; labelColor: string; value: string; sub?: string; big?: boolean; Colors: ThemeColors;
+
+/** Vertical rhythm inside a cell. Kept here so the two sheets cannot drift. */
+const CELL_PAD_V = 11;
+const CELL_PAD_H = 12;
+
+export function BentoCell({
+  label, value, sub, feature, icon, style, Colors,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  /** Tinted + accented border. At most one per grid, or it stops meaning anything. */
+  feature?: boolean;
+  icon?: keyof typeof Ionicons.glyphMap;
+  style?: object;
+  Colors: ThemeColors;
 }) {
   return (
-    <View style={{ flexGrow: 1, flexBasis: '47%', backgroundColor: bg, borderWidth: 1, borderColor: border, borderRadius: 15, padding: 14 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-        <Ionicons name={icon} size={14} color={iconColor} />
-        <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1, color: labelColor, fontFamily: MONO }}>{label}</Text>
+    <View style={[{
+      backgroundColor: feature ? Colors.primaryDim : Colors.raised,
+      borderWidth: 1,
+      borderColor: feature ? Colors.primary : Colors.border,
+      borderRadius: 14,
+      paddingVertical: CELL_PAD_V,
+      paddingHorizontal: CELL_PAD_H,
+      justifyContent: 'center',
+    }, style]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+        {icon && <Ionicons name={icon} size={11} color={Colors.text} />}
+        <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.text }} numberOfLines={1}>
+          {label}
+        </Text>
       </View>
-      <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: big ? 30 : 19, letterSpacing: big ? -1 : 0, fontFamily: big ? undefined : MONO }}>{value}</Text>
-      {sub && <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 3 }}>{sub}</Text>}
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        style={{
+          color: Colors.textBright, fontSize: 18, fontWeight: '700',
+          fontFamily: MONO, marginTop: 3,
+        }}
+      >
+        {value}
+      </Text>
+      {sub ? (
+        <Text style={{ color: Colors.subtext, fontSize: 10.5, marginTop: 1 }} numberOfLines={1}>
+          {sub}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The one large cell: a progress ring with its numbers underneath.
+ *
+ * `fraction` is clamped for the ARC only — the caption still says 240% when
+ * that is the truth. A ring that silently stops at full would hide exactly the
+ * overrun the user needs to see.
+ */
+export function BentoRingCell({
+  fraction, centerLabel, caption, sub, tint, style, Colors,
+}: {
+  fraction: number;
+  centerLabel: string;
+  caption: string;
+  sub?: string;
+  /** Defaults to primary; pass accent for a completed thing. */
+  tint?: string;
+  style?: object;
+  Colors: ThemeColors;
+}) {
+  const SIZE = 92;
+  const STROKE = 8;
+  const r = (SIZE - STROKE) / 2;
+  const circumference = 2 * Math.PI * r;
+  const shown = Math.max(0, Math.min(1, fraction));
+  const color = tint ?? Colors.primary;
+
+  return (
+    <View style={[{
+      backgroundColor: Colors.primaryDim,
+      borderWidth: 1, borderColor: color,
+      borderRadius: 14,
+      paddingVertical: 14, paddingHorizontal: CELL_PAD_H,
+      alignItems: 'center', justifyContent: 'center', gap: 9,
+    }, style]}>
+      <View style={{ width: SIZE, height: SIZE }}>
+        <Svg width={SIZE} height={SIZE}>
+          <Circle
+            cx={SIZE / 2} cy={SIZE / 2} r={r}
+            stroke={Colors.inactive} strokeWidth={STROKE} fill="none"
+          />
+          <Circle
+            cx={SIZE / 2} cy={SIZE / 2} r={r}
+            stroke={color} strokeWidth={STROKE} fill="none"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - shown)}
+            transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+          />
+        </Svg>
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Text style={{ color: Colors.textBright, fontSize: 21, fontWeight: '800' }}>
+            {centerLabel}
+          </Text>
+        </View>
+      </View>
+      <View style={{ alignItems: 'center' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+          {caption}
+        </Text>
+        {sub ? (
+          <Text style={{ color: Colors.text, fontSize: 11, marginTop: 1 }} numberOfLines={1}>
+            {sub}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }

@@ -1,14 +1,24 @@
 import { useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../hooks/useTheme';
 import { useGoalStore } from '../stores/goalStore';
 import { useGamificationStore } from '../stores/gamificationStore';
-import { BottomSheet, StatBox, SCREEN_H, MONO } from './SheetPrimitives';
+import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H } from './SheetPrimitives';
+import AppPressable from './AppPressable';
+import { Space, Radius } from '../constants/spacing';
 import {
   goalStatusLine, goalStatCells, formatSeconds, daysUntil,
   type GoalStatusAction,
 } from '../lib/goalStats';
+
+/** Which Ionicon belongs to each cell `goalStatCells` can emit. */
+const CELL_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  tasks: 'checkmark-done-outline',
+  sessions: 'timer-outline',
+  avgSession: 'pulse-outline',
+  shareOfLife: 'flame-outline',
+};
 
 /**
  * What a goal has cost you so far, and the one sentence worth saying about it.
@@ -87,14 +97,15 @@ export default function GoalStatsModal({
           <Text numberOfLines={2} style={{ flex: 1, marginRight: 12, color: Colors.textBright, fontSize: 19, fontWeight: '700', lineHeight: 24, letterSpacing: -0.3 }}>
             {goal.title}
           </Text>
-          <TouchableOpacity
+          <AppPressable
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close"
-            style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}
+            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            style={{ width: 30, height: 30, borderRadius: Radius.sm, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Ionicons name="close" size={16} color={Colors.subtext} />
-          </TouchableOpacity>
+            <Ionicons name="close" size={16} color={Colors.text} />
+          </AppPressable>
         </View>
 
         {/* The status line sits ABOVE the bar on purpose: it is the only element
@@ -108,108 +119,104 @@ export default function GoalStatsModal({
             {status.text}
           </Text>
           {status.action && (
-            <TouchableOpacity
+            <AppPressable
               onPress={() => onAction(status.action!, goal.id)}
               accessibilityRole="button"
-              style={{ marginTop: 9, alignSelf: 'flex-start' }}
+              scaleOnPress={false}
+              hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+              style={{ marginTop: Space.sm, alignSelf: 'flex-start', minHeight: 32, justifyContent: 'center' }}
             >
               <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '700' }}>
                 {actionLabel[status.action]} →
               </Text>
-            </TouchableOpacity>
+            </AppPressable>
           )}
         </View>
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
-        {/* progress */}
-        <View style={{ marginBottom: 18 }}>
-          <View style={{ height: 7, backgroundColor: Colors.inactive, borderRadius: 4, overflow: 'hidden', marginBottom: 9 }}>
-            <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 4, backgroundColor: barColor }} />
-          </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            {[25, 50, 75, 100].map((m) => (
-              <View key={m} style={{ alignItems: 'center', gap: 3 }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: pct >= m ? Colors.accent : Colors.inactive }} />
-                <Text style={{ color: Colors.subtext, fontSize: 9 }}>{m}%</Text>
-              </View>
-            ))}
-          </View>
-        </View>
+        {/* Stat bento. The progress bar and its 25/50/75/100 dot row are gone:
+            the ring says the same thing once instead of twice.
 
-        {/* Hero: total focus. Monotonic, so it is the one number that is always
-            safe to put in the largest type on the screen. */}
-        <View style={{
-          backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primary,
-          borderRadius: 16, padding: 18, marginBottom: 12,
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
-            <Ionicons name="time-outline" size={14} color={Colors.primarySoft} />
-            <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1, color: Colors.primarySoft, fontFamily: MONO }}>
-              TOTAL FOCUS
-            </Text>
-          </View>
-          <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 36, letterSpacing: -1.2 }}>
-            {formatSeconds(goal.totalFocusSeconds)}
-          </Text>
-          {/* The F1 caption. The server counts sessions on archived tasks but
-              not archived tasks themselves, so for a goal linked to a recurring
-              habit this number and the task count come from different universes.
-              Saying so is cheaper and more honest than silently disagreeing. */}
-          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 4 }}>
-            all time, every instance
-          </Text>
-        </View>
-
-        {/* supporting cells, gated by progressMode */}
-        {cells.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginBottom: 8 }}>
-            {cells.map((cell) => (
-              <StatBox
-                key={cell.key}
-                bg={Colors.raised}
-                border={Colors.border}
-                icon={
-                  cell.key === 'tasks' ? 'checkmark-done-outline'
-                    : cell.key === 'sessions' ? 'timer-outline'
-                      : cell.key === 'avgSession' ? 'pulse-outline'
-                        : 'flame-outline'
-                }
-                iconColor={Colors.subtext}
-                label={cell.label}
-                labelColor={Colors.subtext}
-                value={cell.value}
-                sub={cell.sub}
-                Colors={Colors}
+            TOTAL FOCUS stays a feature cell rather than becoming the ring's
+            centre, which is deliberate and load-bearing -- see the note at the
+            top of this file. `taskProgress` DROPS when a new task is linked, so
+            the ring can go backwards through no fault of the user. Focus time
+            is monotonic, so it is the number that is always safe to make
+            prominent. Do not swap them for symmetry with TaskStatsModal. */}
+        <View style={{ gap: Space.sm, marginBottom: Space.sm }}>
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            <BentoRingCell
+              style={{ flex: 1.15 }}
+              fraction={goal.overallProgress}
+              centerLabel={`${pct}%`}
+              caption="Complete"
+              sub={goal.progressMode === 'sessions' ? 'by sessions'
+                : goal.progressMode === 'both' ? 'tasks + sessions' : 'by tasks'}
+              tint={barColor}
+              Colors={Colors}
+            />
+            <View style={{ flex: 1, gap: Space.sm }}>
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors} feature
+                icon="time-outline" label="Total focus"
+                value={formatSeconds(goal.totalFocusSeconds)}
+                sub="all time, every instance"
               />
-            ))}
+              {cells.length > 0 && (
+                <BentoCell
+                  style={{ flex: 1 }} Colors={Colors}
+                  icon={CELL_ICONS[cells[0].key]}
+                  label={cells[0].label}
+                  value={cells[0].value}
+                  sub={cells[0].sub}
+                />
+              )}
+            </View>
           </View>
-        )}
+
+          {cells.length > 1 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: Space.sm }}>
+              {cells.slice(1).map((cell) => (
+                <BentoCell
+                  key={cell.key}
+                  style={{ flexGrow: 1, flexBasis: '47%' }}
+                  Colors={Colors}
+                  icon={CELL_ICONS[cell.key]}
+                  label={cell.label}
+                  value={cell.value}
+                  sub={cell.sub}
+                />
+              ))}
+            </View>
+          )}
+        </View>
       </ScrollView>
 
       {/* footer */}
       <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 28 }}>
         {!goal.isCompleted && (
-          <TouchableOpacity
+          <AppPressable
             onPress={() => onAction('start-session', goal.id)}
             accessibilityRole="button"
-            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15 }}
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Space.sm, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 15 }}
           >
             <Ionicons name="play" size={15} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Start a session</Text>
-          </TouchableOpacity>
+          </AppPressable>
         )}
         {/* Edit lives here, matching TaskStatsModal. This is the only path to
             editing or deleting a goal now that the card's tap opens stats —
             long-press was not available as a second hatch, it already belongs
             to the tag handler on the same card. */}
-        <TouchableOpacity
+        <AppPressable
           onPress={() => onEdit(goal.id)}
           accessibilityRole="button"
-          style={{ alignItems: 'center', marginTop: goal.isCompleted ? 0 : 12 }}
+          scaleOnPress={false}
+          style={{ alignItems: 'center', justifyContent: 'center', marginTop: goal.isCompleted ? 0 : Space.sm, minHeight: 44 }}
         >
-          <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '500' }}>Edit goal details</Text>
-        </TouchableOpacity>
+          <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>Edit goal details</Text>
+        </AppPressable>
       </View>
     </BottomSheet>
   );

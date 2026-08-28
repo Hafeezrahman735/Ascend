@@ -24,7 +24,8 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import RecentActivity from '../../components/RecentActivity';
 import FormSheet from '../../components/FormSheet';
-import { BottomSheet, StatBox, SCREEN_H, MONO } from '../../components/SheetPrimitives';
+import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
+import AppPressable from '../../components/AppPressable';
 import GoalStatsModal from '../../components/GoalStatsModal';
 import { lastSessionOnGoal, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
@@ -38,6 +39,14 @@ import {
   useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
   getTagColor, getTagIcon, type TagColorKey,
 } from '../../utils/tagStyle';
+import { Space, Radius } from '../../constants/spacing';
+import {
+  getMonday, isToday, filterByPeriod, formatSeconds,
+  formatDuration, getDueChip, buildCategoryMap, isYesterdayLocal,
+  startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
+  diffCalendarDaysTasks, getPeakHour, formatPeakWindow, getCompletionRate,
+  formatEstimateDelta, formatLastWorked, formatConsistency,
+} from '../../lib/taskMetrics';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
@@ -53,13 +62,6 @@ const ALL_DAYS: DayOfWeek[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DORMANT_VISIBLE = 3;
 const ZONE_TASK_SLOTS = 3;
 const ZONE_DORMANT_SLOTS = 1;
-
-import {
-  getMonday, isToday, filterByPeriod, formatSeconds,
-  formatDuration, getDueChip, buildCategoryMap, isYesterdayLocal,
-  startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
-  diffCalendarDaysTasks, getPeakHour, formatPeakWindow, getCompletionRate,
-} from '../../lib/taskMetrics';
 
 
 // ─── ZoneHeader ───────────────────────────────────────────────────────────────
@@ -93,7 +95,11 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
   useEffect(() => {
     if (!task) return;
     setAnalytics(null); setAnalyticsError(false);
-    api.get<{ analytics: TaskAnalytics } & Task>(`/tasks/${task.id}`)
+    // The server buckets every day and hour in the zone we send. Without it it
+    // falls back to UTC, which is what made "peak hour" wrong by a full offset
+    // for every user outside it.
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    api.get<{ analytics: TaskAnalytics } & Task>(`/tasks/${task.id}?tz=${encodeURIComponent(tz)}`)
       .then((res) => { if (res.success && res.data) setAnalytics((res.data as any).analytics); else setAnalyticsError(true); })
       .catch(() => setAnalyticsError(true));
   }, [task?.id]);
@@ -104,7 +110,10 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
   if (!task) return null;
   const isPending = !task.isCompleted;
   const prioColor = priorityColor(task.priority);
-  const progressFrac = task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
+  // Deliberately NOT clamped to 1. BentoRingCell clamps the arc it draws, so
+  // the ring still reads correctly, while the centre label is free to say 240%
+  // — which is the number an over-running task most needs to show.
+  const progressFrac = task.estimatedMinutes ? task.totalTimeOnTask / (task.estimatedMinutes * 60) : null;
   // Until analytics land, the server-derived cells show an em-dash; sessions come from the task itself.
   const ready = !!analytics;
   const val = (v: string) => (ready ? v : '—');
@@ -115,9 +124,15 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
       <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 11 }}>
           <Text numberOfLines={2} style={{ flex: 1, marginRight: 12, color: Colors.textBright, fontSize: 19, fontWeight: '700', lineHeight: 24, letterSpacing: -0.3 }}>{task.title}</Text>
-          <TouchableOpacity onPress={onClose} style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="close" size={16} color={Colors.subtext} />
-          </TouchableOpacity>
+          <AppPressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            style={{ width: 30, height: 30, borderRadius: Radius.sm, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="close" size={16} color={Colors.text} />
+          </AppPressable>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {categoryTag && (
@@ -133,17 +148,80 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
       <View style={{ height: 1, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
-        {/* stat grid */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginBottom: 16 }}>
-          <StatBox big bg={Colors.primaryDim} border={Colors.primary} icon="timer-outline" iconColor={Colors.primarySoft} label="SESSIONS" labelColor={Colors.primarySoft} value={String(task.sessionsOnTask)} sub="completed" Colors={Colors} />
-          <StatBox big bg={Colors.tealDim} border={Colors.accent} icon="checkmark-done-outline" iconColor={Colors.accent} label="COMPLETION" labelColor={Colors.accent} value={val(`${analytics?.completionRate ?? 0}%`)} sub="done / planned" Colors={Colors} />
-          <StatBox bg={Colors.raised} border={Colors.border} icon="time-outline" iconColor={Colors.subtext} label="TOTAL FOCUS" labelColor={Colors.subtext} value={val(formatSeconds(analytics?.totalTimeAllTime ?? 0))} Colors={Colors} />
-          <StatBox bg={Colors.raised} border={Colors.border} icon="pulse-outline" iconColor={Colors.subtext} label="AVG SESSION" labelColor={Colors.subtext} value={val(formatSeconds(analytics?.avgSessionLength ?? 0))} Colors={Colors} />
-          <StatBox bg={Colors.raised} border={Colors.border} icon="sunny-outline" iconColor={Colors.warning} label="PEAK HOUR" labelColor={Colors.subtext} value={val(analytics?.mostProductiveHour?.label ?? '—')} Colors={Colors} />
-          <StatBox bg={Colors.raised} border={Colors.border} icon="locate-outline" iconColor={Colors.subtext} label="EST. ACCURACY" labelColor={Colors.subtext} value={val(analytics?.estimationAccuracy != null ? `${analytics.estimationAccuracy}%` : '—')} Colors={Colors} />
+        {/* Stat bento. Cell SIZE carries rank here, which the previous six
+            equal cells at flexBasis:'47%' could not: the ring is the number
+            people open this sheet for, so it is the only large thing.
+
+            The ring shows estimate consumed, NOT the misnamed old
+            `estimationAccuracy` — see formatEstimateDelta for why a percentage
+            was actively misleading above 100%. Tasks with no estimate have no
+            ring to draw, so they get total focus as the hero instead. */}
+        <View style={{ gap: Space.sm, marginBottom: Space.lg }}>
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            {progressFrac !== null ? (
+              <BentoRingCell
+                style={{ flex: 1.3 }}
+                fraction={progressFrac}
+                centerLabel={`${Math.round(progressFrac * 100)}%`}
+                caption={formatSeconds(task.totalTimeOnTask)}
+                sub={`of ${formatSeconds((task.estimatedMinutes ?? 0) * 60)} estimated`}
+                tint={task.isCompleted ? Colors.accent : Colors.primary}
+                Colors={Colors}
+              />
+            ) : (
+              <BentoRingCell
+                style={{ flex: 1.3 }}
+                fraction={1}
+                centerLabel={val(formatSeconds(analytics?.totalTimeAllTime ?? 0))}
+                caption="Total focus"
+                sub="no estimate set"
+                tint={Colors.primary}
+                Colors={Colors}
+              />
+            )}
+            <View style={{ flex: 1, gap: Space.sm }}>
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors}
+                icon="timer-outline" label="Sessions"
+                value={String(task.sessionsOnTask)}
+              />
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors}
+                icon="pulse-outline" label="Avg length"
+                value={val(formatSeconds(analytics?.avgSessionLength ?? 0))}
+              />
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="sunny-outline" label="Peak hour"
+              value={val(analytics?.mostProductiveHour?.label ?? '—')}
+            />
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="calendar-outline" label="Consistency"
+              value={ready ? formatConsistency(analytics?.consistency ?? null) : '—'}
+              sub={ready ? `${analytics?.daysWorked ?? 0} days worked` : undefined}
+            />
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="locate-outline" label="Vs estimate"
+              value={ready ? formatEstimateDelta(analytics?.estimateDeltaSeconds ?? null) : '—'}
+            />
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="time-outline" label="Last worked"
+              value={ready ? formatLastWorked(analytics?.lastSessionAt ?? null) : '—'}
+            />
+          </View>
         </View>
-        {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: 12 }} />}
-        {analyticsError && <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>Analytics unavailable — try again later.</Text>}
+        {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: Space.md }} />}
+        {analyticsError && <Text style={{ color: Colors.text, fontSize: 12, marginBottom: Space.md }}>Analytics unavailable — try again later.</Text>}
 
         {/* notes — the description captured when the task was created */}
         {task.description?.trim() ? (
@@ -156,65 +234,61 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
           </View>
         ) : null}
 
-        {/* current streak — only on recurring instances; read straight off the
-            instance (denormalized at spawn), no extra fetch. */}
+        {/* Habit history — recurring instances only. Both numbers are read
+            straight off the instance (denormalized at spawn), no extra fetch.
+            Two full-width cards became one row of cells: they are the same
+            kind of fact as everything above, so they now look like it. The 🔥
+            and ⏱️ emoji are gone — every other glyph in this sheet is an
+            Ionicon, and a screen reader announced the old ones by name. */}
         {task.parentTaskId && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ fontSize: 28 }}>🔥</Text>
-              <View>
-                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Current Streak</Text>
-                <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Consecutive days completed</Text>
-              </View>
-            </View>
-            <Text style={{ color: Colors.primarySoft, fontSize: 32, fontWeight: '800' }}>{task.lifetimeStreak}</Text>
+          <View style={{ flexDirection: 'row', gap: Space.sm, marginBottom: Space.lg }}>
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors} feature
+              icon="flame-outline" label="Current streak"
+              value={`${task.lifetimeStreak}d`}
+              sub="consecutive days"
+            />
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="infinite-outline" label="Lifetime focus"
+              value={formatSeconds(task.lifetimeTotalFocusTime)}
+              sub={`${task.lifetimeTotalCompletions} completions`}
+            />
           </View>
         )}
 
-        {/* lifetime focus time — recurring instances only */}
-        {task.parentTaskId && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ fontSize: 28 }}>⏱️</Text>
-              <View>
-                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Lifetime Focus Time</Text>
-                <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>{task.lifetimeTotalCompletions} completions total</Text>
-              </View>
-            </View>
-            <Text style={{ color: Colors.primarySoft, fontSize: 22, fontWeight: '800' }}>{formatSeconds(task.lifetimeTotalFocusTime)}</Text>
-          </View>
-        )}
-
-        {/* time progress */}
-        {progressFrac !== null && (
-          <View style={{ marginBottom: 8 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600' }}>Time progress</Text>
-              <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600', fontFamily: MONO }}>{Math.round(progressFrac * 100)}%</Text>
-            </View>
-            <View style={{ height: 8, backgroundColor: Colors.raised, borderRadius: 4, overflow: 'hidden' }}>
-              <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 4, backgroundColor: task.isCompleted ? Colors.accent : Colors.primary }} />
-            </View>
-            <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 6, fontFamily: MONO }}>{formatSeconds(task.totalTimeOnTask)} of {task.estimatedMinutes}m estimated</Text>
-          </View>
-        )}
+        {/* The standalone "Time progress" bar that used to sit here is gone: it
+            showed the same quantity as the ring above, in the same sheet. */}
       </ScrollView>
 
       {/* footer */}
       <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 28 }}>
         {isPending ? (
-          <TouchableOpacity onPress={() => { onLoadTimer(task.id); onClose(); }} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15 }}>
+          <AppPressable
+            onPress={() => { onLoadTimer(task.id); onClose(); }}
+            accessibilityRole="button"
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Space.sm, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 15 }}
+          >
             <Ionicons name="play" size={15} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Load into Timer</Text>
-          </TouchableOpacity>
+          </AppPressable>
         ) : (
-          <TouchableOpacity onPress={() => { onToggleComplete(task.id); onClose(); }} style={{ borderRadius: 14, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}>
-            <Text style={{ color: Colors.subtext, fontSize: 14, fontWeight: '600' }}>Mark Incomplete</Text>
-          </TouchableOpacity>
+          <AppPressable
+            onPress={() => { onToggleComplete(task.id); onClose(); }}
+            accessibilityRole="button"
+            style={{ borderRadius: Radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}
+          >
+            <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '600' }}>Mark Incomplete</Text>
+          </AppPressable>
         )}
-        <TouchableOpacity onPress={() => onEdit(task.id)} style={{ alignItems: 'center', marginTop: 12 }}>
-          <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '500' }}>Edit task details</Text>
-        </TouchableOpacity>
+        <AppPressable
+          onPress={() => onEdit(task.id)}
+          accessibilityRole="button"
+          scaleOnPress={false}
+          style={{ alignItems: 'center', justifyContent: 'center', marginTop: Space.sm, minHeight: 44 }}
+        >
+          <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>Edit task details</Text>
+        </AppPressable>
       </View>
     </BottomSheet>
   );
