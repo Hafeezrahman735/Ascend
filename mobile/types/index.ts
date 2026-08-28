@@ -355,6 +355,14 @@ export interface TaskGoal {
   overallProgress: number;
 }
 
+/**
+ * Server-computed per-task analytics from `GET /tasks/:id?tz=<IANA zone>`.
+ *
+ * Every day and hour bucket is resolved in the timezone the client sends. Omit
+ * `tz` and the server falls back to UTC, which is what the whole app did before
+ * — and why peak hour used to be wrong by a full UTC offset for everyone
+ * outside it. See backend/src/lib/taskAnalytics.ts.
+ */
 export interface TaskAnalytics {
   totalTimeToday: number;
   totalTimeThisWeek: number;
@@ -363,8 +371,26 @@ export interface TaskAnalytics {
   timePerDayLast7: { date: string; seconds: number }[];
   mostProductiveHour: { hour: number; label: string } | null;
   avgSessionLength: number;
+  sessionCount: number;
+
+  /** Share of sessions that ran to (near) their planned length. */
+  fullSessionRate: number;
+  /** @deprecated Misnamed alias of `fullSessionRate` — do not add new readers. */
   completionRate: number;
+
+  /** 100 when actual matched the estimate, falling to 0 as it deviates. */
   estimationAccuracy: number | null;
+  /** actual/estimate as a percentage — uncapped, so >100 means overrun. */
+  estimateUsedPct: number | null;
+  /** Signed seconds: positive is over the estimate, negative is under. */
+  estimateDeltaSeconds: number | null;
+
+  /** Distinct local days with at least one session. */
+  daysWorked: number;
+  /** `daysWorked` over the task's age in days, capped at 1. Null if never worked. */
+  consistency: number | null;
+  /** ISO timestamp of the newest session, or null. */
+  lastSessionAt: string | null;
 }
 
 export interface FeedEvent {

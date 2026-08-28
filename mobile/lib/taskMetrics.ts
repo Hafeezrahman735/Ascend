@@ -112,17 +112,26 @@ export function diffCalendarDaysTasks(a: Date, b: Date): number {
 }
 
 // ─── Peak focus ───────────────────────────────────────────────────────────────
-// Returns the hour-of-day (0–23) with the most sessions. Needs ≥5 sessions total.
+/**
+ * The hour of day (0-23) where the most focus TIME lands. Needs >=5 sessions.
+ *
+ * Previously ranked by session COUNT, which meant an hour holding three
+ * five-minute sessions beat an hour holding one ninety-minute one — the
+ * opposite of what a "peak focus" readout is asked for. It also disagreed with
+ * the server's `mostProductiveHour`, which has always ranked by seconds, so the
+ * Tasks screen and the task stats sheet could name two different peak hours
+ * from the same sessions. Both now measure time.
+ */
 export function getPeakHour(sessions: SessionRecord[]): number | null {
   if (sessions.length < 5) return null;
-  const counts: Record<number, number> = {};
+  const secondsByHour: Record<number, number> = {};
   for (const s of sessions) {
     const h = new Date(s.completedAt).getHours();
-    counts[h] = (counts[h] ?? 0) + 1;
+    secondsByHour[h] = (secondsByHour[h] ?? 0) + s.durationSeconds;
   }
   let peak = -1; let max = 0;
-  for (const [h, c] of Object.entries(counts)) {
-    if (c > max) { max = c; peak = Number(h); }
+  for (const [h, seconds] of Object.entries(secondsByHour)) {
+    if (seconds > max) { max = seconds; peak = Number(h); }
   }
   return peak >= 0 ? peak : null;
 }
@@ -164,3 +173,47 @@ export function getCompletionRate(tasks: Task[], period: string): number | null 
   return Math.round((completed.length / planned.length) * 100);
 }
 
+
+/**
+ * How far a task's actual time landed from its estimate, as words.
+ *
+ * The sheet used to show `estimationAccuracy` as `actual / estimate * 100`, so
+ * a task that ran three times over reported "300%" — a number that reads as
+ * excellent and means the opposite. Signed seconds said plainly cannot be
+ * misread in either direction.
+ */
+export function formatEstimateDelta(deltaSeconds: number | null): string {
+  if (deltaSeconds == null) return 'No estimate set';
+  // Under a minute either way is the estimate being right, not a near miss.
+  if (Math.abs(deltaSeconds) < 60) return 'Matched the estimate';
+  const magnitude = formatSeconds(Math.abs(deltaSeconds));
+  return deltaSeconds > 0 ? `${magnitude} over` : `${magnitude} under`;
+}
+
+/**
+ * "today" / "yesterday" / "4d ago" for the last session.
+ *
+ * Compares local calendar days rather than elapsed hours: a session at 11pm
+ * last night is "yesterday" at 1am, not "2h ago", which is what a person
+ * actually means when asking when they last touched something.
+ */
+export function formatLastWorked(iso: string | null, now: Date = new Date()): string {
+  if (!iso) return 'Not started';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return 'Not started';
+
+  const dayOf = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((dayOf(now) - dayOf(then)) / 86_400_000);
+
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+/** "5 of 7 days" — how consistently a task has actually been worked. */
+export function formatConsistency(consistency: number | null): string {
+  if (consistency == null) return '—';
+  return `${Math.round(consistency * 100)}%`;
+}

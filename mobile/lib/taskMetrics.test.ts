@@ -7,6 +7,9 @@ import {
   formatPeakWindow,
   buildCategoryMap,
   getMonday,
+  formatEstimateDelta,
+  formatLastWorked,
+  formatConsistency,
 } from './taskMetrics';
 import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
@@ -99,7 +102,7 @@ describe('getPeakHour', () => {
     expect(getPeakHour(sessions)).toBeNull();
   });
 
-  it('picks the hour with the most sessions, counting sessions not duration', () => {
+  it('picks the hour holding the most focus time, not the most sessions', () => {
     const sessions = [
       session({ completedAt: at(9), durationSeconds: 3600 }),
       session({ completedAt: at(9), durationSeconds: 3600 }),
@@ -107,9 +110,10 @@ describe('getPeakHour', () => {
       session({ completedAt: at(14), durationSeconds: 60 }),
       session({ completedAt: at(14), durationSeconds: 60 }),
     ];
-    // 9:00 holds far more time, but 14:00 holds more sessions — and count is
-    // what this function ranks on.
-    expect(getPeakHour(sessions)).toBe(14);
+    // 14:00 holds three sessions to 9:00's two, but they are one minute each.
+    // Ranking by count used to return 14 here, which disagreed with the
+    // server's mostProductiveHour on identical data.
+    expect(getPeakHour(sessions)).toBe(9);
   });
 });
 
@@ -136,5 +140,59 @@ describe('getMonday', () => {
   it('returns the same day when given a Monday', () => {
     const monday = getMonday(new Date(2026, 7, 24));
     expect(monday.getDate()).toBe(24);
+  });
+});
+
+describe('formatEstimateDelta', () => {
+  it('says over when the task ran long', () => {
+    expect(formatEstimateDelta(42 * 60)).toBe('42m over');
+  });
+
+  it('says under when the task came in short', () => {
+    expect(formatEstimateDelta(-72 * 60)).toBe('1h 12m under');
+  });
+
+  it('treats a sub-minute difference as a match, not a near miss', () => {
+    expect(formatEstimateDelta(30)).toBe('Matched the estimate');
+    expect(formatEstimateDelta(0)).toBe('Matched the estimate');
+  });
+
+  it('handles a task with no estimate', () => {
+    expect(formatEstimateDelta(null)).toBe('No estimate set');
+  });
+});
+
+describe('formatLastWorked', () => {
+  const now = new Date(2026, 7, 27, 9, 0, 0);
+
+  it('compares calendar days, so last night is yesterday even a few hours ago', () => {
+    const lateLastNight = new Date(2026, 7, 26, 23, 30, 0).toISOString();
+    expect(formatLastWorked(lateLastNight, now)).toBe('Yesterday');
+  });
+
+  it('calls a session earlier the same day today', () => {
+    expect(formatLastWorked(new Date(2026, 7, 27, 1, 0, 0).toISOString(), now)).toBe('Today');
+  });
+
+  it('counts days, then weeks, then months', () => {
+    expect(formatLastWorked(new Date(2026, 7, 23).toISOString(), now)).toBe('4d ago');
+    expect(formatLastWorked(new Date(2026, 7, 13).toISOString(), now)).toBe('2w ago');
+    expect(formatLastWorked(new Date(2026, 5, 13).toISOString(), now)).toBe('2mo ago');
+  });
+
+  it('handles a never-worked task and a corrupt timestamp', () => {
+    expect(formatLastWorked(null, now)).toBe('Not started');
+    expect(formatLastWorked('not-a-date', now)).toBe('Not started');
+  });
+});
+
+describe('formatConsistency', () => {
+  it('renders a fraction as a percentage', () => {
+    expect(formatConsistency(0.6)).toBe('60%');
+    expect(formatConsistency(1)).toBe('100%');
+  });
+
+  it('renders an em-dash for a task never worked', () => {
+    expect(formatConsistency(null)).toBe('—');
   });
 });

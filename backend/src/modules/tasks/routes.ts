@@ -6,6 +6,7 @@ import { handleAuthError } from '../../lib/errors';
 import { resolveLocalDate, dayNameFromLocalDate } from '../../lib/localDate';
 import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
 import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
+import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
@@ -399,117 +400,38 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
-      const now = new Date();
-      const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      const dayOfWeekNow = now.getUTCDay();
-      const mondayOffsetNow = dayOfWeekNow === 0 ? -6 : 1 - dayOfWeekNow;
-      const startOfWeekNow = new Date(startOfDay);
-      startOfWeekNow.setUTCDate(startOfWeekNow.getUTCDate() + mondayOffsetNow);
-      const startOfMonthNow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const timeZone = safeTimeZone(
+        typeof req.query.tz === 'string' ? req.query.tz : undefined,
+      );
 
-      // Always read the full history. There used to be a `period` query param that
-      // filtered this query, which meant ?period=today returned today's total
-      // under the key `totalTimeAllTime` and skewed estimationAccuracy with it.
-      // The today/week/month buckets below are derived by comparing timestamps, so
-      // one unfiltered read gives every bucket the correct value.
+      // Always read the full history. There used to be a `period` query param
+      // that filtered this query, which meant ?period=today returned today's
+      // total under the key `totalTimeAllTime` and skewed the estimate figures
+      // with it. Every bucket is derived from timestamps inside
+      // computeTaskAnalytics, so one unfiltered read feeds them all correctly.
+      //
+      // `type: 'focus'` matches loadGoalCounts and DELETE /tasks/:id, which both
+      // filter on it. Every session the timer writes today is 'focus', so this
+      // changes no current number — it stops a future break row that carries a
+      // taskId from silently inflating focus totals.
       const sessions = await prisma.session.findMany({
-        where: {
-          taskId: id,
-          userId,
-        },
+        where: { taskId: id, userId, type: 'focus' },
         select: {
           durationSeconds: true,
           plannedDurationSeconds: true,
           completedAt: true,
         },
       });
-      const startOfWeek = startOfWeekNow;
-      const startOfMonth = startOfMonthNow;
 
-      const last7Days: { date: string; seconds: number }[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(startOfDay);
-        d.setUTCDate(d.getUTCDate() - i);
-        last7Days.push({
-          date: d.toISOString().split('T')[0],
-          seconds: 0,
-        });
-      }
-
-      let totalTimeToday = 0;
-      let totalTimeThisWeek = 0;
-      let totalTimeThisMonth = 0;
-      let totalTimeAllTime = 0;
-      let totalCompleted = 0;
-      const hourCounts: Record<number, number> = {};
-
-      for (const s of sessions) {
-        totalTimeAllTime += s.durationSeconds;
-
-        const ca = new Date(s.completedAt);
-        const dateKey = ca.toISOString().split('T')[0];
-
-        if (ca >= startOfDay) totalTimeToday += s.durationSeconds;
-        if (ca >= startOfWeek) totalTimeThisWeek += s.durationSeconds;
-        if (ca >= startOfMonth) totalTimeThisMonth += s.durationSeconds;
-
-        for (const d of last7Days) {
-          if (d.date === dateKey) {
-            d.seconds += s.durationSeconds;
-            break;
-          }
-        }
-
-        const hour = ca.getUTCHours();
-        hourCounts[hour] = (hourCounts[hour] || 0) + s.durationSeconds;
-
-        // A session counts as completed if it ran at least 90% of its planned
-        // length, or had no planned length to fall short of. The three-branch
-        // version also tracked a `totalSkipped` counter that was never read.
-        const ranFullLength =
-          !s.plannedDurationSeconds || s.durationSeconds >= s.plannedDurationSeconds * 0.9;
-        if (ranFullLength) totalCompleted++;
-      }
-
-      let mostProductiveHour: { hour: number; label: string } | null = null;
-      let maxHourSeconds = 0;
-      for (const h of Object.keys(hourCounts)) {
-        const hour = Number(h);
-        if (hourCounts[hour] > maxHourSeconds) {
-          maxHourSeconds = hourCounts[hour];
-          const period = hour >= 12 ? 'pm' : 'am';
-          const display = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-          mostProductiveHour = { hour, label: `${display}${period}` };
-        }
-      }
-
-      const totalSessions = sessions.length;
-      const avgSessionLength = totalSessions > 0 ? Math.round(totalTimeAllTime / totalSessions) : 0;
-      const completionRate = totalSessions > 0 ? Math.round((totalCompleted / totalSessions) * 100) : 0;
-
-      let estimationAccuracy: number | null = null;
-      if (task.estimatedMinutes && task.estimatedMinutes > 0) {
-        const totalMinutes = totalTimeAllTime / 60;
-        estimationAccuracy = Math.round((totalMinutes / task.estimatedMinutes) * 100);
-      }
-
-      res.json({
-        success: true,
-        data: {
-          ...task,
-          analytics: {
-            totalTimeToday,
-            totalTimeThisWeek,
-            totalTimeThisMonth,
-            totalTimeAllTime,
-            timePerDayLast7: last7Days,
-            mostProductiveHour,
-            avgSessionLength,
-            completionRate,
-            estimationAccuracy,
-          },
-        },
+      const analytics = computeTaskAnalytics({
+        sessions,
+        estimatedMinutes: task.estimatedMinutes,
+        createdAt: task.createdAt,
+        now: new Date(),
+        timeZone,
       });
+
+      res.json({ success: true, data: { ...task, analytics } });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('Get task error:', err);
