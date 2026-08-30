@@ -11,6 +11,25 @@ export function getLocalDateString(date: Date = new Date()): string {
 }
 
 /**
+ * The device's IANA timezone, e.g. 'America/New_York'.
+ *
+ * Sent alongside `localDate` when a session completes. The DATE still comes
+ * from the device's own calendar — it knows what day it is for its user better
+ * than any zone the server could infer — but the server needs the zone to place
+ * the session in an hour-of-day bucket for reports.
+ *
+ * Returns null rather than throwing if the platform cannot resolve one; the
+ * server then stamps the UTC hour and marks it approximate.
+ */
+export function getDeviceTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whole calendar days from today until a 'YYYY-MM-DD' date, in the device's
  * current timezone. Negative means overdue, 0 means today.
  *

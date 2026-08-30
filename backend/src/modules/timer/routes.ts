@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { Namespace } from 'socket.io';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { buildAttribution } from '../../lib/sessionAttribution';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
@@ -38,6 +39,11 @@ const resumeSchema = z.object({
 const completeSchema = z.object({
   completedAt: z.number(),
   localDate: z.string().optional().nullable(), // YYYY-MM-DD in the client's local timezone
+  // IANA zone, e.g. 'America/New_York'. Only used to resolve the hour-of-day
+  // bucket for reports; the DAY still comes from localDate above, which the
+  // device knows better than any zone we could infer. Absent is fine — the
+  // session is then stamped with the UTC hour and flagged approximate.
+  tz: z.string().max(64).optional().nullable(),
   actualElapsedSeconds: z.number().int().min(0).max(MAX_SESSION_SECONDS),
   taskLabel: z.string().nullable().optional(),
   taskId: z.string().optional().nullable(),
@@ -196,7 +202,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
   router.post('/timer/complete', async (req: Request, res: Response) => {
     try {
       const userId = authenticate(req);
-      const { completedAt, localDate, actualElapsedSeconds, taskLabel, taskId, plannedDurationSeconds, clientSessionId } = completeSchema.parse(req.body);
+      const { completedAt, localDate, tz, actualElapsedSeconds, taskLabel, taskId, plannedDurationSeconds, clientSessionId } = completeSchema.parse(req.body);
 
       // ── Validate the client-reported completion time ──
       // Everything downstream (streaks, daily goals, leaderboards) keys off these
@@ -230,18 +236,48 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       // Only associate the session with a task the caller actually owns. An
       // unowned or missing id is dropped rather than rejected so the focus time
       // is still recorded (e.g. the task was deleted mid-session).
-      let ownedTaskId: string | null = null;
+      //
+      // This read is also what feeds session attribution below, so it selects
+      // the fields the stamp needs rather than just the id. It replaces a
+      // second findFirst that used to run after the insert.
+      let ownedTask: {
+        id: string; title: string; tags: string[]; priority: string;
+        taskGoalId: string | null; isRecurring: boolean; parentTaskId: string | null;
+        sessionDates: string[];
+      } | null = null;
       if (taskId) {
-        const ownedTask = await prisma.task.findFirst({
+        ownedTask = await prisma.task.findFirst({
           where: { id: taskId, userId },
-          select: { id: true },
+          select: {
+            id: true, title: true, tags: true, priority: true,
+            taskGoalId: true, isRecurring: true, parentTaskId: true,
+            sessionDates: true,
+          },
         });
-        if (ownedTask) {
-          ownedTaskId = ownedTask.id;
-        } else {
+        if (!ownedTask) {
           console.warn(`[timer] Ignoring taskId=${taskId} not owned by user=${userId}`);
         }
       }
+      const ownedTaskId: string | null = ownedTask?.id ?? null;
+
+      // Scoped by userId like every other goal read: a task must never pull in
+      // a goal row the caller does not own, even if it somehow carries the id.
+      const linkedGoal = ownedTask?.taskGoalId
+        ? await prisma.taskGoal.findFirst({
+            where: { id: ownedTask.taskGoalId, userId },
+            select: { id: true, title: true },
+          })
+        : null;
+
+      // Frozen at write time. See lib/sessionAttribution.ts for why this is
+      // stamped rather than resolved by joining at read time.
+      const attribution = buildAttribution({
+        task: ownedTask,
+        goal: linkedGoal,
+        completedAt: completedAtDate,
+        localDate: sessionLocalDate,
+        timeZone: tz,
+      });
 
       const session = await prisma.session.create({
         data: {
@@ -253,6 +289,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
           taskId: ownedTaskId,
           completedAt: completedAtDate,
           clientSessionId: clientSessionId || null,
+          ...attribution,
         },
       });
 
@@ -260,28 +297,24 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
 
       // Update task session counters if an owned task was linked. Scoped by
       // userId again so the write itself can never touch another user's row.
-      if (ownedTaskId) {
+      // Reuses the task read above rather than re-fetching it — the row cannot
+      // have changed in between, and the attribution stamp already needed it.
+      if (ownedTaskId && ownedTask) {
         try {
-          const task = await prisma.task.findFirst({
+          const updatedDates = Array.from(new Set([...ownedTask.sessionDates, sessionLocalDate]));
+          await prisma.task.updateMany({
             where: { id: ownedTaskId, userId },
-            select: { sessionDates: true, taskGoalId: true },
+            data: {
+              sessionsOnTask: { increment: 1 },
+              totalTimeOnTask: { increment: creditedSeconds },
+              sessionDates: updatedDates,
+            },
           });
-          if (task) {
-            const updatedDates = Array.from(new Set([...task.sessionDates, sessionLocalDate]));
-            await prisma.task.updateMany({
-              where: { id: ownedTaskId, userId },
-              data: {
-                sessionsOnTask: { increment: 1 },
-                totalTimeOnTask: { increment: creditedSeconds },
-                sessionDates: updatedDates,
-              },
-            });
 
-            // A session against a linked task moves the goal's sessions
-            // component, which may complete it.
-            if (task.taskGoalId) {
-              await syncGoalCompletion(userId, [task.taskGoalId]);
-            }
+          // A session against a linked task moves the goal's sessions
+          // component, which may complete it.
+          if (ownedTask.taskGoalId) {
+            await syncGoalCompletion(userId, [ownedTask.taskGoalId]);
           }
         } catch (taskErr) {
           // Non-fatal — session is already saved; log and continue

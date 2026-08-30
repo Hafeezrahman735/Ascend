@@ -1,3 +1,11 @@
+import {
+  makeFormatter, partsOf, shiftDateKey, daysBetweenKeys, hourLabel, safeTimeZone,
+} from './localParts';
+
+// Re-exported because `modules/tasks/routes.ts` and this module's tests already
+// import it from here, and it is genuinely part of this module's surface.
+export { safeTimeZone };
+
 /**
  * Per-task focus analytics.
  *
@@ -5,26 +13,10 @@
  * that nothing could reach without an HTTP round trip. Same reason
  * `goalProgress.ts` exists: the numbers a user reads are worth a unit test.
  *
- * ─── Why every bucket is a string comparison ────────────────────────────────
- *
- * The previous version bucketed by UTC — `getUTCHours()` for the peak hour,
- * `toISOString().split('T')[0]` for day keys — and then labelled the result as
- * if it were local time. A user in UTC-5 who works at 9am was told their peak
- * hour was 2pm, and a 9pm session landed on the NEXT day's bar in the 7-day
- * chart.
- *
- * The fix resolves every timestamp to the caller's IANA zone via Intl, then
- * does all bucketing on 'YYYY-MM-DD' strings. Strings rather than Date maths
- * because local days are not all 24 hours long: subtracting 86_400_000ms
- * across a DST boundary either skips a local date or repeats one. Calendar
- * arithmetic on the date parts has no such failure mode, and ISO date strings
- * sort correctly with `<`/`>=`, so range checks stay trivial.
+ * Bucketing rationale (local days, string comparison, DST) lives in
+ * `localParts.ts`, which this shares with session attribution so the two
+ * cannot drift on what a local day is.
  */
-
-/** Sunday-first, matching `Intl` weekday output and `Date.getDay()`. */
-const WEEKDAY_INDEX: Record<string, number> = {
-  Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
-};
 
 /** A session counts as "full" if it ran at least this share of its plan. */
 const FULL_SESSION_THRESHOLD = 0.9;
@@ -78,85 +70,6 @@ export interface TaskAnalytics {
   consistency: number | null;
   /** Newest session, ISO, or null if none. Surfaces a stalled task. */
   lastSessionAt: string | null;
-}
-
-interface LocalParts {
-  dateKey: string;
-  hour: number;
-  weekday: number;
-}
-
-/**
- * Resolve an instant into its calendar parts in `timeZone`.
- *
- * `hourCycle: 'h23'` rather than `hour12: false`, which yields "24" for
- * midnight in some ICU versions and would put every midnight session into a
- * bucket that cannot exist.
- */
-function makeFormatter(timeZone: string): Intl.DateTimeFormat {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    hourCycle: 'h23',
-    weekday: 'short',
-  });
-}
-
-function partsOf(fmt: Intl.DateTimeFormat, d: Date): LocalParts {
-  const parts = fmt.formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  return {
-    dateKey: `${get('year')}-${get('month')}-${get('day')}`,
-    hour: Number(get('hour')),
-    weekday: WEEKDAY_INDEX[get('weekday')] ?? 0,
-  };
-}
-
-/**
- * Shift a 'YYYY-MM-DD' key by whole calendar days.
- *
- * Uses UTC constructors purely as calendar arithmetic on the date parts — no
- * instant is involved, so no DST rule can apply and the result is exact.
- */
-function shiftDateKey(key: string, days: number): string {
-  const [y, m, d] = key.split('-').map(Number);
-  const t = new Date(Date.UTC(y, m - 1, d + days));
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
-}
-
-/** Whole calendar days from `from` to `to`, both 'YYYY-MM-DD'. */
-function daysBetweenKeys(from: string, to: string): number {
-  const [fy, fm, fd] = from.split('-').map(Number);
-  const [ty, tm, td] = to.split('-').map(Number);
-  return Math.round(
-    (Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000,
-  );
-}
-
-/** "9am" / "12pm" / "11pm" for an hour in 0..23. */
-function hourLabel(hour: number): string {
-  const period = hour >= 12 ? 'pm' : 'am';
-  const display = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  return `${display}${period}`;
-}
-
-/**
- * `Intl` throws on an unknown zone, and the zone arrives from a client query
- * string, so it is untrusted input. Fall back to UTC rather than 500ing a
- * stats screen because somebody sent a typo.
- */
-export function safeTimeZone(tz: string | undefined | null): string {
-  if (!tz) return 'UTC';
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return tz;
-  } catch {
-    return 'UTC';
-  }
 }
 
 export function computeTaskAnalytics(input: {

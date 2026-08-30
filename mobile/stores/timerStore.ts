@@ -5,7 +5,7 @@ import { useTaskStore } from './taskStore';
 import { useAuthStore } from './authStore';
 import { useGamificationStore } from './gamificationStore';
 import { recordCompletedSession, generateSessionId } from '../store/sync';
-import { getLocalDateString } from '../utils/date';
+import { getLocalDateString, getDeviceTimeZone } from '../utils/date';
 import type { SessionReward } from '../types';
 import { elapsedInPhase, remainingInPhase, type TimerPhase } from '../lib/phaseDuration';
 import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
@@ -309,6 +309,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         api.post<SessionReward>('/timer/complete', {
           completedAt: Date.now(),
           localDate: getTodayString(),
+          tz: getDeviceTimeZone(),
           actualElapsedSeconds: sessionDuration,
           taskId: selectedTaskId ?? null,
           taskLabel,
@@ -693,6 +694,7 @@ function recordFocusSession(sessionDuration: number): void {
   api.post<SessionReward>('/timer/complete', {
     completedAt: Date.now(),
     localDate: today,
+    tz: getDeviceTimeZone(),
     actualElapsedSeconds: sessionDuration,
     taskId: selectedTaskId ?? null,
     taskLabel,

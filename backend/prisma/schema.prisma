@@ -98,12 +98,48 @@ model Session {
   clientSessionId        String?  @unique @map("client_session_id") @db.VarChar(36)
   plannedDurationSeconds Int?     @map("planned_duration_seconds")
   taskId                 String?  @map("task_id")
-  task                   Task?    @relation("TaskSessions", fields: [taskId], references: [id])
-  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ─── Frozen attribution ──────────────────────────────────────────────────
+  // Stamped when the session is saved, never recomputed. Resolving attribution
+  // at read time meant joining against GET /tasks, which excludes archived
+  // rows — and recurring habits archive yesterday's instance every day, so a
+  // habit's whole history silently reclassified itself as "Untagged" overnight.
+  // Freezing also makes reports a join-free GROUP BY, and means a February
+  // report still reads correctly after the task or goal behind it is renamed
+  // or deleted.
+  //
+  // taskGoalId is deliberately NOT a relation: a foreign key would let a
+  // deleted goal take its own history with it, which is the opposite of the
+  // point. The snapshot title is what the report renders.
+  taskGoalId        String?  @map("task_goal_id")
+  goalTitleSnapshot String?  @map("goal_title_snapshot") @db.VarChar(80)
+  taskTitleSnapshot String?  @map("task_title_snapshot") @db.VarChar(100)
+  /// Drives the one tag breakdown that has to sum to 100%.
+  primaryTag        String?  @map("primary_tag")
+  /// Every tag the task carried, so a multi-tag task is not lossy.
+  tags              String[] @default([])
+  priority          String?  @db.VarChar(10)
+  /// Habit time and project time are different kinds of work; do not pool them.
+  wasRecurring      Boolean  @default(false) @map("was_recurring")
+
+  // Local-time buckets, frozen for the same reason. Resolving a timezone at
+  // read time re-derives buckets on every request and misattributes sessions
+  // for anyone who has travelled since.
+  localDate       String? @map("local_date") @db.VarChar(10)
+  localHour       Int?    @map("local_hour")
+  localWeekday    Int?    @map("local_weekday")
+  /// True when localHour had to be inferred rather than resolved from a real
+  /// timezone — backfilled rows, and clients that send no tz. The report says so.
+  localDateApprox Boolean @default(false) @map("local_date_approx")
+
+  task Task? @relation("TaskSessions", fields: [taskId], references: [id])
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, completedAt])
   @@index([taskId])
   @@index([type, completedAt])
+  @@index([userId, localDate])
+  @@index([userId, taskGoalId])
   @@map("sessions")
 }
 
