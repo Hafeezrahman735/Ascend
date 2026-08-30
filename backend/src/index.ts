@@ -18,6 +18,7 @@ import { notificationsRouter } from './modules/notifications/routes';
 import { analyticsRouter } from './modules/analytics/routes';
 import { setupTaskRoutes } from './modules/tasks/routes';
 import { taskGoalsRouter } from './modules/taskgoals/routes';
+import { timeReportRouter } from './modules/timereport/routes';
 import { calendarRouter, calendarPublicRouter } from './modules/calendar/routes';
 import { setupTimerHandlers } from './modules/timer/handlers';
 import { setupTimerRoutes } from './modules/timer/routes';
@@ -161,6 +162,7 @@ const taskRouter = Router();
 setupTaskRoutes(taskRouter);
 app.use('/', taskRouter);
 app.use('/', taskGoalsRouter);
+app.use('/', timeReportRouter);
 app.use('/', calendarRouter);
 
 const timerNamespace = io.of('/timer');
