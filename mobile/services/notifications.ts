@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform, AppState } from 'react-native';
 import { api } from './api';
+import { log } from '../lib/log';
 
 // Expo Go (SDK 53+) no longer supports push notifications and warns on local
 // ones, so we disable all notification behavior there. Dev builds (expo-dev-client)
@@ -103,7 +104,7 @@ export async function registerPushToken(): Promise<void> {
     });
     if (!token) return;
     await api.post('/notifications/push-token', { pushToken: token });
-    console.log('[notifications] push token registered');
+    log('[notifications] push token registered');
   } catch (err) {
     console.warn('[notifications] push token registration failed:', err);
   }
@@ -146,7 +147,7 @@ export async function scheduleDailyReminder(hour: number, minute: number): Promi
         minute: Math.max(0, Math.min(59, Math.floor(minute))),
       },
     });
-    console.log('[notifications] daily reminder scheduled for', hour, ':', minute);
+    log('[notifications] daily reminder scheduled for', hour, ':', minute);
   } catch (err) {
     console.warn('[notifications] schedule daily reminder failed:', err);
   }
@@ -203,7 +204,7 @@ export async function scheduleFocusDoneNotification(remainingSeconds: number): P
       },
       trigger: timeIntervalTrigger(seconds),
     });
-    console.log('[notifications] focus complete scheduled in', seconds, 'seconds');
+    log('[notifications] focus complete scheduled in', seconds, 'seconds');
   } catch (err) {
     console.warn('[notifications] schedule focus failed:', err);
   }
@@ -234,7 +235,7 @@ export async function scheduleBreakEndNotification(
       },
       trigger: timeIntervalTrigger(seconds),
     });
-    console.log(
+    log(
       '[notifications] break end scheduled in',
       seconds,
       'seconds (',

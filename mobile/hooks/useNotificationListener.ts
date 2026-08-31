@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { getNotificationType, isExpoGo } from '../services/notifications';
+import { log } from '../lib/log';
 
 /**
  * Handles what happens when the user taps a timer notification (from the lock
@@ -35,7 +36,7 @@ export function useNotificationListener(): void {
     // handler set in configureNotificationHandler shows it.
     const receiveSubscription = Notifications.addNotificationReceivedListener((notification) => {
       const type = notification.request.content.data?.type;
-      console.log('[notifications] received in foreground:', type);
+      log('[notifications] received in foreground:', type);
     });
 
     return () => {

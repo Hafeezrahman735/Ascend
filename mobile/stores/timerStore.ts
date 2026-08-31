@@ -9,6 +9,7 @@ import { getLocalDateString, getDeviceTimeZone } from '../utils/date';
 import type { SessionReward } from '../types';
 import { elapsedInPhase, remainingInPhase, type TimerPhase } from '../lib/phaseDuration';
 import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
+import { log } from '../lib/log';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
 export type { TimerPhase };
@@ -412,7 +413,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         keys.lastSessionDate,
         ACTIVE_SESSION_KEY, // drop any in-progress session so the next account starts clean
       ]);
-      console.log('[timerStore] cleared user stats for:', userId);
+      log('[timerStore] cleared user stats for:', userId);
     } catch (err) {
       console.warn('[timerStore] clearUserData failed:', err);
     }
@@ -539,7 +540,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       // Runs once per user per device: present only while legacySessionsRaw !== null.
       const legacySessionsRaw = await AsyncStorage.getItem(LEGACY_KEYS.globalSessions);
       if (legacySessionsRaw !== null) {
-        console.log('[timerStore] migrating legacy timer stats for userId:', userId);
+        log('[timerStore] migrating legacy timer stats for userId:', userId);
         const legacyDate = await AsyncStorage.getItem(LEGACY_KEYS.lastSessionDate);
         const legacyTime = await AsyncStorage.getItem(LEGACY_KEYS.globalTotalTime);
 
@@ -558,7 +559,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
           LEGACY_KEYS.lastSessionDate,
         ]);
 
-        console.log('[timerStore] legacy migration complete — keys removed');
+        log('[timerStore] legacy migration complete — keys removed');
       }
 
       // Load device-level key (settings only)
@@ -633,8 +634,8 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         ...(restored ?? {}),
       });
 
-      console.log('[timerStore] hydrated for userId:', userId);
-      console.log('[timerStore] globalSessions:', globalSessions, 'globalTotalTime:', globalTotalTime);
+      log('[timerStore] hydrated for userId:', userId);
+      log('[timerStore] globalSessions:', globalSessions, 'globalTotalTime:', globalTotalTime);
 
     } catch (err) {
       console.warn('[timerStore] hydrate failed:', err);

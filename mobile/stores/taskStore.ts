@@ -5,6 +5,7 @@ import { Task, DayOfWeek } from '../types';
 import { useAuthStore } from './authStore';
 import { removeTaskSessionsFromHistory } from '../store/sync';
 import { getLocalDateString } from '../utils/date';
+import { log } from '../lib/log';
 
 const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
 
@@ -408,7 +409,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       const changed = res.success && res.data && ((res.data.spawned ?? 0) > 0 || (res.data.archived ?? 0) > 0);
       if (changed) {
         await get().fetchTasks(true);
-        console.log('[taskStore] recurring: spawned', res.data!.spawned, 'archived', res.data!.archived ?? 0);
+        log('[taskStore] recurring: spawned', res.data!.spawned, 'archived', res.data!.archived ?? 0);
         invalidateCalendar();
       }
     } catch (err) {

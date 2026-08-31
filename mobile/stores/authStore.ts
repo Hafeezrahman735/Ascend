@@ -5,6 +5,7 @@ import { reconnectTimerSocket, disconnectTimerSocket, disconnectSocialSocket } f
 import { clearSessionHistory } from '../store/sync';
 import { useGamificationStore } from './gamificationStore';
 import { useTimerStore } from './timerStore';
+import { log } from '../lib/log';
 
 interface AuthState {
   user: User | null;
@@ -156,7 +157,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 // api layer before this runs.
 setOnAuthExpired(() => {
   if (!useAuthStore.getState().isAuthenticated) return;
-  console.log('[auth] session expired — signing out');
+  log('[auth] session expired — signing out');
   disconnectTimerSocket();
   disconnectSocialSocket();
   useGamificationStore.getState().reset();

@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { Config } from '../constants/Config';
 import { getAccessToken, ensureFreshAccessToken } from './api';
+import { log } from '../lib/log';
 
 let timerSocket: Socket | null = null;
 let socialSocket: Socket | null = null;
@@ -46,7 +47,7 @@ function connectTimerSocket(): Socket {
   if (timerSocket) return timerSocket;
 
   const url = `${Config.WS_URL}/timer`;
-  console.log('[socket] creating timer socket — url:', url);
+  log('[socket] creating timer socket — url:', url);
 
   timerSocket = io(url, {
     ...defaultOptions,
@@ -54,11 +55,11 @@ function connectTimerSocket(): Socket {
   });
 
   timerSocket.on('connect', () => {
-    console.log('[socket] timer CONNECTED — id:', timerSocket?.id);
+    log('[socket] timer CONNECTED — id:', timerSocket?.id);
   });
 
   timerSocket.on('disconnect', (reason) => {
-    console.log('[socket] timer disconnected:', reason);
+    log('[socket] timer disconnected:', reason);
   });
 
   timerSocket.on('connect_error', (error) => {
@@ -70,7 +71,7 @@ function connectTimerSocket(): Socket {
 
 export function reconnectTimerSocket(): void {
   const token = getAccessToken();
-  console.log('[socket] reconnectTimerSocket — token present:', !!token);
+  log('[socket] reconnectTimerSocket — token present:', !!token);
 
   if (!token) {
     console.error('[socket] reconnectTimerSocket called with no token — aborting');
@@ -98,11 +99,11 @@ export function connectSocialSocket(): Socket {
   });
 
   socialSocket.on('connect', () => {
-    console.log('[socket] social CONNECTED — id:', socialSocket?.id);
+    log('[socket] social CONNECTED — id:', socialSocket?.id);
   });
 
   socialSocket.on('disconnect', (reason) => {
-    console.log('[socket] social disconnected:', reason);
+    log('[socket] social disconnected:', reason);
   });
 
   socialSocket.on('connect_error', (error) => {

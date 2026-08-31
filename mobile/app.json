@@ -14,7 +14,6 @@
       "**/*"
     ],
     "ios": {
-      "buildNumber": "3",
       "supportsTablet": true,
       "bundleIdentifier": "com.hafeezrahman.ascend",
       "infoPlist": {
@@ -22,7 +21,6 @@
           "remote-notification",
           "fetch"
         ],
-        "NSUserNotificationUsageDescription": "Ascend sends you reminders when your focus session ends and when your friends start focusing.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -54,7 +52,8 @@
       [
         "expo-calendar",
         {
-          "calendarPermission": "Ascend shows the events already on your calendar beside your tasks, so you can plan focus sessions around them. Events are read on your device and never leave it."
+          "calendarPermission": "Ascend shows the events already on your calendar beside your tasks, so you can plan focus sessions around them. Events are read on your device and never leave it.",
+          "remindersPermission": false
         }
       ],
       [

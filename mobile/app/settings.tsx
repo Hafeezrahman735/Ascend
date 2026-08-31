@@ -25,7 +25,9 @@ import {
   type DeviceCalendar,
 } from '../services/appleCalendar';
 
-// TODO: replace with your real published values before App Store submission.
+// Published values, used by the Support and Privacy rows below. Both are live:
+// the privacy URL is what App Review follows, so it must stay publicly reachable
+// (check it in a private window after any Notion permission change).
 const SUPPORT_EMAIL = 'hafeezrahman735@gmail.com'
 const PRIVACY_POLICY_URL = 'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
 

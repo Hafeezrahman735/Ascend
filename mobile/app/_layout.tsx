@@ -24,6 +24,7 @@ import { setupNotifications, configureNotificationHandler } from '../services/no
 import { useNotificationListener } from '../hooks/useNotificationListener';
 import { useTimerNotifications } from '../hooks/useTimerNotifications';
 import { useTimerLiveActivity } from '../hooks/useTimerLiveActivity';
+import { log } from '../lib/log';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
@@ -123,13 +124,13 @@ export default function RootLayout() {
     isNavigating.current = true;
 
     if (needsAuth) {
-      console.log('[auth guard] no user — redirecting to login');
+      log('[auth guard] no user — redirecting to login');
       router.replace('/(auth)/login');
     } else if (isNewUser) {
-      console.log('[auth guard] new user — redirecting to onboarding');
+      log('[auth guard] new user — redirecting to onboarding');
       router.replace('/(auth)/onboarding1');
     } else {
-      console.log('[auth guard] user exists in auth group — redirecting to tabs');
+      log('[auth guard] user exists in auth group — redirecting to tabs');
       router.replace('/(tabs)');
     }
 
@@ -149,17 +150,17 @@ export default function RootLayout() {
       try {
         // loadTokensFromStorage seeds the in-memory accessToken used by apiRequest.
         const { accessToken: token } = await loadTokensFromStorage();
-        console.log('[bootstrap] token found:', !!token);
+        log('[bootstrap] token found:', !!token);
 
         if (token) {
           try {
             await useAuthStore.getState().loadUser();
           } catch (err: any) {
-            console.log('[bootstrap] loadUser failed:', err?.message);
+            log('[bootstrap] loadUser failed:', err?.message);
           }
 
           const authedUser = useAuthStore.getState().user;
-          console.log('[bootstrap] user:', authedUser?.id, authedUser?.username);
+          log('[bootstrap] user:', authedUser?.id, authedUser?.username);
 
           if (authedUser) {
             await hydrateForUser(authedUser.id);
