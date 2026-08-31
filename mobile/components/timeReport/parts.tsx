@@ -30,7 +30,7 @@ export function SectionTitle({ children, note }: { children: string; note?: stri
   return (
     <View style={{
       flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
-      marginTop: Space.section, marginBottom: Space.md,
+      marginTop: Space.section, marginBottom: Space.lg,
     }}>
       <Text style={{
         color: Colors.textBright, fontSize: 13, fontWeight: '700',
@@ -72,16 +72,27 @@ export function DeltaText({
   );
 }
 
-/** A thin share rail. Not a chart — a proportion, read at a glance. */
-export function ShareBar({ share, color }: { share: number; color?: string }) {
+/**
+ * A share rail. Not a chart — a proportion, read at a glance.
+ *
+ * `height` defaults to the hairline used in the summary card. The report's
+ * goals section passes 8, which is the weight concept 2A gives it: there the
+ * bar is the primary comparison between goals, not a footnote under a row.
+ */
+export function ShareBar({ share, color, height = 3 }: {
+  share: number;
+  color?: string;
+  height?: number;
+}) {
   const Colors = useTheme();
   const width = `${Math.max(1, Math.min(100, Math.round(share * 100)))}%` as const;
+  const radius = height / 2;
   return (
     <View style={{
-      height: 3, backgroundColor: Colors.inactive,
-      borderRadius: 2, overflow: 'hidden', marginTop: Space.sm,
+      height, backgroundColor: Colors.inactive,
+      borderRadius: radius, overflow: 'hidden', marginTop: Space.sm,
     }}>
-      <View style={{ height: 3, width, backgroundColor: color ?? Colors.primary, borderRadius: 2 }} />
+      <View style={{ height, width, backgroundColor: color ?? Colors.primary, borderRadius: radius }} />
     </View>
   );
 }
