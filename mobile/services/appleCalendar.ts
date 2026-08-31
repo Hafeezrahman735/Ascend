@@ -27,14 +27,33 @@ export function isAppleCalendarSupported(): boolean {
   return Platform.OS === 'ios' || Platform.OS === 'android';
 }
 
-export async function requestCalendarPermission(): Promise<boolean> {
-  if (!isAppleCalendarSupported()) return false;
+/**
+ * Why a request can fail, because the two need opposite advice.
+ *
+ * `denied`      — iOS asked and the user said no. Settings has a toggle.
+ * `unavailable` — expo-calendar is not in this binary, so nothing was ever
+ *                 asked. iOS does not list an app under Settings > Calendars
+ *                 until it requests access, so telling someone to "enable it in
+ *                 Settings" sends them to look for a switch that is not there.
+ *                 This is what happens when the plugin was added to app.json
+ *                 after the current dev client or TestFlight build was made:
+ *                 the config is right, the binary predates it, and only a
+ *                 rebuild fixes it.
+ */
+export type CalendarPermissionResult =
+  | { granted: true }
+  | { granted: false; reason: 'denied' | 'unavailable' };
+
+export async function requestCalendarPermission(): Promise<CalendarPermissionResult> {
+  if (!isAppleCalendarSupported()) return { granted: false, reason: 'unavailable' };
   try {
     const { status } = await Calendar.requestCalendarPermissionsAsync();
-    return status === 'granted';
+    return status === 'granted' ? { granted: true } : { granted: false, reason: 'denied' };
   } catch (err) {
-    console.warn('[appleCalendar] permission request failed:', err);
-    return false;
+    // The native module is missing from the build. Throwing here is the only
+    // signal we get; there is no capability flag to check first.
+    console.warn('[appleCalendar] calendar module unavailable in this build:', err);
+    return { granted: false, reason: 'unavailable' };
   }
 }
 

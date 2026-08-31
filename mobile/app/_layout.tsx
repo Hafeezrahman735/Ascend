@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, Alert, Linking } from 'react-native';
+import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -94,28 +94,12 @@ export default function RootLayout() {
     configureNotificationHandler();
   }, []);
 
-  // Google OAuth returns the browser to ascend://calendar/google-connected (or
-  // -failed). Handle it here rather than letting expo-router try to resolve a
-  // route that doesn't exist and land on +not-found.
-  useEffect(() => {
-    function handleUrl(url: string | null) {
-      if (!url || !url.includes('calendar/google-')) return;
-      const connected = url.includes('google-connected');
-      import('../stores/calendarStore').then(({ useCalendarStore }) => {
-        if (connected) useCalendarStore.getState().fetchGoogleStatus();
-      });
-      if (connected) {
-        router.replace('/(tabs)/calendar');
-      } else {
-        Alert.alert('Google Calendar', "That connection didn't complete. Please try again.");
-      }
-    }
-
-    // Cold start: the app may have been launched by the redirect itself.
-    Linking.getInitialURL().then(handleUrl).catch(() => {});
-    const sub = Linking.addEventListener('url', (e) => handleUrl(e.url));
-    return () => sub.remove();
-  }, []);
+  // The Google OAuth return used to be intercepted here, because
+  // ascend://calendar/google-connected matched no route and expo-router landed
+  // on its Unmatched Route screen. There are real routes for it now
+  // (app/calendar/google-connected.tsx and google-failed.tsx), so the router
+  // resolves the deep link itself — including on cold start — and this
+  // listener, which raced that navigation, is gone.
 
   // Auth guard — fires only after Stack is mounted (isReady === true).
   // The isNavigating ref stops the guard from re-firing on intermediate segment changes.
@@ -302,6 +286,8 @@ export default function RootLayout() {
         <Stack.Screen name="user/[id]" />
         <Stack.Screen name="groups" />
         <Stack.Screen name="group/[id]" />
+        <Stack.Screen name="calendar/google-connected" />
+        <Stack.Screen name="calendar/google-failed" />
       </Stack>
       {/* App-level so an unlock is celebrated wherever the user is — sessions
           complete on the Timer tab, not the profile. */}

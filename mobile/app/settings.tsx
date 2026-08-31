@@ -152,9 +152,22 @@ function CalendarSyncRows() {
 
   const connectApple = async () => {
     if (!user) return;
-    const granted = await requestCalendarPermission();
-    if (!granted) {
-      Alert.alert('Permission needed', 'Enable calendar access in Settings to show your device events here.');
+    const permission = await requestCalendarPermission();
+    if (!permission.granted) {
+      // Two failures, opposite advice. Sending someone to Settings when the app
+      // never asked is a dead end — iOS does not list an app under Calendars
+      // until it has requested access.
+      if (permission.reason === 'unavailable') {
+        Alert.alert(
+          'Not available in this build',
+          'Calendar access needs a rebuilt version of the app. This build was made before calendar support was added, so iOS has nothing to ask you about yet.',
+        );
+      } else {
+        Alert.alert(
+          'Permission needed',
+          'Ascend needs calendar access to show your events. Turn it on in Settings › Ascend › Calendars.',
+        );
+      }
       return;
     }
     const cals = await listDeviceCalendars();
