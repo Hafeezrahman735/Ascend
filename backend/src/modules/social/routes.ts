@@ -1561,11 +1561,14 @@ socialRouter.get('/social/groups/all', async (req: Request, res: Response) => {
 // ─── Group detail + member management ────────────────────────────────────────
 //
 //   GET    /social/groups/:id                  detail + member list  (members)
+//   PATCH  /social/groups/:id                  edit the About text   (ANY member)
 //   POST   /social/groups/:id/members          add a member          (creator)
 //   DELETE /social/groups/:id/members/:userId  remove a member       (creator)
 //
 // Ownership model: the creator manages membership. Everyone else may only join
-// a public group or leave one. Registered AFTER /social/groups/all so the
+// a public group or leave one. The About text is the one deliberate exception —
+// any member can write it, because it is shared context rather than
+// administration. Registered AFTER /social/groups/all so the
 // literal path is not swallowed by the :id parameter.
 
 const GROUP_MEMBER_SELECT = {
@@ -1634,6 +1637,69 @@ socialRouter.get('/social/groups/:id', async (req: Request, res: Response) => {
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('[social/groups/:id] error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/**
+ * Edit a group's About text. Any MEMBER may write it, not just the creator.
+ *
+ * That is a deliberate product decision, and it is a wider permission than
+ * anything else on a group: membership is managed by the creator alone. The
+ * reasoning is that a description is shared context rather than an act of
+ * administration — the person who knows what the group is currently for is
+ * often not the person who created it.
+ *
+ * Two consequences worth being honest about: any member can overwrite another
+ * member's text, and there is no history, so an overwrite cannot be undone. If
+ * that turns out to matter, the fix is an edit trail, not a narrower
+ * permission.
+ *
+ * Membership is checked explicitly rather than relying on resolveGroupAccess,
+ * which returns ok for any signed-in user reading a PUBLIC group. Without this
+ * check a stranger could rewrite any public group's description.
+ */
+socialRouter.patch('/social/groups/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id: groupId } = req.params;
+    const { description } = z.object({
+      description: z.string().max(500).nullable(),
+    }).parse(req.body);
+
+    const access = await resolveGroupAccess(groupId, userId);
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, error: access.error });
+      return;
+    }
+    if (!access.isMember) {
+      res.status(403).json({ success: false, error: 'Join this group to edit what it is about.' });
+      return;
+    }
+
+    // Same moderation gate as the group name and post captions — this is
+    // user-generated content shown to everyone else in the group.
+    if (containsBlockedContent(description)) {
+      res.status(400).json({ success: false, error: "That description isn't allowed." });
+      return;
+    }
+
+    // Whitespace-only clears it. Stored as null rather than '' so the client's
+    // "No description yet" empty state stays a single condition instead of two.
+    const trimmed = description?.trim() ?? '';
+    const next = trimmed.length > 0 ? trimmed : null;
+
+    const group = await prisma.studyGroup.update({
+      where: { id: groupId },
+      data: { description: next },
+      select: { id: true, description: true },
+    });
+
+    res.json({ success: true, data: { id: group.id, description: group.description } });
+  } catch (error) {
+    if (handleZodError(res, error)) return;
+    if (handleAuthError(res, error)) return;
+    console.error('[social/groups/:id PATCH] error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

@@ -73,6 +73,9 @@ interface SocialState {
   fetchGroupDetail: (groupId: string) => Promise<GroupDetailResult>;
   addGroupMember: (groupId: string, userId: string) => Promise<GroupMember | null>;
   removeGroupMember: (groupId: string, userId: string) => Promise<boolean>;
+  /** Any MEMBER may write a group's About text, not just its creator. */
+  updateGroupDescription: (groupId: string, description: string | null) =>
+    Promise<{ ok: true; description: string | null } | { ok: false; error: string }>;
   setSelectedGroup: (groupId: string | null) => void;
   fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
   markNotificationsRead: () => Promise<void>;
@@ -490,6 +493,30 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       if (response.success && response.data) return response.data;
     } catch {}
     return null;
+  },
+
+  updateGroupDescription: async (groupId: string, description: string | null) => {
+    try {
+      const response = await api.patch<{ id: string; description: string | null }>(
+        `/social/groups/${groupId}`,
+        { description },
+      );
+      if (response.success && response.data) {
+        const next = response.data.description;
+        // Keep the cached list in step so the Circle tab does not show the old
+        // text until its next fetch.
+        set((state) => ({
+          studyGroups: state.studyGroups.map((g) =>
+            g.id === groupId ? { ...g, description: next } : g),
+        }));
+        return { ok: true as const, description: next };
+      }
+      // The server's message is the useful one here — it says whether this was
+      // a moderation refusal or a permission problem.
+      return { ok: false as const, error: response.error ?? 'Could not save that.' };
+    } catch {
+      return { ok: false as const, error: 'No connection. Try again.' };
+    }
   },
 
   removeGroupMember: async (groupId: string, userId: string) => {

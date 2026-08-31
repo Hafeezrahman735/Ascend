@@ -155,6 +155,169 @@ function AddMemberSearch({ memberIds, onAdd }: {
   );
 }
 
+// ─── About ───────────────────────────────────────────────────────────────────
+
+/** Matches the server's `z.string().max(500)`. */
+const MAX_ABOUT = 500;
+
+/**
+ * The group's About text, editable in place by ANY member.
+ *
+ * Wider than every other permission on this screen — membership is managed by
+ * the creator alone — and that is deliberate: a description is shared context,
+ * not administration, and the person who knows what the group is currently for
+ * is often not the one who created it.
+ *
+ * The draft is held locally and only committed on Save, so a half-typed
+ * sentence is never written, and Cancel genuinely discards. There is no edit
+ * history on the server, so one member can overwrite another's text; the
+ * placeholder says the text is shared to make that expectation explicit before
+ * someone types into it.
+ */
+function AboutSection({ description, canEdit, onSave }: {
+  description: string | null;
+  canEdit: boolean;
+  onSave: (next: string | null) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const Colors = useTheme();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const startEdit = () => {
+    setDraft(description ?? '');
+    setError(null);
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setError(null);
+  };
+
+  const save = async () => {
+    const trimmed = draft.trim();
+    // Nothing changed — close without a pointless round trip.
+    if (trimmed === (description ?? '')) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const result = await onSave(trimmed.length > 0 ? trimmed : null);
+    setSaving(false);
+    if (result.ok) setEditing(false);
+    else setError(result.error);
+  };
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <SectionLabel>ABOUT</SectionLabel>
+        {canEdit && !editing && (
+          <Pressable
+            onPress={startEdit}
+            accessibilityRole="button"
+            accessibilityLabel={description ? 'Edit the group description' : 'Add a group description'}
+            hitSlop={12}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, paddingVertical: 6, paddingLeft: 12 })}
+          >
+            <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '700' }}>
+              {description ? 'Edit' : 'Add'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+
+      {editing ? (
+        <View>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            multiline
+            autoFocus
+            maxLength={MAX_ABOUT}
+            editable={!saving}
+            placeholder="What is this group for? Anyone in the group can edit this."
+            placeholderTextColor={Colors.subtext}
+            accessibilityLabel="Group description"
+            style={{
+              color: Colors.textBright, fontSize: 14, lineHeight: 20,
+              backgroundColor: Colors.raised,
+              borderRadius: 12, borderWidth: 1, borderColor: Colors.border,
+              paddingHorizontal: 12, paddingVertical: 10,
+              minHeight: 96, textAlignVertical: 'top',
+            }}
+          />
+
+          <View style={{
+            flexDirection: 'row', alignItems: 'center',
+            justifyContent: 'space-between', marginTop: 10,
+          }}>
+            <Text style={{
+              color: draft.length >= MAX_ABOUT ? Colors.warning : Colors.subtext,
+              fontSize: 11,
+            }}>
+              {draft.length}/{MAX_ABOUT}
+            </Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Pressable
+                onPress={cancel}
+                disabled={saving}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={({ pressed }) => ({
+                  opacity: pressed || saving ? 0.5 : 1,
+                  paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12,
+                  borderWidth: 1, borderColor: Colors.border, minHeight: 40,
+                  justifyContent: 'center',
+                })}
+              >
+                <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={save}
+                disabled={saving}
+                accessibilityRole="button"
+                accessibilityState={{ busy: saving }}
+                hitSlop={8}
+                style={({ pressed }) => ({
+                  opacity: pressed || saving ? 0.6 : 1,
+                  paddingHorizontal: 18, paddingVertical: 9, borderRadius: 12,
+                  backgroundColor: Colors.primary, minHeight: 40,
+                  alignItems: 'center', justifyContent: 'center', minWidth: 76,
+                })}
+              >
+                {saving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Save</Text>}
+              </Pressable>
+            </View>
+          </View>
+
+          {error && (
+            <Text style={{ color: Colors.ROSE, fontSize: 12, marginTop: 8 }}>{error}</Text>
+          )}
+        </View>
+      ) : (
+        <Text style={{
+          color: description ? Colors.text : Colors.subtext,
+          fontSize: 14, lineHeight: 20,
+          fontStyle: description ? 'normal' : 'italic',
+        }}>
+          {description
+            || (canEdit
+              ? 'No description yet. Add one so everyone knows what this group is for.'
+              : 'No description yet.')}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 // ─── Section heading ─────────────────────────────────────────────────────────
 
 function SectionLabel({ children }: { children: string }) {
@@ -181,6 +344,18 @@ export default function GroupDetailScreen() {
   const [loadError, setLoadError] = useState<LoadError | null>(null);
   const [loading, setLoading] = useState(true);
   const [leaving, setLeaving] = useState(false);
+
+  /**
+   * Commits the About text and folds the result back into local state, so the
+   * section leaves edit mode showing exactly what the server stored (trimmed,
+   * and null rather than '' when cleared).
+   */
+  const handleSaveAbout = useCallback(async (next: string | null) => {
+    const result = await social.updateGroupDescription(id, next);
+    if (!result.ok) return { ok: false as const, error: result.error };
+    setDetail((d) => (d ? { ...d, description: result.description } : d));
+    return { ok: true as const };
+  }, [id, social]);
 
   const loadDetail = useCallback(async () => {
     if (!id) return;
@@ -354,15 +529,12 @@ export default function GroupDetailScreen() {
           </Text>
         </View>
 
-        {/* description */}
-        <SectionLabel>ABOUT</SectionLabel>
-        <Text style={{
-          color: detail.description ? Colors.text : Colors.subtext,
-          fontSize: 14, lineHeight: 20,
-          fontStyle: detail.description ? 'normal' : 'italic',
-        }}>
-          {detail.description || 'No description yet.'}
-        </Text>
+        {/* Editable by any member — see AboutSection. */}
+        <AboutSection
+          description={detail.description ?? null}
+          canEdit={isMember}
+          onSave={handleSaveAbout}
+        />
 
         {/* posts live on the Circle tab now, so point at them rather than
             duplicating the feed here */}
