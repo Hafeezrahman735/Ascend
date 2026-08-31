@@ -83,22 +83,99 @@ Ascend uses two long-lived branches, matching two Railway environments:
 
 **All new work happens against `staging` first. Nothing goes directly to `main`.**
 
-Workflow for any feature or fix:
+## The pipeline
 
-1. Branch from `staging` (or commit directly to `staging` for small changes, if that's the user's preference at the time).
-2. Implement the change, including its integration test(s), per the Testing Standard above.
-3. Push to `staging`. This deploys to the Railway staging environment automatically.
-4. Verify the change against the real staging environment — run the integration test suite against staging's database where applicable, and/or manually exercise the feature through the staging API/app build.
-5. Only after the change is confirmed working in staging — and after other in-flight staging changes are also confirmed stable together — merge `staging` into `main`.
-6. Merging into `main` deploys to production. Do not treat this step as routine; treat it as a release.
+```
+You request a change
+        ↓
+Claude implements it
+        ↓
+Claude tests it locally
+        ↓
+Claude commits it
+        ↓
+Claude pushes to `staging`      ← automatic, no need to ask
+        ↓
+You test the staging app
+        ↓
+You approve
+        ↓
+Merge to `main`                 ← ONLY with explicit approval
+```
 
-Rules:
+## Pushing to staging is automatic. Finishing the work is the gate.
 
-- Never merge directly into `main` without having first verified the change on `staging`.
-- Never push experimental or half-finished work to `main`.
-- `staging` can be a little messy (multiple features in flight, iterating). `main` should always reflect a working, verified state.
-- If a change involves a database migration or schema change, confirm it has been run and verified against the staging database before it's included in a merge to `main`.
-- Flag clearly if a change is risky enough that it should be tested in staging for a period of time (e.g., a day) before being promoted, rather than merged immediately after it looks correct.
+Once a requested change is **complete**, commit it and push it to `staging`
+without being asked. Do not wait for permission, and do not leave finished work
+sitting on the local machine — `staging` should always hold the latest completed
+work, so it is always the thing to test.
+
+"Complete" is not a judgement call. It means all of:
+
+- the change that was actually asked for is implemented in full, not a slice of it
+- typecheck, lint, and the full test suite pass
+- an integration test exists and passes for any new or changed route (see the Testing Standard)
+- the working tree is clean — nothing half-edited, no debug code, no stray files
+
+**Never push incomplete work.** If any of the above is not true, the work is not
+finished and must not reach staging. That explicitly includes:
+
+- one step of a multi-step plan, where stopping there leaves the app worse than before
+- code that typechecks but has failing, skipped, or not-yet-written tests
+- work paused part-way to ask a question
+- anything the user said they wanted to review before it ships
+
+If work is blocked or only partly done, say so plainly and leave it uncommitted or
+on a feature branch. A pause is not a push.
+
+Pushing to staging does not need announcing as a question, but the fact that it
+happened, and what went out, belongs in the summary of the work.
+
+## `main` is protected
+
+**Never push or merge to `main` without explicit approval, every time.** Approval
+for one release is not approval for the next, and "we merged the last one" is not
+approval for this one. Merging to `main` deploys to production: treat it as a
+release, not a routine step.
+
+Before proposing a merge to `main`:
+
+- the change must have been verified on `staging` by the user, not just by tests
+- other in-flight staging changes must be stable alongside it
+- any schema change must already be applied and verified against the staging database
+- flag clearly if a change is risky enough to sit on staging for a while (a day, say)
+  rather than be promoted the moment it looks correct
+
+## Schema changes ship BEFORE the code that needs them
+
+Railway's build runs `prisma generate && tsc`. It does **not** push the schema. So
+if code that writes a new column deploys before that column exists, every write
+through that path 500s — and that is not a screen failing to render, it is user
+data failing to save.
+
+When a change includes a Prisma schema change, the order is:
+
+1. `prisma db push` against the staging database
+2. confirm it landed:
+   `prisma migrate diff --from-url $DATABASE_URL --to-schema-datamodel prisma/schema.prisma --script`
+   — an empty migration means in sync
+3. run any backfill, `--dry-run` first, and read the counts before the real run
+4. only then push the code
+
+Additive, nullable columns are safe to push ahead of the code: the older code
+still running simply ignores them. The reverse order is not safe.
+
+Schema is applied with `prisma db push`. Migration history is untracked in this
+project — never run `prisma migrate deploy`.
+
+## Rules
+
+- Never merge into `main` without the change having been verified on `staging` first.
+- Never push experimental or half-finished work anywhere.
+- `staging` can be a little messy (several features in flight, iterating).
+  `main` should always reflect a working, verified state.
+- Before pushing, confirm the target branch is what you think it is, and that the
+  merge is a fast-forward or a deliberate merge — never a surprise.
 
 ---
 
@@ -346,7 +423,11 @@ Avoid unrelated changes.
 
 Keep pull requests easy to review.
 
-See "Git & Environment Workflow" above for branch and environment rules.
+Once a change is complete and green, commit and push it to `staging` without
+being asked. Never push or merge to `main` without explicit approval.
+
+See "Git & Environment Workflow" above for the full pipeline, the definition of
+"complete", and the schema-before-code ordering rule.
 
 ---
 
@@ -370,7 +451,10 @@ A task is complete only when:
 
 ✓ Documentation updated if needed
 
-✓ Changes deployed and verified on `staging` before being considered ready to merge to `main`
+✓ Committed and pushed to `staging` — automatic once everything above is true,
+  and the push is part of finishing the work, not a separate favour
+
+✓ Verified by the user on the staging app before any merge to `main` is proposed
 
 ---
 
