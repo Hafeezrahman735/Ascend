@@ -449,14 +449,12 @@ export interface TimeReport {
   tags: { tag: string; seconds: number; sessions: number; share: number; previousSeconds: number }[];
   /** Time on sessions with no task attached. Free-form timer use, not a bug. */
   unattributedSeconds: number;
-  /** Share of time whose hour had to be inferred. Backfilled history. */
-  approxShare: number;
   /**
-   * Sessions that predate frozen attribution and cannot be placed in a window.
-   * Only meaningful when the report is otherwise empty — it distinguishes
-   * "you did not work" from "the backfill has not run here yet".
+   * Share of time whose local day had to be recomputed because its stored
+   * stamp was a UTC guess. The recomputed value is the better one; this is
+   * only approximate for someone who has changed timezone since.
    */
-  unstampedSessions: number;
+  approxShare: number;
 }
 
 export interface FeedEvent {

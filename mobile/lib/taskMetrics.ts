@@ -35,12 +35,6 @@ export function isThisMonth(ts: number): boolean {
   const d = new Date(ts); const n = new Date();
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth();
 }
-export function filterByPeriod(sessions: SessionRecord[], period: string): SessionRecord[] {
-  if (period === 'today') return sessions.filter((s) => isToday(s.completedAt));
-  if (period === 'week')  return sessions.filter((s) => isThisWeek(s.completedAt));
-  if (period === 'month') return sessions.filter((s) => isThisMonth(s.completedAt));
-  return sessions;
-}
 export function formatSeconds(seconds: number): string {
   const h = Math.floor(seconds / 3600); const m = Math.round((seconds % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`; return `${m}m`;
@@ -64,37 +58,11 @@ export function getDueChip(task: Task, c: ThemeColors): { label: string; bg: str
   return { label: `Due ${dayName}`, bg: c.inactive, fg: c.subtext };
 }
 
-// ─── Time-per-category grouping ────────────────────────────────────────────────
-/**
- * Focus seconds per category.
- *
- * The tag is resolved in three steps, in this order, and the order is the
- * whole point:
- *
- *   1. `primaryTag` frozen onto the session by the server when it was saved.
- *   2. The live task, for a session recorded locally seconds ago that has not
- *      synced yet — its task cannot have been archived in the meantime.
- *   3. "Untagged", which now genuinely means a session with no task.
- *
- * Step 1 exists because step 2 alone was wrong. `tasks` comes from GET /tasks,
- * which filters `isArchived: false`, and spawn-recurring archives yesterday's
- * habit instance every day — so a habit's whole history fell to "Untagged"
- * overnight, and the Month and All views were dominated by a bucket that was
- * really a bug.
- *
- * The task lookup is also a Map now rather than a `.find` inside the loop.
- */
-export function buildCategoryMap(sessions: SessionRecord[], tasks: Task[]): Record<string, number> {
-  const map: Record<string, number> = {};
-  const primaryTagByTaskId = new Map(tasks.map((t) => [t.id, t.tags?.[0]]));
-  for (const s of sessions) {
-    if (s.type !== 'focus') continue;
-    const live = s.taskId ? primaryTagByTaskId.get(s.taskId) : undefined;
-    const tag = s.primaryTag ?? live ?? 'Untagged';
-    map[tag] = (map[tag] ?? 0) + s.durationSeconds;
-  }
-  return map;
-}
+// Time-per-category grouping used to live here, resolving each session's tag on
+// the client. It is gone: the server freezes a session's tag when it is saved
+// and GET /time-report aggregates it, so the Time Tracker card and the full
+// report read one number from one place. Two implementations of "which tag does
+// this session belong to" is how they came to disagree in the first place.
 
 /**
  * A duration short enough to sit under a 40px-wide bar: "45m", "1.5h", "12h".

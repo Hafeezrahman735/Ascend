@@ -28,6 +28,7 @@ import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../com
 import AppPressable from '../../components/AppPressable';
 import GoalStatsModal from '../../components/GoalStatsModal';
 import TimeReportView from '../../components/timeReport/TimeReportView';
+import TimeReportSummary from '../../components/timeReport/TimeReportSummary';
 import type { ReportPeriod } from '../../hooks/useTimeReport';
 import { lastSessionOnGoal, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
@@ -43,8 +44,8 @@ import {
 } from '../../utils/tagStyle';
 import { Space, Radius } from '../../constants/spacing';
 import {
-  getMonday, isToday, filterByPeriod, formatSeconds,
-  formatDuration, getDueChip, buildCategoryMap, isYesterdayLocal,
+  getMonday, isToday, formatSeconds,
+  formatDuration, getDueChip, isYesterdayLocal,
   startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
   diffCalendarDaysTasks, getPeakHour, formatPeakWindow, getCompletionRate,
   compactDuration,
@@ -1112,31 +1113,6 @@ function BarColumn({ dayLabel, seconds, maxSeconds, isToday, isFuture }: { dayLa
 
 
 
-// ─── CategoryBar ───────────────────────────────────────────────────────────────
-function CategoryBar({ tag, seconds, totalSeconds, compact, onLongPressTag }: {
-  tag: string; seconds: number; totalSeconds: number; compact?: boolean; onLongPressTag?: (t: string) => void;
-}) {
-  const Colors = useTheme();
-  const ts = useTagStyle(tag);
-  const pct = totalSeconds > 0 ? (seconds / totalSeconds) * 100 : 0;
-  return (
-    <View style={{ marginBottom: 10 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-        <TouchableOpacity onLongPress={() => onLongPressTag?.(tag)} delayLongPress={400} style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: ts.bar, marginRight: 8 }} />
-          <Text style={{ fontSize: 14, marginRight: 4 }}>{ts.icon}</Text>
-          <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600', flex: 1 }}>{tag}</Text>
-        </TouchableOpacity>
-        <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '700' }}>{formatDuration(seconds)}</Text>
-        {!compact && <Text style={{ color: Colors.subtext, fontSize: 11, marginLeft: 8 }}>{Math.round(pct)}%</Text>}
-      </View>
-      <View style={{ height: 5, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden' }}>
-        <View style={{ width: `${pct}%`, height: '100%', borderRadius: 3, backgroundColor: ts.bar }} />
-      </View>
-    </View>
-  );
-}
-
 // ─── TodayPill ────────────────────────────────────────────────────────────────
 function TodayPill({ value, label }: { value: string; label: string }) {
   const Colors = useTheme();
@@ -1812,7 +1788,8 @@ export default function TasksScreen() {
 
   const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>(null);
-  const [trackerPeriod, setTrackerPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
+  // One period for both the summary card and the full report, so "See more"
+  // always opens the period you were already looking at.
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('month');
   const [taskFilter, setTaskFilter] = useState<'all' | 'active' | 'pending' | 'done'>('all');
   const [showAllDormant, setShowAllDormant] = useState(false);
@@ -1907,17 +1884,13 @@ export default function TasksScreen() {
   const maxDaySeconds = useMemo(() => Math.max(...thisWeekByDay, 1), [thisWeekByDay]);
 
 
-  // ── Category data ──
+  // Category totals used to be derived here, from the local session cache, and
+  // that second derivation is what disagreed with the server. The Time Tracker
+  // card reads GET /time-report now, so there is nothing left to compute.
 
-  const periodSessions = useMemo(() => filterByPeriod(sessionHistory.filter((s) => s.type === 'focus'), trackerPeriod), [sessionHistory, trackerPeriod]);
-  const periodCategoryMap = useMemo(() => buildCategoryMap(periodSessions, tasks), [periodSessions, tasks]);
-  const periodCategoryTotal = useMemo(() => Object.values(periodCategoryMap).reduce((a,b) => a+b, 0), [periodCategoryMap]);
-  const periodCategoriesSorted = useMemo(() => Object.entries(periodCategoryMap).sort((a,b) => b[1]-a[1]), [periodCategoryMap]);
-
-  // ── Peak focus & completion rate ──
+  // ── Peak focus ──
   const allFocusSessions = useMemo(() => sessionHistory.filter((s) => s.type === 'focus'), [sessionHistory]);
   const peakHour = useMemo(() => getPeakHour(allFocusSessions), [allFocusSessions]);
-  const completionRate = useMemo(() => getCompletionRate(tasks, trackerPeriod), [tasks, trackerPeriod]);
   const weeklyCompletionRate = useMemo(() => getCompletionRate(tasks, 'week'), [tasks]);
 
   // ── Task groups ──
@@ -2419,41 +2392,22 @@ export default function TasksScreen() {
           )}
         </View>
 
-        {/* Zone 4 — Time Tracker */}
+        {/* Zone 4 — Time Tracker.
+
+            Reads GET /time-report, the same source as the full report behind
+            "See more", and shares its period state. It used to compute its own
+            numbers from the local session cache, which is how it came to say
+            27m today / 1h 17m this month while the report said nothing today /
+            50m this month — same sessions, one tap apart. Two sources for one
+            fact is a bug generator; there is now one. */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
           <ZoneHeader title="Time Tracker" onSeeMore={() => setActiveView('time-tracker')} />
           <View style={[styles.card]}>
-            <View style={{ flexDirection: 'row', marginBottom: 12, backgroundColor: Colors.raised, borderRadius: 10, padding: 3 }}>
-              {(['today','week','month','all'] as const).map((p) => (
-                <TouchableOpacity key={p} onPress={() => setTrackerPeriod(p)} style={{ flex: 1, paddingVertical: 6, borderRadius: 8, alignItems: 'center', backgroundColor: trackerPeriod === p ? Colors.primary : 'transparent' }}>
-                  <Text style={{ color: trackerPeriod === p ? '#fff' : Colors.subtext, fontSize: 11, fontWeight: '700', textTransform: 'capitalize' }}>{p}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800' }}>{formatDuration(periodCategoryTotal)}</Text>
-                <Text style={{ color: Colors.subtext, fontSize: 12 }}>focus time · {periodSessions.length} sessions</Text>
-              </View>
-            </View>
-            {periodCategoriesSorted.length === 0 ? (
-              <Text style={{ color: Colors.subtext, fontSize: 12, textAlign: 'center', paddingVertical: 8 }}>No sessions in this period</Text>
-            ) : periodCategoriesSorted.slice(0, 3).map(([tag, secs]) => <CategoryBar key={tag} tag={tag} seconds={secs} totalSeconds={periodCategoryTotal} compact onLongPressTag={setOverrideTag} />)}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 12 }}>
-              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} seconds={thisWeekByDay[i]} maxSeconds={maxDaySeconds} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
-            </View>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
-              <View style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 12, padding: 12 }}>
-                <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '600', letterSpacing: 0.5, marginBottom: 4 }}>PEAK FOCUS</Text>
-                <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '700' }}>{peakHour !== null ? formatPeakWindow(peakHour) : '—'}</Text>
-                <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 2 }}>most active window</Text>
-              </View>
-              <View style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 12, padding: 12 }}>
-                <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '600', letterSpacing: 0.5, marginBottom: 4 }}>COMPLETION</Text>
-                <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '700' }}>{completionRate !== null ? `${completionRate}%` : '—'}</Text>
-                <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 2 }}>tasks done / planned</Text>
-              </View>
-            </View>
+            <TimeReportSummary
+              period={reportPeriod}
+              onPeriodChange={setReportPeriod}
+              onSeeMore={() => setActiveView('time-tracker')}
+            />
           </View>
         </View>
 

@@ -14,8 +14,16 @@ import { computeTimeReport, type ReportSession } from '../../lib/timeReport';
  * lib/sessionAttribution.ts), which is what makes this a single indexed read
  * rather than a per-row lookup against a task list that excludes archived rows.
  *
- * Range filtering compares `localDate` strings, so there is no timezone maths
- * at read time and no re-derivation of buckets on every request.
+ * The query is by `completedAt`, NOT by the stored `localDate`, and it is
+ * widened by a day at each end. Two reasons, both load-bearing:
+ *
+ *   - A backfilled row's `localDate` is a UTC guess and can be a whole day out
+ *     (see computeTimeReport). Filtering on it in SQL would drop sessions from
+ *     the window before anything had a chance to correct them — which is
+ *     exactly how an evening session vanished from "today" and from its month.
+ *   - Once resolved, a session's local day can be a day either side of its UTC
+ *     day, so the fetch has to cover more than the requested range and let the
+ *     aggregation decide what actually falls inside it.
  */
 
 export const timeReportRouter = Router();
@@ -41,6 +49,7 @@ const querySchema = z.object({
 
 /** Only the columns the report reads. */
 const REPORT_SELECT = {
+  completedAt: true,
   durationSeconds: true,
   taskId: true,
   taskGoalId: true,
@@ -57,6 +66,7 @@ const REPORT_SELECT = {
 } as const;
 
 type SessionRow = {
+  completedAt: Date;
   durationSeconds: number;
   taskId: string | null;
   taskGoalId: string | null;
@@ -73,13 +83,13 @@ type SessionRow = {
 };
 
 /**
- * Rows are typed nullable because the columns are, but the query filters
- * `localDate` to a range, so anything that comes back has been stamped. The
- * hour/weekday defaults are belt and braces for a row written by an older
- * build rather than a case that should occur.
+ * Nulls are passed through rather than defaulted: a row with no stamp is one
+ * computeTimeReport must resolve from `completedAt`, and defaulting it to
+ * midnight-on-the-epoch would file it under the wrong day silently.
  */
 function toReportSession(row: SessionRow): ReportSession {
   return {
+    completedAt: row.completedAt,
     durationSeconds: row.durationSeconds,
     taskId: row.taskId,
     taskGoalId: row.taskGoalId,
@@ -89,9 +99,9 @@ function toReportSession(row: SessionRow): ReportSession {
     tags: row.tags,
     priority: row.priority,
     wasRecurring: row.wasRecurring,
-    localDate: row.localDate ?? '',
-    localHour: row.localHour ?? 0,
-    localWeekday: row.localWeekday ?? 0,
+    localDate: row.localDate,
+    localHour: row.localHour,
+    localWeekday: row.localWeekday,
     localDateApprox: row.localDateApprox,
   };
 }
@@ -122,14 +132,14 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
     const prevTo = shiftDateKey(from, -1);
     const prevFrom = shiftDateKey(prevTo, -(days - 1));
 
-    const [rows, prevRows, goals] = await Promise.all([
+    // One read covering both windows, widened a day at each end because a
+    // session's resolved local day can sit either side of its UTC day.
+    const fetchFrom = new Date(`${shiftDateKey(prevFrom, -1)}T00:00:00.000Z`);
+    const fetchTo = new Date(`${shiftDateKey(to, 1)}T23:59:59.999Z`);
+
+    const [rows, goals] = await Promise.all([
       prisma.session.findMany({
-        where: { userId, type: 'focus', localDate: { gte: from, lte: to } },
-        select: REPORT_SELECT,
-        take: MAX_REPORT_SESSIONS,
-      }),
-      prisma.session.findMany({
-        where: { userId, type: 'focus', localDate: { gte: prevFrom, lte: prevTo } },
+        where: { userId, type: 'focus', completedAt: { gte: fetchFrom, lte: fetchTo } },
         select: REPORT_SELECT,
         take: MAX_REPORT_SESSIONS,
       }),
@@ -139,14 +149,18 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
       }),
     ]);
 
-    // "Today" for deadline maths, in the caller's zone. Falls back to UTC.
-    const today = localPartsOf(new Date(), safeTimeZone(tz)).dateKey;
+    // The caller's zone, used both to place "today" for deadline maths and to
+    // re-resolve any session whose stored local day was a UTC guess.
+    const timeZone = safeTimeZone(tz);
+    const today = localPartsOf(new Date(), timeZone).dateKey;
 
     const report = computeTimeReport({
       sessions: rows.map(toReportSession),
-      previousSessions: prevRows.map(toReportSession),
       from,
       to,
+      previousFrom: prevFrom,
+      previousTo: prevTo,
+      timeZone,
       goals: goals.map((g) => ({
         id: g.id,
         title: g.title,
@@ -156,17 +170,12 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
       today,
     });
 
-    // An empty report is ambiguous: it can mean "you did not work" or "the
-    // backfill has not run in this environment yet". Only pay for the extra
-    // count when the answer is empty, and say which it is.
-    let unstampedSessions = 0;
-    if (report.totals.sessions === 0) {
-      unstampedSessions = await prisma.session.count({
-        where: { userId, type: 'focus', localDate: null },
-      });
-    }
-
-    res.json({ success: true, data: { ...report, unstampedSessions } });
+    // There used to be an `unstampedSessions` count here, to tell "you did not
+    // work" apart from "the backfill has not run yet". It is gone because the
+    // second case can no longer produce an empty report: computeTimeReport
+    // resolves a session with no stamp from its `completedAt`, so every session
+    // lands on a day whether it was ever backfilled or not.
+    res.json({ success: true, data: report });
   } catch (err) {
     if (handleAuthError(res, err)) return;
     console.error('Time report error:', err);

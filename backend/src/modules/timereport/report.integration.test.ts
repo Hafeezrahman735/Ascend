@@ -175,16 +175,44 @@ describe('GET /time-report', () => {
     expect(report.tasks).toEqual([]);
   });
 
-  it('distinguishes "no work" from "backfill has not run"', async () => {
+  it('still counts a session that was never stamped', async () => {
+    // A row from before attribution existed, or one the backfill never reached.
+    // It used to be invisible, because the query filtered on localDate. Now its
+    // day is resolved from completedAt, so the time is not lost.
     const user = await createUser();
     const taskId = await createTask(user, { title: 'Task' });
     await logSession(user, taskId, 30);
-    // Simulate a pre-migration row: stamped columns cleared.
-    await prisma.session.updateMany({ where: { userId: user.id }, data: { localDate: null } });
+    await prisma.session.updateMany({
+      where: { userId: user.id },
+      data: { localDate: null, localHour: null, localWeekday: null },
+    });
 
     const report = await getReport(user);
-    expect(report.totals.sessions).toBe(0);
-    expect(report.unstampedSessions).toBe(1);
+    expect(report.totals.sessions).toBe(1);
+    expect(report.totals.seconds).toBe(30 * MIN);
+  });
+
+  it('files an evening session under the right local day, not the UTC one', async () => {
+    // The reported bug. A 19:53 session in UTC-5 is 00:53 UTC the next day; the
+    // backfill stamped that UTC day, so it dropped out of "today" and out of
+    // the month. Asking in the caller's zone must place it correctly.
+    const user = await createUser();
+    const taskId = await createTask(user, { title: 'Evening work' });
+    await logSession(user, taskId, 27);
+
+    const s = await prisma.session.findFirstOrThrow({ where: { userId: user.id } });
+    const evening = new Date('2026-08-31T00:53:00Z');
+    await prisma.session.update({
+      where: { id: s.id },
+      // As the backfill would have left it: the UTC day, flagged approximate.
+      data: { completedAt: evening, localDate: '2026-08-31', localHour: 0, localDateApprox: true },
+    });
+
+    const res = await authed(user)
+      .get('/time-report?from=2026-08-30&to=2026-08-30&tz=America%2FBogota');
+    expect(res.status).toBe(200);
+    expect(res.body.data.totals.seconds).toBe(27 * MIN);
+    expect(res.body.data.patterns.byHour[19]).toBe(27 * MIN);
   });
 
   it('rejects an inverted range', async () => {

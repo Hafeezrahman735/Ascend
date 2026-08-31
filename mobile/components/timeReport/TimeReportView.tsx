@@ -215,16 +215,10 @@ function ReportBody({
   const noun = PERIOD_NOUN[period];
   const { totals, intent, previous } = report;
 
-  // Nothing logged. Two very different reasons, and only one is the user's.
+  // Nothing logged. There used to be a second branch here for "the backfill
+  // has not run yet", which can no longer happen: a session with no stamp is
+  // resolved from its own timestamp, so it is never invisible.
   if (totals.sessions === 0) {
-    if (report.unstampedSessions > 0) {
-      return (
-        <Notice
-          title="Your history is still being prepared"
-          body={`${report.unstampedSessions} earlier sessions have not been filed into this report yet. They are not lost — they just cannot be placed on a calendar until the migration runs.`}
-        />
-      );
-    }
     return (
       <Notice
         title={`No focus time logged this ${noun}.`}
@@ -384,7 +378,8 @@ function ReportBody({
       {report.approxShare > 0.05 && (
         <Text style={{ color: Colors.subtext, fontSize: 11, lineHeight: 16, marginTop: Space.sm }}>
           {pct(report.approxShare)} of this time was recorded before Ascend stored your
-          timezone, so its hour is approximate.
+          timezone. Its day and hour are worked out from your current one, which is
+          right unless you have moved since.
         </Text>
       )}
 

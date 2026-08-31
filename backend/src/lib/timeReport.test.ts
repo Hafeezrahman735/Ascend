@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { computeTimeReport, type ReportSession, type ReportGoal } from './timeReport';
+import { daysBetweenKeys, shiftDateKey } from './localParts';
 
 const MIN = 60;
 
 function session(over: Partial<ReportSession> = {}): ReportSession {
   return {
+    completedAt: new Date('2026-08-10T13:00:00Z'),
     durationSeconds: 25 * MIN,
     taskId: 'task_1',
     taskGoalId: null,
@@ -22,21 +24,31 @@ function session(over: Partial<ReportSession> = {}): ReportSession {
   };
 }
 
+/** Same-length window ending the day before `from`, as the route computes it. */
+function previousWindow(from: string, to: string) {
+  const days = daysBetweenKeys(from, to) + 1;
+  const previousTo = shiftDateKey(from, -1);
+  return { previousFrom: shiftDateKey(previousTo, -(days - 1)), previousTo };
+}
+
 function report(over: {
   sessions?: ReportSession[];
-  previousSessions?: ReportSession[];
   goals?: ReportGoal[];
   from?: string;
   to?: string;
   today?: string;
+  timeZone?: string;
 } = {}) {
+  const from = over.from ?? '2026-08-01';
+  const to = over.to ?? '2026-08-31';
   return computeTimeReport({
     sessions: over.sessions ?? [],
-    previousSessions: over.previousSessions ?? [],
-    from: over.from ?? '2026-08-01',
-    to: over.to ?? '2026-08-31',
+    from,
+    to,
+    ...previousWindow(from, to),
     goals: over.goals ?? [],
     today: over.today ?? '2026-08-15',
+    timeZone: over.timeZone ?? 'UTC',
   });
 }
 
@@ -229,12 +241,17 @@ describe('tags', () => {
   });
 
   it('carries the previous window for direction of travel', () => {
+    // One array covering both windows; the split is by resolved local day.
     const r = report({
-      sessions: [session({ primaryTag: 'Physics', durationSeconds: 30 * MIN })],
-      previousSessions: [session({ primaryTag: 'Physics', durationSeconds: 90 * MIN })],
+      sessions: [
+        session({ primaryTag: 'Physics', durationSeconds: 30 * MIN, localDate: '2026-08-10' }),
+        session({ primaryTag: 'Physics', durationSeconds: 90 * MIN, localDate: '2026-07-15' }),
+      ],
     });
+    expect(r.totals.seconds).toBe(30 * MIN);
     expect(r.tags[0].previousSeconds).toBe(90 * MIN);
     expect(r.previous.seconds).toBe(90 * MIN);
+    expect(r.previous.sessions).toBe(1);
   });
 });
 
@@ -300,5 +317,96 @@ describe('approximate history', () => {
 
   it('is zero, not NaN, on an empty window', () => {
     expect(report().approxShare).toBe(0);
+  });
+});
+
+describe('which local day a session is filed under', () => {
+  it('re-resolves an approximate stamp that landed on the wrong day', () => {
+    // The reported bug, exactly. A 19:53 session in UTC-5 is 00:53 UTC the NEXT
+    // day. The backfill had no timezone to work from and stamped the UTC day,
+    // so the session filed under tomorrow — vanishing from "today" and, at a
+    // month boundary, from the month as well.
+    const s = session({
+      completedAt: new Date('2026-08-31T00:53:00Z'),
+      localDate: '2026-08-31',
+      localHour: 0,
+      localDateApprox: true,
+      durationSeconds: 27 * MIN,
+      primaryTag: null,
+    });
+
+    // Bogota is UTC-5 all year, so there is no DST ambiguity in the fixture.
+    // A month ending on the 30th must still contain it.
+    const r = report({
+      sessions: [s], from: '2026-08-01', to: '2026-08-30',
+      today: '2026-08-30', timeZone: 'America/Bogota',
+    });
+    expect(r.totals.seconds).toBe(27 * MIN);
+    expect(r.patterns.byHour[19]).toBe(27 * MIN);
+
+    // And a single day — the 30th — must contain it too.
+    const day = report({
+      sessions: [s], from: '2026-08-30', to: '2026-08-30',
+      today: '2026-08-30', timeZone: 'America/Bogota',
+    });
+    expect(day.totals.seconds).toBe(27 * MIN);
+
+    // The stored stamp said the 31st. A window that trusted it would have
+    // counted this session twice over: once here and once tomorrow.
+    const tomorrow = report({
+      sessions: [s], from: '2026-08-31', to: '2026-08-31',
+      today: '2026-08-31', timeZone: 'America/Bogota',
+    });
+    expect(tomorrow.totals.seconds).toBe(0);
+  });
+
+  it('keeps an EXACT stamp even when the caller is now in another zone', () => {
+    // The stamp is what was true where the user was standing. Someone who flew
+    // to Tokyo has not retroactively worked at a different local hour.
+    const r = report({
+      sessions: [session({
+        completedAt: new Date('2026-08-10T13:00:00Z'),
+        localDate: '2026-08-10', localHour: 9, localWeekday: 1,
+        localDateApprox: false, durationSeconds: 30 * MIN,
+      })],
+      timeZone: 'Asia/Tokyo',
+    });
+    expect(r.patterns.byHour[9]).toBe(30 * MIN);
+    expect(r.patterns.byHour[22]).toBe(0);
+  });
+
+  it('resolves a row that has no stamp at all', () => {
+    const r = report({
+      sessions: [session({
+        completedAt: new Date('2026-08-10T13:00:00Z'),
+        localDate: null, localHour: null, localWeekday: null,
+        localDateApprox: false, durationSeconds: 30 * MIN,
+      })],
+      timeZone: 'UTC',
+    });
+    expect(r.totals.seconds).toBe(30 * MIN);
+    expect(r.patterns.byHour[13]).toBe(30 * MIN);
+  });
+
+  it('ignores sessions the widened query pulled in from outside both windows', () => {
+    const r = report({
+      sessions: [
+        session({ localDate: '2026-08-10', durationSeconds: 30 * MIN }),
+        session({ localDate: '2026-06-01', durationSeconds: 99 * MIN }),
+      ],
+    });
+    expect(r.totals.seconds).toBe(30 * MIN);
+    expect(r.previous.seconds).toBe(0);
+  });
+
+  it('reports the share of time whose day had to be recomputed', () => {
+    const r = report({
+      sessions: [
+        session({ localDateApprox: true, durationSeconds: 30 * MIN,
+                  completedAt: new Date('2026-08-10T13:00:00Z') }),
+        session({ localDateApprox: false, durationSeconds: 90 * MIN }),
+      ],
+    });
+    expect(r.approxShare).toBeCloseTo(0.25, 5);
   });
 });

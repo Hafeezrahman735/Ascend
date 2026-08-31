@@ -1,4 +1,4 @@
-import { daysBetweenKeys, hourLabel } from './localParts';
+import { daysBetweenKeys, hourLabel, makeFormatter, partsOf, type LocalParts } from './localParts';
 
 /**
  * "Where did my time go, and was that where I wanted it to go?"
@@ -9,17 +9,36 @@ import { daysBetweenKeys, hourLabel } from './localParts';
  * deadline and the tasks the user chose to attach to it — so `intent.goalLinkedShare`
  * answers question two without asking the user for anything new.
  *
+ * ─── Which local day a session belongs to ───────────────────────────────────
+ *
+ * Two kinds of session reach this function and they cannot be trusted equally:
+ *
+ *   EXACT      — stamped by the client, which knew its own timezone. This is
+ *                what was true where the user was standing. It always wins.
+ *   APPROXIMATE — backfilled. The user's timezone at the time was never
+ *                recorded, so the day and hour were derived from UTC.
+ *
+ * The approximate ones are not slightly off, they are off by a whole DAY for
+ * any evening session west of Greenwich. A 19:53 session in UTC-5 is 00:53 UTC
+ * the next day, so it filed under tomorrow — dropping out of "today" entirely
+ * and, at a month boundary, out of the month as well. That is exactly the bug
+ * this resolution exists to fix: an approximate stamp is discarded and the day
+ * is recomputed from `completedAt` in the caller's CURRENT timezone.
+ *
+ * Recomputing is right for anyone who has not moved, which is nearly everyone,
+ * and it is strictly better than a UTC guess for everyone else. It also means
+ * history became correct the moment this shipped, with no second backfill —
+ * and no backfill could have been correct anyway, because the information it
+ * would have needed was never recorded.
+ *
  * ─── Why this aggregates in JS rather than in Postgres ──────────────────────
  *
  * Every field here could be a `groupBy`, but it would be six or seven round
  * trips that still could not do the tag-array involvement or the
- * previous-period comparison in one pass. A personal productivity app has
- * bounded history — a heavy user at twenty sessions a day produces ~1800 rows
- * a quarter — so one indexed read on (userId, localDate) and a single pass in
- * memory is both simpler and faster. It also makes this a pure function, which
- * is what let `taskAnalytics.ts` catch real bugs before they shipped.
- *
- * The route caps how many rows it will read; see `MAX_REPORT_SESSIONS` there.
+ * previous-period comparison in one pass — and none of them could do the
+ * resolution above, which is per-row and timezone-dependent. A personal
+ * productivity app has bounded history, so one indexed read and a single pass
+ * in memory is simpler, faster, and testable without a database.
  */
 
 /** A goal with a deadline this close is due, for the purpose of "starved". */
@@ -35,6 +54,8 @@ const URGENT_PRIORITIES = new Set(['high', 'urgent']);
 const TOP_TASKS = 10;
 
 export interface ReportSession {
+  /** The instant. Authoritative — everything else about time is derived. */
+  completedAt: Date;
   durationSeconds: number;
   taskId: string | null;
   taskGoalId: string | null;
@@ -44,9 +65,11 @@ export interface ReportSession {
   tags: string[];
   priority: string | null;
   wasRecurring: boolean;
-  localDate: string;
-  localHour: number;
-  localWeekday: number;
+  /** Null on a row written before attribution existed. */
+  localDate: string | null;
+  localHour: number | null;
+  localWeekday: number | null;
+  /** True when the day/hour were guessed from UTC rather than a real zone. */
   localDateApprox: boolean;
 }
 
@@ -108,7 +131,11 @@ export interface TimeReport {
   tags: { tag: string; seconds: number; sessions: number; share: number; previousSeconds: number }[];
   /** Time on sessions with no task attached. Free-form timer use, not a bug. */
   unattributedSeconds: number;
-  /** Share of returned time whose hour had to be inferred. The UI footnotes it. */
+  /**
+   * Share of returned time whose local day had to be recomputed because its
+   * stored stamp was a UTC guess. Not an error — the recomputed value is the
+   * better one — but it is approximate for anyone who has changed timezone.
+   */
   approxShare: number;
 }
 
@@ -133,17 +160,39 @@ function sumSeconds(map: Map<string, Bucket>): number {
   return total;
 }
 
+/**
+ * The local day, hour and weekday to file a session under.
+ *
+ * See the header: an exact stamp is kept, an approximate one is thrown away
+ * and recomputed from the instant in the caller's zone.
+ */
+function effectiveLocal(s: ReportSession, fmt: Intl.DateTimeFormat): LocalParts {
+  if (!s.localDateApprox && s.localDate !== null && s.localHour !== null && s.localWeekday !== null) {
+    return { dateKey: s.localDate, hour: s.localHour, weekday: s.localWeekday };
+  }
+  return partsOf(fmt, s.completedAt);
+}
+
 export function computeTimeReport(input: {
+  /**
+   * Every session that could fall in EITHER window once resolved. The caller
+   * widens its query by a day at each end, because a session's resolved day
+   * can differ from its UTC day.
+   */
   sessions: ReportSession[];
-  /** Same-length window immediately before `from`, for direction of travel. */
-  previousSessions: ReportSession[];
   from: string;
   to: string;
+  /** Same-length window immediately before `from`. */
+  previousFrom: string;
+  previousTo: string;
   goals: ReportGoal[];
   /** Today, 'YYYY-MM-DD', for deadline maths. */
   today: string;
+  /** The caller's IANA zone, used to re-resolve approximate rows. */
+  timeZone: string;
 }): TimeReport {
-  const { sessions, previousSessions, from, to, goals, today } = input;
+  const { sessions, from, to, previousFrom, previousTo, goals, today } = input;
+  const fmt = makeFormatter(input.timeZone);
 
   const bySeconds = (a: { seconds: number }, b: { seconds: number }) => b.seconds - a.seconds;
 
@@ -163,19 +212,48 @@ export function computeTimeReport(input: {
   const taskTitles = new Map<string, { title: string; wasRecurring: boolean; goalTitle: string | null }>();
   const tagBuckets = new Map<string, Bucket>();
 
+  const prevGoalBuckets = new Map<string, Bucket>();
+  const prevTagBuckets = new Map<string, Bucket>();
+  let previousSeconds = 0;
+  let previousCount = 0;
+  let currentCount = 0;
+
+  // The goal title frozen on a session, for goals that no longer exist.
+  const frozenGoalTitles = new Map<string, string>();
+
   for (const s of sessions) {
+    const { dateKey, hour, weekday } = effectiveLocal(s, fmt);
     const secs = s.durationSeconds;
+
+    // Partition by the RESOLVED day, not by the stored one. Anything outside
+    // both windows was pulled in only by the query's widening.
+    const inCurrent = dateKey >= from && dateKey <= to;
+    const inPrevious = !inCurrent && dateKey >= previousFrom && dateKey <= previousTo;
+
+    if (inPrevious) {
+      previousSeconds += secs;
+      previousCount += 1;
+      if (s.taskGoalId) addTo(prevGoalBuckets, s.taskGoalId, secs);
+      if (s.primaryTag) addTo(prevTagBuckets, s.primaryTag, secs);
+      continue;
+    }
+    if (!inCurrent) continue;
+
+    currentCount += 1;
     totalSeconds += secs;
-    activeDays.add(s.localDate);
-    byWeekday[s.localWeekday] = (byWeekday[s.localWeekday] ?? 0) + secs;
-    byHour[s.localHour] = (byHour[s.localHour] ?? 0) + secs;
+    activeDays.add(dateKey);
+    byWeekday[weekday] = (byWeekday[weekday] ?? 0) + secs;
+    byHour[hour] = (byHour[hour] ?? 0) + secs;
     if (s.localDateApprox) approxSeconds += secs;
 
     if (s.taskGoalId) {
       goalLinkedSeconds += secs;
       addTo(goalBuckets, s.taskGoalId, secs);
       const seen = goalLastWorked.get(s.taskGoalId);
-      if (!seen || s.localDate > seen) goalLastWorked.set(s.taskGoalId, s.localDate);
+      if (!seen || dateKey > seen) goalLastWorked.set(s.taskGoalId, dateKey);
+      if (s.goalTitleSnapshot && !frozenGoalTitles.has(s.taskGoalId)) {
+        frozenGoalTitles.set(s.taskGoalId, s.goalTitleSnapshot);
+      }
     }
 
     if (s.priority && URGENT_PRIORITIES.has(s.priority)) urgentSeconds += secs;
@@ -199,16 +277,6 @@ export function computeTimeReport(input: {
     // on the row for filtering, but counting a session once per tag here would
     // make the shares add to more than the time actually spent.
     if (s.primaryTag) addTo(tagBuckets, s.primaryTag, secs);
-  }
-
-  // ── Previous window, for direction of travel ──
-  const prevGoalBuckets = new Map<string, Bucket>();
-  const prevTagBuckets = new Map<string, Bucket>();
-  let previousSeconds = 0;
-  for (const s of previousSessions) {
-    previousSeconds += s.durationSeconds;
-    if (s.taskGoalId) addTo(prevGoalBuckets, s.taskGoalId, s.durationSeconds);
-    if (s.primaryTag) addTo(prevTagBuckets, s.primaryTag, s.durationSeconds);
   }
 
   // ── Goals ──
@@ -238,9 +306,7 @@ export function computeTimeReport(input: {
       goalId,
       // Prefer the live title; fall back to whatever the sessions froze, which
       // is all that survives once a goal is deleted.
-      title: meta?.title
-        ?? sessions.find((s) => s.taskGoalId === goalId)?.goalTitleSnapshot
-        ?? 'Deleted goal',
+      title: meta?.title ?? frozenGoalTitles.get(goalId) ?? 'Deleted goal',
       seconds: bucket.seconds,
       sessions: bucket.sessions,
       share,
@@ -308,11 +374,11 @@ export function computeTimeReport(input: {
     range: { from, to, days: daysBetweenKeys(from, to) + 1 },
     totals: {
       seconds: totalSeconds,
-      sessions: sessions.length,
+      sessions: currentCount,
       activeDays: activeDays.size,
-      avgSessionSeconds: sessions.length > 0 ? Math.round(totalSeconds / sessions.length) : 0,
+      avgSessionSeconds: currentCount > 0 ? Math.round(totalSeconds / currentCount) : 0,
     },
-    previous: { seconds: previousSeconds, sessions: previousSessions.length },
+    previous: { seconds: previousSeconds, sessions: previousCount },
     intent: {
       goalLinkedSeconds,
       unlinkedSeconds: totalSeconds - goalLinkedSeconds,
