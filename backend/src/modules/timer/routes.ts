@@ -486,6 +486,10 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
           taskId: true,
           taskLabel: true,
           clientSessionId: true,
+          // Frozen at write time. Sent so the client's local history can group
+          // by category without looking the task up in a list that excludes
+          // archived rows — which is how habit time became "Untagged".
+          primaryTag: true,
         },
       });
 

@@ -65,15 +65,45 @@ export function getDueChip(task: Task, c: ThemeColors): { label: string; bg: str
 }
 
 // ─── Time-per-category grouping ────────────────────────────────────────────────
+/**
+ * Focus seconds per category.
+ *
+ * The tag is resolved in three steps, in this order, and the order is the
+ * whole point:
+ *
+ *   1. `primaryTag` frozen onto the session by the server when it was saved.
+ *   2. The live task, for a session recorded locally seconds ago that has not
+ *      synced yet — its task cannot have been archived in the meantime.
+ *   3. "Untagged", which now genuinely means a session with no task.
+ *
+ * Step 1 exists because step 2 alone was wrong. `tasks` comes from GET /tasks,
+ * which filters `isArchived: false`, and spawn-recurring archives yesterday's
+ * habit instance every day — so a habit's whole history fell to "Untagged"
+ * overnight, and the Month and All views were dominated by a bucket that was
+ * really a bug.
+ *
+ * The task lookup is also a Map now rather than a `.find` inside the loop.
+ */
 export function buildCategoryMap(sessions: SessionRecord[], tasks: Task[]): Record<string, number> {
   const map: Record<string, number> = {};
+  const primaryTagByTaskId = new Map(tasks.map((t) => [t.id, t.tags?.[0]]));
   for (const s of sessions) {
     if (s.type !== 'focus') continue;
-    const task = tasks.find((t) => t.id === s.taskId);
-    const tag = task?.tags?.[0] ?? 'Untagged';
+    const live = s.taskId ? primaryTagByTaskId.get(s.taskId) : undefined;
+    const tag = s.primaryTag ?? live ?? 'Untagged';
     map[tag] = (map[tag] ?? 0) + s.durationSeconds;
   }
   return map;
+}
+
+/**
+ * A duration short enough to sit under a 40px-wide bar: "45m", "1.5h", "12h".
+ */
+export function compactDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0';
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  const hours = seconds / 3600;
+  return hours >= 10 ? `${Math.round(hours)}h` : `${hours.toFixed(1)}h`;
 }
 
 // How many not-scheduled-today recurring rows to show before collapsing behind

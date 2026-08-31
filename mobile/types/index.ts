@@ -393,6 +393,72 @@ export interface TaskAnalytics {
   lastSessionAt: string | null;
 }
 
+/**
+ * `GET /time-report?from=&to=&tz=` — the retrospective.
+ *
+ * Ordered the way the screen reads it: the answer, then goals, then tasks,
+ * then patterns, with tags last. A tag says what a thing was about; a goal
+ * says whether it mattered.
+ *
+ * Every field is aggregated from attribution frozen onto the session when it
+ * was saved, so an archived task or a renamed goal cannot change what a past
+ * window reports. See backend/src/lib/timeReport.ts.
+ */
+export type GoalStatus = 'fed' | 'starved' | 'idle';
+
+export interface TimeReportGoal {
+  goalId: string;
+  title: string;
+  seconds: number;
+  sessions: number;
+  share: number;
+  previousSeconds: number;
+  deadline: string | null;
+  daysLeft: number | null;
+  lastWorkedDate: string | null;
+  status: GoalStatus;
+}
+
+export interface TimeReport {
+  range: { from: string; to: string; days: number };
+  totals: { seconds: number; sessions: number; activeDays: number; avgSessionSeconds: number };
+  previous: { seconds: number; sessions: number };
+  /** "Was that where I actually wanted my time to go?" */
+  intent: {
+    goalLinkedSeconds: number;
+    unlinkedSeconds: number;
+    /** null, not 0, when nothing was logged — no share exists to report. */
+    goalLinkedShare: number | null;
+    urgentShare: number | null;
+  };
+  goals: TimeReportGoal[];
+  tasks: {
+    taskId: string | null;
+    title: string;
+    seconds: number;
+    sessions: number;
+    wasRecurring: boolean;
+    goalTitle: string | null;
+  }[];
+  patterns: {
+    byWeekday: number[];
+    byHour: number[];
+    peakHour: { hour: number; label: string } | null;
+    bestWeekday: number | null;
+  };
+  tags: { tag: string; seconds: number; sessions: number; share: number; previousSeconds: number }[];
+  /** Time on sessions with no task attached. Free-form timer use, not a bug. */
+  unattributedSeconds: number;
+  /** Share of time whose hour had to be inferred. Backfilled history. */
+  approxShare: number;
+  /**
+   * Sessions that predate frozen attribution and cannot be placed in a window.
+   * Only meaningful when the report is otherwise empty — it distinguishes
+   * "you did not work" from "the backfill has not run here yet".
+   */
+  unstampedSessions: number;
+}
+
 export interface FeedEvent {
   id: string;
   userId: string;

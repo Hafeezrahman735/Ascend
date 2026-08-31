@@ -10,6 +10,7 @@ import {
   formatEstimateDelta,
   formatLastWorked,
   formatConsistency,
+  compactDuration,
 } from './taskMetrics';
 import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
@@ -127,6 +128,58 @@ describe('formatPeakWindow', () => {
 describe('buildCategoryMap', () => {
   it('is empty when no sessions map to a task', () => {
     expect(buildCategoryMap([], [])).toEqual({});
+  });
+
+  it('uses the tag frozen on the session even when the task is gone', () => {
+    // The bug this fixes. `tasks` comes from GET /tasks, which excludes
+    // archived rows, and spawn-recurring archives yesterday's habit instance
+    // every day — so this session's task is simply absent from the list, and
+    // the old lookup fell through to "Untagged".
+    const sessions = [session({ taskId: 'archived_task', primaryTag: 'Physics', durationSeconds: 1500 })];
+    expect(buildCategoryMap(sessions, [])).toEqual({ Physics: 1500 });
+  });
+
+  it('falls back to the live task for a session not yet synced', () => {
+    // Written locally the moment a session ended, so it carries no frozen tag
+    // yet. Its task cannot have been archived in the seconds since.
+    const t = { ...task(), id: 'live', tags: ['Maths'] } as Task;
+    const sessions = [session({ taskId: 'live', durationSeconds: 600 })];
+    expect(buildCategoryMap(sessions, [t])).toEqual({ Maths: 600 });
+  });
+
+  it('prefers the frozen tag over the current one, so history does not move', () => {
+    const t = { ...task(), id: 'x', tags: ['Renamed'] } as Task;
+    const sessions = [session({ taskId: 'x', primaryTag: 'Original', durationSeconds: 300 })];
+    expect(buildCategoryMap(sessions, [t])).toEqual({ Original: 300 });
+  });
+
+  it('calls a session with no task Untagged, which now genuinely means that', () => {
+    const sessions = [session({ taskId: null, durationSeconds: 900 })];
+    expect(buildCategoryMap(sessions, [])).toEqual({ Untagged: 900 });
+  });
+
+  it('ignores breaks', () => {
+    const sessions = [session({ primaryTag: 'Physics', durationSeconds: 600, type: 'break' })];
+    expect(buildCategoryMap(sessions, [])).toEqual({});
+  });
+});
+
+describe('compactDuration', () => {
+  it('renders minutes below an hour', () => {
+    expect(compactDuration(45 * 60)).toBe('45m');
+  });
+
+  it('renders one decimal hour up to ten hours', () => {
+    expect(compactDuration(5400)).toBe('1.5h');
+  });
+
+  it('drops the decimal past ten hours, where the bar is too narrow for it', () => {
+    expect(compactDuration(12 * 3600)).toBe('12h');
+  });
+
+  it('renders nothing-at-all as 0 rather than NaN', () => {
+    expect(compactDuration(0)).toBe('0');
+    expect(compactDuration(Number.NaN)).toBe('0');
   });
 });
 

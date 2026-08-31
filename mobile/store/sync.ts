@@ -10,6 +10,15 @@ export interface SessionRecord {
   taskLabel: string | null;
   taskId: string | null;
   type: 'focus' | 'break';
+  /**
+   * The tag frozen onto the session by the server when it was saved.
+   *
+   * Absent on a record written locally the moment a session ends — that one
+   * still resolves through the live task list, which is correct, because a
+   * task cannot have been archived in the seconds since. It arrives on the
+   * next sync. See buildCategoryMap for the fallback chain.
+   */
+  primaryTag?: string | null;
 }
 
 interface DailyAggregate {
@@ -125,6 +134,7 @@ export async function mergeWithServerSessions(
     taskId: string | null;
     taskLabel: string | null;
     clientSessionId?: string | null;
+    primaryTag?: string | null;
   }[],
 ): Promise<void> {
   try {
@@ -137,6 +147,7 @@ export async function mergeWithServerSessions(
       taskLabel: s.taskLabel || null,
       taskId: s.taskId || null,
       type: 'focus',
+      primaryTag: s.primaryTag ?? null,
     }));
 
     const serverClientIds = new Set(

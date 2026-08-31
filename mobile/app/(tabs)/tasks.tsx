@@ -27,6 +27,8 @@ import FormSheet from '../../components/FormSheet';
 import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
 import AppPressable from '../../components/AppPressable';
 import GoalStatsModal from '../../components/GoalStatsModal';
+import TimeReportView from '../../components/timeReport/TimeReportView';
+import type { ReportPeriod } from '../../hooks/useTimeReport';
 import { lastSessionOnGoal, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
 import { useTimerStore } from '../../stores/timerStore';
@@ -45,6 +47,7 @@ import {
   formatDuration, getDueChip, buildCategoryMap, isYesterdayLocal,
   startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
   diffCalendarDaysTasks, getPeakHour, formatPeakWindow, getCompletionRate,
+  compactDuration,
   formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
 
@@ -1081,17 +1084,25 @@ function GroupHeader({ dotColor, label, count }: { dotColor: string; label: stri
 }
 
 // ─── BarColumn ────────────────────────────────────────────────────────────────
-function BarColumn({ dayLabel, sessions, maxSessions, isToday, isFuture }: { dayLabel: string; sessions: number; maxSessions: number; isToday: boolean; isFuture: boolean }) {
+/**
+ * One day of the week strip, scaled by TIME.
+ *
+ * This used to plot session COUNT, so a ninety-minute session and a
+ * five-minute one drew the same bar — the same defect corrected in
+ * getPeakHour, where the client ranked peak focus by count while the server
+ * ranked it by seconds.
+ */
+function BarColumn({ dayLabel, seconds, maxSeconds, isToday, isFuture }: { dayLabel: string; seconds: number; maxSeconds: number; isToday: boolean; isFuture: boolean }) {
   const Colors = useTheme();
   const BAR_MAX_H = 56;
-  const barHeight = isFuture ? 3 : Math.max(sessions > 0 ? (sessions / maxSessions) * BAR_MAX_H : 3, 3);
+  const barHeight = isFuture ? 3 : Math.max(seconds > 0 ? (seconds / maxSeconds) * BAR_MAX_H : 3, 3);
   const barColor = isToday ? Colors.accent : Colors.primary;
-  const countLabel = isFuture ? '—' : isToday && sessions > 0 ? `${sessions}↗` : String(sessions);
+  const countLabel = isFuture ? '—' : compactDuration(seconds);
   const labelColor = isToday ? Colors.accent : Colors.subtext;
   return (
     <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 2 }}>
       <View style={{ height: BAR_MAX_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' }}>
-        <View style={{ width: '70%', height: barHeight, borderRadius: 3, backgroundColor: isFuture ? Colors.inactive : barColor, opacity: isFuture ? 0.15 : sessions === 0 && !isToday ? 0.25 : 1 }} />
+        <View style={{ width: '70%', height: barHeight, borderRadius: 3, backgroundColor: isFuture ? Colors.inactive : barColor, opacity: isFuture ? 0.15 : seconds === 0 && !isToday ? 0.25 : 1 }} />
       </View>
       <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 5, color: labelColor }}>{countLabel}</Text>
       <Text style={{ fontSize: 10, fontWeight: '500', marginTop: 2, color: labelColor }}>{dayLabel}</Text>
@@ -1802,6 +1813,7 @@ export default function TasksScreen() {
   const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>(null);
   const [trackerPeriod, setTrackerPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('month');
   const [taskFilter, setTaskFilter] = useState<'all' | 'active' | 'pending' | 'done'>('all');
   const [showAllDormant, setShowAllDormant] = useState(false);
   const [statsTask, setStatsTask] = useState<Task | null>(null);
@@ -1884,13 +1896,15 @@ export default function TasksScreen() {
   const focusSecondsToday = useMemo(() => todaySessions.reduce((sum, s) => sum + s.durationSeconds, 0), [todaySessions]);
   const sessionsLeft = Math.max(0, dailySessionTarget - sessionsToday);
 
+  // Seconds, not session count: a 90-minute session and a 5-minute one are not
+  // the same amount of work and must not draw the same bar.
   const thisWeekByDay = useMemo(() => {
-    const counts = [0,0,0,0,0,0,0];
-    for (const s of sessionHistory) { if (s.type !== 'focus') continue; const d = new Date(s.completedAt); if (d >= monday && d < nextMonday) { const dow = d.getDay(); counts[dow === 0 ? 6 : dow-1]++; } }
-    return counts;
+    const seconds = [0,0,0,0,0,0,0];
+    for (const s of sessionHistory) { if (s.type !== 'focus') continue; const d = new Date(s.completedAt); if (d >= monday && d < nextMonday) { const dow = d.getDay(); seconds[dow === 0 ? 6 : dow-1] += s.durationSeconds; } }
+    return seconds;
   }, [sessionHistory, monday, nextMonday]);
 
-  const maxDaySessions = useMemo(() => Math.max(...thisWeekByDay, 1), [thisWeekByDay]);
+  const maxDaySeconds = useMemo(() => Math.max(...thisWeekByDay, 1), [thisWeekByDay]);
 
 
   // ── Category data ──
@@ -2135,7 +2149,7 @@ export default function TasksScreen() {
           <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
             <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
             <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
-              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} sessions={thisWeekByDay[i]} maxSessions={maxDaySessions} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
+              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} seconds={thisWeekByDay[i]} maxSeconds={maxDaySeconds} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
             </View>
           </View>
           {weeklyCompletionRate !== null && (
@@ -2168,77 +2182,24 @@ export default function TasksScreen() {
   }
 
   if (activeView === 'time-tracker') {
-    const periodMap = buildCategoryMap(periodSessions, tasks);
-    const periodTotal = Object.values(periodMap).reduce((a,b) => a+b, 0);
-    const periodSorted = Object.entries(periodMap).sort((a,b) => b[1]-a[1]);
-    const topShare = periodTotal > 0 && periodSorted.length > 1 ? periodSorted[0][1] / periodTotal : 0;
-    const allTimeSeconds = allFocusSessions.reduce((s, r) => s + r.durationSeconds, 0);
-    const PERIODS: { key: 'today'|'week'|'month'|'all'; label: string }[] = [{ key: 'today', label: 'Today' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' }, { key: 'all', label: 'All' }];
+    // Rebuilt as a server-aggregated retrospective. It reads attribution frozen
+    // onto each session at write time, so archived tasks and renamed goals no
+    // longer change what a past window reports — see components/timeReport.
+    //
+    // Its period is separate from `trackerPeriod`, which still drives the
+    // summary card on the tab behind it. Sharing one would mean a period the
+    // summary card cannot display (Quarter) leaving its switcher with nothing
+    // selected.
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
-          <TouchableOpacity onPress={goBack} style={{ marginRight: 12 }}><Ionicons name="chevron-back" size={24} color={Colors.text} /></TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>Time Tracker</Text>
-            <Text style={{ color: Colors.subtext, fontSize: 12 }}>Your study history</Text>
-          </View>
-        </View>
-        <View style={{ flexDirection: 'row', marginHorizontal: 20, marginBottom: 16, backgroundColor: Colors.raised, borderRadius: 12, padding: 4 }}>
-          {PERIODS.map(({ key, label }) => (
-            <TouchableOpacity key={key} onPress={() => setTrackerPeriod(key)} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center', backgroundColor: trackerPeriod === key ? Colors.primary : 'transparent' }}>
-              <Text style={{ color: trackerPeriod === key ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}>
-          <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', marginBottom: 16 }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: Colors.textBright, fontSize: 32, fontWeight: '800' }}>{formatDuration(periodTotal)}</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 12 }}>focus time</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>{periodSessions.length}</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 12 }}>sessions</Text>
-              <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginTop: 4 }}>{periodSorted.length}</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 12 }}>categories</Text>
-            </View>
-          </View>
-          {periodSorted.length === 0 ? (
-            <Text style={{ color: Colors.subtext, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Complete your first focus session to see your study history</Text>
-          ) : (<>
-            {topShare > 0.70 && <View style={{ backgroundColor: AMBER + '15', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'flex-start' }}><Text style={{ fontSize: 16, marginRight: 8 }}>⚠️</Text><Text style={{ color: AMBER, fontSize: 12, flex: 1 }}>{periodSorted[0][0]} took {Math.round(topShare * 100)}% of time — {periodSorted.slice(1).map(([t]) => t).join(', ')} may need attention.</Text></View>}
-            {periodSorted.map(([tag, secs]) => <CategoryBar key={tag} tag={tag} seconds={secs} totalSeconds={periodTotal} onLongPressTag={setOverrideTag} />)}
-          </>)}
-          <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginTop: 8, marginBottom: 14 }}>This Week</Text>
-          <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 20 }]}>
-            {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} sessions={thisWeekByDay[i]} maxSessions={maxDaySessions} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
-          </View>
-          <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>Insights</Text>
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
-            <View style={[styles.card, { flex: 1 }]}>
-              <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '600', letterSpacing: 0.5, marginBottom: 6 }}>PEAK FOCUS WINDOW</Text>
-              <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '800', marginBottom: 4 }}>{peakHour !== null ? formatPeakWindow(peakHour) : '—'}</Text>
-              <Text style={{ color: Colors.subtext, fontSize: 11 }}>{peakHour !== null ? 'most sessions in this window' : 'need 5+ sessions'}</Text>
-            </View>
-            <View style={[styles.card, { flex: 1 }]}>
-              <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '600', letterSpacing: 0.5, marginBottom: 6 }}>COMPLETION RATE</Text>
-              <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '800', marginBottom: 4 }}>
-                {completionRate !== null ? `${completionRate}%` : '—'}
-              </Text>
-              <Text style={{ color: completionRate === null ? Colors.subtext : completionRate >= 80 ? Colors.accent : completionRate < 50 ? AMBER : Colors.subtext, fontSize: 11 }}>
-                {completionRate === null ? 'no tasks planned' : completionRate >= 80 ? 'Great planning 🎯' : completionRate < 50 ? 'Try planning fewer tasks' : 'tasks done / planned'}
-              </Text>
-            </View>
-          </View>
-          <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>All-time</Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-            <TodayPill value={`${Math.round(allTimeSeconds / 3600)}h`} label="Focus hours" />
-            <TodayPill value={String(allFocusSessions.length)} label="Sessions" />
-            <TodayPill value={String(Object.keys(buildCategoryMap(allFocusSessions, tasks)).length)} label="Categories" />
-          </View>
-        </ScrollView>
+      <>
+        <TimeReportView
+          period={reportPeriod}
+          onPeriodChange={setReportPeriod}
+          onBack={goBack}
+          onLongPressTag={setOverrideTag}
+        />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
-      </SafeAreaView>
+      </>
     );
   }
 
@@ -2479,7 +2440,7 @@ export default function TasksScreen() {
               <Text style={{ color: Colors.subtext, fontSize: 12, textAlign: 'center', paddingVertical: 8 }}>No sessions in this period</Text>
             ) : periodCategoriesSorted.slice(0, 3).map(([tag, secs]) => <CategoryBar key={tag} tag={tag} seconds={secs} totalSeconds={periodCategoryTotal} compact onLongPressTag={setOverrideTag} />)}
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 12 }}>
-              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} sessions={thisWeekByDay[i]} maxSessions={maxDaySessions} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
+              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} seconds={thisWeekByDay[i]} maxSeconds={maxDaySeconds} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
             </View>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
               <View style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 12, padding: 12 }}>
