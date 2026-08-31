@@ -31,7 +31,8 @@ async function main(): Promise<void> {
   console.log('\n─── Summary ───');
   console.log(`  scanned:       ${result.scanned}`);
   console.log(`  attributed:    ${result.attributed}  (task row still exists)`);
-  console.log(`  unattributed:  ${result.unattributed}  (task gone — unrecoverable)`);
+  console.log(`  no task:       ${result.noTask}  (free-form timer runs — nothing to recover)`);
+  console.log(`  task missing:  ${result.taskMissing}  (task row gone — unrecoverable)`);
   console.log(`  with a goal:   ${result.withGoal}`);
   console.log(`  recurring:     ${result.recurring}`);
   console.log("\n  Every backfilled row is flagged localDateApprox: the user's");

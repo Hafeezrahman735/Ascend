@@ -49,8 +49,15 @@ export interface BackfillTally {
   scanned: number;
   /** Task row still existed, so tags/goal/title were recovered. */
   attributed: number;
-  /** Task row is gone. Unrecoverable, left null. */
-  unattributed: number;
+  /**
+   * Never had a task — a free-form timer run. Nothing was lost and nothing is
+   * recoverable, because there was never anything to recover. Counted apart
+   * from `taskMissing` because lumping the two together reports a healthy
+   * database as a damaged one.
+   */
+  noTask: number;
+  /** Pointed at a task row that no longer exists. Genuinely unrecoverable. */
+  taskMissing: number;
   withGoal: number;
   recurring: number;
 }
@@ -61,7 +68,7 @@ export async function backfillSessionAttribution(
 ): Promise<BackfillTally & { total: number }> {
   const dryRun = opts.dryRun ?? false;
   const tally: BackfillTally = {
-    scanned: 0, attributed: 0, unattributed: 0, withGoal: 0, recurring: 0,
+    scanned: 0, attributed: 0, noTask: 0, taskMissing: 0, withGoal: 0, recurring: 0,
   };
 
   const total = await prisma.session.count({ where: { localDate: null } });
@@ -127,7 +134,9 @@ export async function backfillSessionAttribution(
       });
 
       tally.scanned++;
-      if (task) tally.attributed++; else tally.unattributed++;
+      if (task) tally.attributed++;
+      else if (session.taskId) tally.taskMissing++;
+      else tally.noTask++;
       if (stamp.taskGoalId) tally.withGoal++;
       if (stamp.wasRecurring) tally.recurring++;
 

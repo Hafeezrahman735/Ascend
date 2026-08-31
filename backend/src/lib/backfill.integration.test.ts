@@ -61,7 +61,7 @@ describe('backfillSessionAttribution', () => {
     const result = await backfillSessionAttribution(prisma);
 
     expect(result.attributed).toBe(1);
-    expect(result.unattributed).toBe(0);
+    expect(result.taskMissing).toBe(0);
 
     const session = await prisma.session.findUniqueOrThrow({ where: { id: sessionId } });
     expect(session.primaryTag).toBe('Physics');
@@ -96,7 +96,10 @@ describe('backfillSessionAttribution', () => {
     const result = await backfillSessionAttribution(prisma);
 
     expect(result.attributed).toBe(0);
-    expect(result.unattributed).toBe(1);
+    // Never had a task, so nothing was lost — this must NOT be reported as a
+    // task that went missing, which would read as data loss.
+    expect(result.noTask).toBe(1);
+    expect(result.taskMissing).toBe(0);
 
     const session = await prisma.session.findUniqueOrThrow({ where: { id: sessionId } });
     expect(session.primaryTag).toBeNull();
