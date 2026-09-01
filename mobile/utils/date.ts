@@ -127,3 +127,28 @@ export function formatDeadlineLabel(target: string | null | undefined): string |
   if (days === 0) return 'Due today';
   return `${days}d left`;
 }
+
+/**
+ * The floor for a date picker that means "today or later".
+ *
+ * iOS throws — a native crash, not a warning — when the value a picker opens on
+ * sits in a month outside its own bounds:
+ *
+ *   Unable to set a visible month that is before the minimum or after the
+ *   maximum date.
+ *
+ * `new Date()` is the wrong floor for this. It is *this instant*, so a date
+ * held as local midnight is already beneath it before the user touches
+ * anything, and an item whose date has passed — an overdue task, a goal past
+ * its deadline — sits whole months beneath it. That second case is the one that
+ * crashed: opening the editor on an overdue item was enough.
+ *
+ * So the floor is the start of today, which is what "today or later" actually
+ * means, and it drops back to `value` whenever `value` is older. An existing
+ * date therefore stays displayable no matter how stale it is; only choosing a
+ * date fresh stays bounded to today.
+ */
+export function pickerMinimumDate(value: Date, now: Date = new Date()): Date {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return value < startOfToday ? value : startOfToday;
+}

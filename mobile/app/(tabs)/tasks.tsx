@@ -37,7 +37,10 @@ import { useGamificationStore } from '../../stores/gamificationStore';
 import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
 import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
-import { daysUntilLocalDate, formatDeadlineLabel, getLocalDateString } from '../../utils/date';
+import {
+  daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
+  parseLocalDate, pickerMinimumDate,
+} from '../../utils/date';
 import {
   useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
   getTagColor, getTagIcon, type TagColorKey,
@@ -438,7 +441,14 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   };
 
   const selectedGoal = goals.find((g) => g.id === taskGoalId);
-  const datePickerValue = dueDate ? new Date(dueDate + 'T00:00:00') : new Date();
+  // Memoised because both feed a native picker: a fresh Date on every render
+  // is a changed prop every render, and updating a UIDatePicker's bounds is
+  // exactly where iOS validates them.
+  const datePickerValue = useMemo(
+    () => (dueDate ? parseLocalDate(dueDate) : new Date()),
+    [dueDate],
+  );
+  const datePickerMinimum = useMemo(() => pickerMinimumDate(datePickerValue), [datePickerValue]);
   const handleDateChange = (_event: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === 'android') setShowDatePicker(false);
     if (date) setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
@@ -745,7 +755,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
             mode="date"
             display={Platform.OS === 'ios' ? 'inline' : 'default'}
             onChange={handleDateChange}
-            minimumDate={new Date()}
+            minimumDate={datePickerMinimum}
             themeVariant={isDark ? 'dark' : 'light'}
             accentColor={Colors.primary}
           />
@@ -822,7 +832,11 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
       deadline: deadline || null,
     });
   };
-  const datePickerValue = deadline ? new Date(deadline + 'T00:00:00') : new Date();
+  const datePickerValue = useMemo(
+    () => (deadline ? parseLocalDate(deadline) : new Date()),
+    [deadline],
+  );
+  const datePickerMinimum = useMemo(() => pickerMinimumDate(datePickerValue), [datePickerValue]);
   const handleDateChange = (_e: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === 'android') setShowDatePicker(false);
     if (date) setDeadline(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
@@ -883,7 +897,7 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
                   <Text style={{ color: Colors.subtext, fontSize: 14 }}>Set deadline</Text>
                 </TouchableOpacity>
               )}
-              {showDatePicker && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={new Date()} />}
+              {showDatePicker && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={datePickerMinimum} />}
 
               {/* Editing only. Goals previously had no delete affordance anywhere
                   in the app — they could be created but never removed. */}

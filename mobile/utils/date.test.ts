@@ -10,6 +10,7 @@ import {
   addDays,
   addMonths,
   eachDayOfRange,
+  pickerMinimumDate,
   parseLocalDate,
   isSameDay,
 } from './date';
@@ -154,5 +155,39 @@ describe('isSameDay', () => {
 
   it('separates adjacent days', () => {
     expect(isSameDay(new Date(2026, 7, 3, 23, 59), new Date(2026, 7, 4, 0, 1))).toBe(false);
+  });
+});
+
+describe('pickerMinimumDate', () => {
+  // 15:30 on 3 Aug 2026. The time of day matters: the old floor was this
+  // instant, which put local midnight of the very same day beneath it.
+  const now = new Date(2026, 7, 3, 15, 30);
+
+  it('floors to the start of today, not to this instant', () => {
+    expect(pickerMinimumDate(new Date(2026, 7, 10), now)).toEqual(new Date(2026, 7, 3));
+  });
+
+  it('admits a value at local midnight today', () => {
+    const today = parseLocalDate('2026-08-03');
+    expect(pickerMinimumDate(today, now).getTime()).toBeLessThanOrEqual(today.getTime());
+  });
+
+  // The crash: an overdue item opens its picker on a date months below the
+  // floor, and iOS throws rather than clamping.
+  it('drops back to a value in an earlier month', () => {
+    const overdue = parseLocalDate('2026-05-19');
+    expect(pickerMinimumDate(overdue, now)).toEqual(overdue);
+  });
+
+  it('drops back to a value one day old', () => {
+    const yesterday = parseLocalDate('2026-08-02');
+    expect(pickerMinimumDate(yesterday, now)).toEqual(yesterday);
+  });
+
+  it('never returns a floor above the value it was given', () => {
+    for (const iso of ['2025-01-01', '2026-08-02', '2026-08-03', '2026-08-04', '2027-12-31']) {
+      const value = parseLocalDate(iso);
+      expect(pickerMinimumDate(value, now).getTime()).toBeLessThanOrEqual(value.getTime());
+    }
   });
 });
