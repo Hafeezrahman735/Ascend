@@ -17,20 +17,37 @@
 //   JetBrains Mono every number that sits in a column or ticks — replaces the
 //                  generic 'monospace', which rendered as Courier on iOS.
 
+// These are the fonts' own PostScript names, and the filenames in assets/fonts
+// are identical to them on purpose. The files are compiled into the binary by
+// the expo-font config plugin, and the two platforms name an embedded face
+// differently: iOS resolves it by PostScript name (via UIAppFonts), Android by
+// the asset's filename. Naming the file after the PostScript name is what makes
+// one string work on both.
+//
+// They used to be the @expo-google-fonts export names (Inter_400Regular and
+// friends), which were aliases expo-font registered at runtime after
+// downloading the files. Nothing is downloaded now, so those aliases no longer
+// exist.
+//
+// The four @expo-google-fonts packages stay in package.json even though nothing
+// imports them any more: they are where assets/fonts came from, and they are how
+// you get the next weight. To add one, copy the .ttf across, rename it to the
+// PostScript name recorded in the file's own name table — not to whatever the
+// package called it — and add the token here.
 export const Font = {
-  display: 'SpaceGrotesk_700Bold',
-  displayMedium: 'SpaceGrotesk_500Medium',
+  display: 'SpaceGrotesk-Bold',
+  displayMedium: 'SpaceGrotesk-Medium',
 
-  body: 'Inter_400Regular',
-  bodyMedium: 'Inter_500Medium',
-  bodySemibold: 'Inter_600SemiBold',
-  bodyBold: 'Inter_700Bold',
+  body: 'Inter-Regular',
+  bodyMedium: 'Inter-Medium',
+  bodySemibold: 'Inter-SemiBold',
+  bodyBold: 'Inter-Bold',
 
-  editorial: 'Fraunces_400Regular',
-  editorialBold: 'Fraunces_600SemiBold',
+  editorial: 'Fraunces-Regular',
+  editorialBold: 'Fraunces-SemiBold',
 
-  mono: 'JetBrainsMono_400Regular',
-  monoMedium: 'JetBrainsMono_500Medium',
+  mono: 'JetBrainsMono-Regular',
+  monoMedium: 'JetBrainsMono-Medium',
 } as const;
 
 // ─── Scale ────────────────────────────────────────────────────────────────────

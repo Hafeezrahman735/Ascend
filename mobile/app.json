@@ -39,6 +39,14 @@
     "plugins": [
       "expo-router",
       [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts"
+          ]
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/images/notification-icon.png",

@@ -3,13 +3,6 @@ import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useFonts } from 'expo-font';
-import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
-import {
-  Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
-} from '@expo-google-fonts/inter';
-import { Fraunces_400Regular, Fraunces_600SemiBold } from '@expo-google-fonts/fraunces';
-import { JetBrainsMono_400Regular, JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono';
 import { loadTokensFromStorage } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useGamificationStore } from '../stores/gamificationStore';
@@ -28,11 +21,6 @@ import { log } from '../lib/log';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
-
-// How long the first paint is allowed to wait on fonts before giving up on them.
-// Long enough that a warm cache never trips it, short enough that a stalled
-// download is a brief pause rather than an app that appears broken.
-const FONT_GATE_TIMEOUT_MS = 4000;
 
 // Blocking hydration: everything the first painted screen needs. Settings come
 // first so the theme is correct before the UI appears.
@@ -65,22 +53,12 @@ export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
-  // Loaded at runtime rather than embedded via the expo-font config plugin, so
-  // this branch stays JS-only and shippable over an EAS Update. Fonts must
-  // never hold the app on a spinner: whatever happens to the download, the app
-  // degrades to the system face rather than refusing to start.
-  const [fontsLoaded, fontError] = useFonts({
-    SpaceGrotesk_500Medium, SpaceGrotesk_700Bold,
-    Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
-    Fraunces_400Regular, Fraunces_600SemiBold,
-    JetBrainsMono_400Regular, JetBrainsMono_500Medium,
-  });
-  // An error is one way the load ends, and it was the only one handled here.
-  // The other is that it never ends at all — ten requests for 1.8 MB over a
-  // slow dev link, and the promise settles neither way — which held the whole
-  // app on the spinner below indefinitely. The timeout is the escape.
-  const [fontsTimedOut, setFontsTimedOut] = useState(false);
-  const fontsSettled = fontsLoaded || !!fontError || fontsTimedOut;
+  // No useFonts here on purpose. The four families are compiled into the binary
+  // by the expo-font config plugin (see app.json and assets/fonts), so they are
+  // registered before any JavaScript runs and there is nothing to await. That
+  // removes a whole class of startup failure: the previous runtime load fetched
+  // 1.8 MB across ten requests and gated the entire app on the result, so a
+  // download that stalled left the app on a spinner forever.
   const router = useRouter();
   const segments = useSegments();
   const user = useAuthStore((s) => s.user);
@@ -98,20 +76,6 @@ export default function RootLayout() {
   // level for the same reason as the notifications above: the card has to
   // outlive the timer screen, not be torn down when the user changes tab.
   useTimerLiveActivity();
-
-  // Stops a stalled font download from becoming a stalled app. Cleared as soon
-  // as the load settles on its own, so on a warm cache this never fires. When
-  // the fonts do arrive afterwards, useFonts re-renders and the real faces
-  // replace the fallback — the timeout releases the gate, it does not opt out
-  // of the fonts.
-  useEffect(() => {
-    if (fontsLoaded || fontError) return;
-    const timer = setTimeout(() => {
-      log(`[fonts] not settled after ${FONT_GATE_TIMEOUT_MS}ms — starting on system faces`);
-      setFontsTimedOut(true);
-    }, FONT_GATE_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [fontsLoaded, fontError]);
 
   // Configure how notifications render — must run before any can fire, no
   // permission needed, every launch.
@@ -236,7 +200,7 @@ export default function RootLayout() {
     }
   }, [isRetrying]);
 
-  if (!isReady || !fontsSettled) {
+  if (!isReady) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
