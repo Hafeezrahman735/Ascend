@@ -29,6 +29,11 @@ import { log } from '../lib/log';
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
 
+// How long the first paint is allowed to wait on fonts before giving up on them.
+// Long enough that a warm cache never trips it, short enough that a stalled
+// download is a brief pause rather than an app that appears broken.
+const FONT_GATE_TIMEOUT_MS = 4000;
+
 // Blocking hydration: everything the first painted screen needs. Settings come
 // first so the theme is correct before the UI appears.
 async function hydrateForUser(userId: string): Promise<void> {
@@ -61,16 +66,21 @@ export default function RootLayout() {
   const [isRetrying, setIsRetrying] = useState(false);
 
   // Loaded at runtime rather than embedded via the expo-font config plugin, so
-  // this branch stays JS-only and shippable over an EAS Update. fontError is
-  // treated as "done": a font that fails to load must degrade to the system
-  // face, never hold the app on a spinner.
+  // this branch stays JS-only and shippable over an EAS Update. Fonts must
+  // never hold the app on a spinner: whatever happens to the download, the app
+  // degrades to the system face rather than refusing to start.
   const [fontsLoaded, fontError] = useFonts({
     SpaceGrotesk_500Medium, SpaceGrotesk_700Bold,
     Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
     Fraunces_400Regular, Fraunces_600SemiBold,
     JetBrainsMono_400Regular, JetBrainsMono_500Medium,
   });
-  const fontsSettled = fontsLoaded || !!fontError;
+  // An error is one way the load ends, and it was the only one handled here.
+  // The other is that it never ends at all — ten requests for 1.8 MB over a
+  // slow dev link, and the promise settles neither way — which held the whole
+  // app on the spinner below indefinitely. The timeout is the escape.
+  const [fontsTimedOut, setFontsTimedOut] = useState(false);
+  const fontsSettled = fontsLoaded || !!fontError || fontsTimedOut;
   const router = useRouter();
   const segments = useSegments();
   const user = useAuthStore((s) => s.user);
@@ -88,6 +98,20 @@ export default function RootLayout() {
   // level for the same reason as the notifications above: the card has to
   // outlive the timer screen, not be torn down when the user changes tab.
   useTimerLiveActivity();
+
+  // Stops a stalled font download from becoming a stalled app. Cleared as soon
+  // as the load settles on its own, so on a warm cache this never fires. When
+  // the fonts do arrive afterwards, useFonts re-renders and the real faces
+  // replace the fallback — the timeout releases the gate, it does not opt out
+  // of the fonts.
+  useEffect(() => {
+    if (fontsLoaded || fontError) return;
+    const timer = setTimeout(() => {
+      log(`[fonts] not settled after ${FONT_GATE_TIMEOUT_MS}ms — starting on system faces`);
+      setFontsTimedOut(true);
+    }, FONT_GATE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [fontsLoaded, fontError]);
 
   // Configure how notifications render — must run before any can fire, no
   // permission needed, every launch.
