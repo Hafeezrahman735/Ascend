@@ -427,12 +427,16 @@ export default function TimerScreen() {
                   rotate(-90 ${CX} ${CY})
                 `}
               />
-              <Circle
-                cx={CX}
-                cy={CY}
+              {/* Glow under the progress dot. It takes its position from the
+                  same dotProps as the dot itself — without that it renders at
+                  the SVG's centre, which put a faint green disc behind the time
+                  readout and left the dot orbiting with no glow. Drawn first so
+                  it sits beneath. */}
+              <AnimatedCircle
                 r={DOT_RADIUS + 3}
                 fill={Colors.accent}
                 opacity={0.15}
+                animatedProps={dotProps}
               />
               <AnimatedCircle
                 r={DOT_RADIUS}
