@@ -9,6 +9,7 @@ import { getLocalDateString, getDeviceTimeZone } from '../utils/date';
 import type { SessionReward } from '../types';
 import { elapsedInPhase, remainingInPhase, type TimerPhase } from '../lib/phaseDuration';
 import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
+import { creditableSessionSeconds, MAX_SESSION_SECONDS } from '../lib/sessionCredit';
 import { log } from '../lib/log';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
@@ -24,6 +25,12 @@ interface Settings {
 
 // Device-level key — shared across all accounts (settings only)
 const TIMER_SETTINGS_KEY = 'timer:settings';
+
+// The chosen mode, device-level for the same reason the durations are: it is a
+// preference about this device's timer, not part of any account's data. Kept in
+// its own key rather than folded into TIMER_SETTINGS_KEY so `Settings` stays the
+// four durations and a target, and nothing that spreads it inherits a mode.
+const TIMER_MODE_KEY = 'timer:mode';
 
 // Active running/paused session snapshot. Because JS is frozen when the app is
 // backgrounded/killed, the timer can't literally keep ticking — instead we save the
@@ -105,7 +112,8 @@ interface TimerState {
   setDailySessionTarget: (sessions: number) => void;
   setMode: (mode: TimerMode) => void;
   startStopwatch: () => void;
-  pauseStopwatch: () => void;
+  /** Commits the run and returns the seconds actually credited to focus time. */
+  pauseStopwatch: () => number;
   hydrate: (userId: string) => Promise<void>;
   fetchWeekSessions: () => Promise<void>;
 }
@@ -241,13 +249,20 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       // Focus session completed — update stats, save, transition to break
       const elapsed = elapsedInPhase(elapsedAtPause, startedAt, Date.now());
       // Clamp against the block that actually ran, not the global default. This
-      // line runs BEFORE anything is recorded, so a wrong bound here destroys the
+      // runs BEFORE anything is recorded, so a wrong bound here destroys the
       // time permanently — no later backend change can recover it. With a plan,
       // a grace-zone block can legitimately exceed workDuration by up to 10
       // minutes, and clamping to the default would under-credit every one of
       // them, leaving the task short of its estimate and re-planning forever.
-      const plannedDuration = get().plannedFocusSeconds ?? settings.workDuration;
-      const sessionDuration = Math.min(plannedDuration, Math.max(0, elapsed));
+      //
+      // The plan itself is bounded too: workDuration has no upper limit of its
+      // own, and `plannedDurationSeconds` goes on the wire under the same
+      // `.max()` the elapsed figure does.
+      const plannedDuration = Math.min(
+        get().plannedFocusSeconds ?? settings.workDuration,
+        MAX_SESSION_SECONDS,
+      );
+      const sessionDuration = creditableSessionSeconds(elapsed, plannedDuration);
       const newRounds = pomodoroRounds + 1;
       const isLongBreak = newRounds % settings.sessionsUntilLong === 0;
       const nextPhase: TimerPhase = isLongBreak ? 'longBreak' : 'shortBreak';
@@ -320,6 +335,10 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         .then((res) => {
           if (res.success && res.data) {
             useGamificationStore.getState().applySessionReward(res.data, sessionDuration);
+          } else {
+            // Local stats have already moved; the server's have not. Silence here
+            // is what made the old stopwatch overflow invisible.
+            console.warn('[timer] session rejected by server:', res.error);
           }
           // Refresh week dots so today's dot fills in immediately
           get().fetchWeekSessions();
@@ -488,6 +507,8 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       });
     }
     persistActiveSession();
+    AsyncStorage.setItem(TIMER_MODE_KEY, mode)
+      .catch((err) => console.warn('[timer] persist mode failed:', err));
   },
 
   startStopwatch: () => {
@@ -498,13 +519,17 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
   pauseStopwatch: () => {
     const { status, startedAt, elapsedAtPause } = get();
-    if (status !== 'running' || !startedAt) return;
+    if (status !== 'running' || !startedAt) return 0;
     const elapsed = elapsedInPhase(elapsedAtPause, startedAt, Date.now());
     // Commit the worked time to today + all-time focus stats via the shared path.
-    recordFocusSession(elapsed);
+    // The credited figure comes back so the screen can report what was actually
+    // saved: `stopwatchElapsed` is a tick behind the wall clock, and is not
+    // subject to the ceiling the recorded session is.
+    const credited = recordFocusSession(elapsed);
     // Reset the stopwatch back to 00:00 / idle.
     set({ status: 'idle', startedAt: null, elapsedAtPause: 0, stopwatchElapsed: 0 });
     persistActiveSession();
+    return credited;
   },
 
   fetchWeekSessions: () => fetchWeekSessionsImpl(),
@@ -518,9 +543,12 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         const settings = settingsRaw
           ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsRaw) }
           : { ...DEFAULT_SETTINGS };
+        const mode = await readSavedMode();
         set({
           settings,
+          mode,
           timeLeft: settings.workDuration,
+          stopwatchElapsed: 0,
           pomodoroRounds: 0,
           startedAt: null,
           elapsedAtPause: 0,
@@ -616,10 +644,18 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         await AsyncStorage.removeItem(ACTIVE_SESSION_KEY).catch(() => {});
       }
 
+      const mode = await readSavedMode();
+
       set({
         status: 'idle',
         currentPhase: 'focus',
+        mode,
         timeLeft: settings.workDuration,
+        // Reset alongside timeLeft, not left behind it. Without this, a stopwatch
+        // running across midnight came back to a foregrounded app that skipped
+        // the restore as stale, dropped to idle — and still displayed the elapsed
+        // time from a session that no longer existed.
+        stopwatchElapsed: 0,
         // Cleared before `restored` is spread below, so a snapshot that carries
         // an overlay still wins, but a stale one can never leak across a day.
         plannedFocusSeconds: null,
@@ -647,8 +683,12 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 // pomodoro timer uses: updates today's globalTotalTime/globalSessions, appends to local
 // session history, and POSTs /timer/complete (which increments all-time User.totalFocusTime).
 // Used by the stopwatch on pause. Does NOT touch pomodoroRounds or the break phase.
-function recordFocusSession(sessionDuration: number): void {
-  if (sessionDuration <= 0) return;
+function recordFocusSession(elapsedSeconds: number): number {
+  // Clamped here rather than at the call site so every caller is bounded by
+  // construction. The stopwatch has no plan to clamp against, so the ceiling is
+  // the only thing standing between an overnight run and a rejected session.
+  const sessionDuration = creditableSessionSeconds(elapsedSeconds, null);
+  if (sessionDuration <= 0) return 0;
 
   const today = getTodayString();
   const { lastSessionDate, globalSessions, globalTotalTime } = useTimerStore.getState();
@@ -705,10 +745,29 @@ function recordFocusSession(sessionDuration: number): void {
   .then((res) => {
     if (res.success && res.data) {
       useGamificationStore.getState().applySessionReward(res.data, sessionDuration);
+    } else {
+      console.warn('[timer] stopwatch session rejected by server:', res.error);
     }
     useTimerStore.getState().fetchWeekSessions();
   })
   .catch((err) => console.warn('[timer] stopwatch complete sync failed:', err));
+
+  return sessionDuration;
+}
+
+/**
+ * The saved mode, defaulting to pomodoro.
+ *
+ * Read on hydrate for the same reason the durations are: every other choice the
+ * user makes about the timer survives a relaunch, and a mode toggle that quietly
+ * reverted to a countdown on every cold start was the one that did not.
+ */
+async function readSavedMode(): Promise<TimerMode> {
+  try {
+    return (await AsyncStorage.getItem(TIMER_MODE_KEY)) === 'stopwatch' ? 'stopwatch' : 'pomodoro';
+  } catch {
+    return 'pomodoro';
+  }
 }
 
 // Separate function so it can call useTimerStore.getState() after the store is created

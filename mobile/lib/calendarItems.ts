@@ -65,6 +65,38 @@ export function calendarTaxonomyIsComplete(): boolean {
     && metaKeys.every((key) => DAY_GROUP_ORDER.includes(key));
 }
 
+/** The date form every calendar item is keyed and bucketed by. */
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const KNOWN_TYPES: ReadonlySet<string> = new Set<string>(DAY_GROUP_ORDER);
+
+/**
+ * Whether a value from outside the app can safely be rendered as a calendar item.
+ *
+ * Two sources reach the views without ever having been checked: the persisted
+ * range cache, which is `JSON.parse` of whatever an older build wrote to disk,
+ * and the device calendar bridge. Every view then reads through `item.data` with
+ * an unchecked cast — `(item.data as Task).title` — and indexes `TYPE_META` by
+ * `item.type`. So a truncated cache entry, or an item type this build does not
+ * know, is not a missing row: it is a red screen on the Calendar tab, and one
+ * that survives a restart because the bad value is on disk.
+ *
+ * Dropping the item is the right failure. The next fetch replaces it, and a
+ * calendar missing one row still works; a calendar that throws does not.
+ */
+export function isRenderableCalendarItem(value: unknown): value is CalendarItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const item = value as { type?: unknown; date?: unknown; data?: unknown };
+  return (
+    typeof item.type === 'string'
+    && KNOWN_TYPES.has(item.type)
+    && typeof item.date === 'string'
+    && DATE_KEY_PATTERN.test(item.date)
+    && typeof item.data === 'object'
+    && item.data !== null
+  );
+}
+
 /**
  * A stable identity for an item, for React keys and for equality checks.
  *

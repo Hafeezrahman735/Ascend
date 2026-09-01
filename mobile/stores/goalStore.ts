@@ -50,6 +50,24 @@ function isTempId(id: string): boolean {
   return id.startsWith('temp-');
 }
 
+/**
+ * The calendar renders a goal with a deadline as a `goal_deadline` row on that
+ * day, showing its title and striking it through once complete. So creating,
+ * retitling, rescheduling, completing or deleting one makes whatever range the
+ * calendar has cached wrong — and that cache is persisted, so without this a
+ * deleted goal's deadline survived app restarts.
+ *
+ * taskStore does the same thing for the same reason; see the note there. Only
+ * the flag is set: the calendar screen refetches when it next gains focus, so
+ * the user pays for a request only if they actually open the tab. Imported
+ * lazily to keep goalStore out of the store import cycle.
+ */
+function invalidateCalendar(): void {
+  import('./calendarStore')
+    .then(({ useCalendarStore }) => useCalendarStore.getState().invalidate())
+    .catch((err) => console.warn('[goals] calendar invalidate failed:', err));
+}
+
 interface CreateGoalInput {
   title: string;
   tag?: string | null;
@@ -143,6 +161,8 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
           : [confirmed, ...current];
         set({ goals: next });
         persistGoals(next, userId);
+        // Only a goal with a deadline has a day to appear on.
+        if (confirmed.deadline) invalidateCalendar();
         return confirmed;
       }
       return tempGoal;
@@ -154,6 +174,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
   updateGoal: async (id, data) => {
     const userId = useAuthStore.getState().user?.id;
     const previous = get().goals;
+    const deadlineBefore = previous.find((g) => g.id === id)?.deadline ?? null;
     const optimistic = previous.map((g) => (g.id === id ? { ...g, ...data } : g));
     set({ goals: optimistic });
     persistGoals(optimistic, userId);
@@ -163,6 +184,9 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
         const goals = get().goals.map((g) => (g.id === id ? { ...g, ...res.data } : g));
         set({ goals });
         persistGoals(goals, userId);
+        // Both ends matter: clearing a deadline removes a row, and adding one
+        // creates a row on a day the calendar may already have cached.
+        if (deadlineBefore || res.data.deadline) invalidateCalendar();
       } else {
         set({ goals: previous });
         persistGoals(previous, userId);
@@ -176,6 +200,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
   deleteGoal: async (id) => {
     const userId = useAuthStore.getState().user?.id;
     const previous = get().goals;
+    const removedDeadline = previous.find((g) => g.id === id)?.deadline ?? null;
     const goals = previous.filter((g) => g.id !== id);
     set({ goals });
     persistGoals(goals, userId);
@@ -184,6 +209,8 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       if (!res.success) {
         set({ goals: previous });
         persistGoals(previous, userId);
+      } else if (removedDeadline) {
+        invalidateCalendar();
       }
     } catch {
       set({ goals: previous });
@@ -204,6 +231,9 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
     persistGoals(optimistic, userId);
     try {
       await api.patch(`/task-goals/${id}`, { isCompleted: nowCompleted, completedAt });
+      // The calendar strikes a completed goal's deadline row through, so the
+      // toggle changes what it draws even though the day is unchanged.
+      if (goal.deadline) invalidateCalendar();
     } catch {
       const reverted = get().goals.map((g) =>
         g.id === id ? { ...g, isCompleted: goal.isCompleted, completedAt: goal.completedAt } : g,

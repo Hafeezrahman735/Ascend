@@ -316,8 +316,10 @@ export default function TimerScreen() {
 
   const handleStopwatchPause = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const added = stopwatchElapsed;
-    pauseStopwatch();
+    // The store returns what it actually credited, which is not always what the
+    // display showed: the readout is up to a tick behind, and a very long run is
+    // capped to the maximum a single session can record.
+    const added = pauseStopwatch();
     if (added > 0) {
       Alert.alert('Focus time saved', `Added ${formatGlobalTime(added)} to your focus time.`);
     }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TYPE_META, DAY_GROUP_ORDER, calendarTaxonomyIsComplete, calendarItemKey,
   countsTowardLoad, isNote, itemTimeRange, itemIsDone, itemTitle, isPastEvent,
-  bookedMinutes, groupItemsByDate,
+  bookedMinutes, groupItemsByDate, isRenderableCalendarItem,
 } from './calendarItems';
 import type { CalendarEvent, CalendarItem, CalendarItemType } from '../types';
 
@@ -43,6 +43,58 @@ describe('the calendar taxonomy', () => {
       expect(TYPE_META[type].label.length).toBeGreaterThan(0);
       expect(TYPE_META[type].icon.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('isRenderableCalendarItem', () => {
+  // The two inputs this guards are the persisted range cache — `JSON.parse` of
+  // whatever an older build left on disk — and the device calendar bridge.
+  // Neither is validated by a type annotation, and every view reads through
+  // `item.data` with an unchecked cast, so a bad row is a crashed tab rather
+  // than a missing line. A cached one crashes it again after a restart.
+
+  it('accepts a well-formed item of every declared type', () => {
+    for (const type of DAY_GROUP_ORDER) {
+      expect(isRenderableCalendarItem({ type, date: '2026-08-25', data: { id: 'x' } })).toBe(true);
+    }
+  });
+
+  it('rejects a type this build does not know', () => {
+    expect(isRenderableCalendarItem({ type: 'external_outlook', date: '2026-08-25', data: {} }))
+      .toBe(false);
+  });
+
+  it('rejects an item with no data to render', () => {
+    expect(isRenderableCalendarItem({ type: 'task', date: '2026-08-25', data: null })).toBe(false);
+    expect(isRenderableCalendarItem({ type: 'task', date: '2026-08-25' })).toBe(false);
+  });
+
+  it('rejects a date that is not a day key, since every view buckets by it', () => {
+    for (const date of ['2026-8-25', '25/08/2026', '2026-08-25T00:00:00Z', '', 20260825]) {
+      expect(isRenderableCalendarItem({ type: 'task', date, data: { id: 'x' } })).toBe(false);
+    }
+  });
+
+  it('rejects values that are not items at all', () => {
+    for (const value of [null, undefined, 'task', 42, []]) {
+      expect(isRenderableCalendarItem(value)).toBe(false);
+    }
+  });
+
+  it('lets a real item through untouched', () => {
+    const item = eventItem();
+    expect(isRenderableCalendarItem(item)).toBe(true);
+  });
+
+  it('filters a mixed list down to what the views can draw', () => {
+    const mixed: unknown[] = [
+      eventItem(),
+      { type: 'task', date: '2026-08-25', data: { id: 't1' } },
+      { type: 'gremlin', date: '2026-08-25', data: {} },
+      { type: 'note', date: 'tomorrow', data: {} },
+      null,
+    ];
+    expect(mixed.filter(isRenderableCalendarItem)).toHaveLength(2);
   });
 });
 

@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
 import type { CalendarEvent, CalendarItem, CalendarStats, GoogleCalendarStatus, Note } from '../types';
 import { useAuthStore } from './authStore';
+import { isRenderableCalendarItem } from '../lib/calendarItems';
 import {
   fetchAppleEvents,
   getSelectedCalendarId,
@@ -24,10 +25,34 @@ const rangeKey = (userId: string, start: string, end: string) =>
 // has no prefix-delete.
 const INDEX_KEY = (userId: string) => `calendar:cache:index:${userId}`;
 
+/**
+ * Keeps only the items the views can actually render.
+ *
+ * Applied to both sources that are not this build's own code: the disk cache,
+ * which an older build wrote and which no type annotation validates, and the
+ * merged fetch result, which includes device-calendar rows from the native
+ * bridge. Every view casts through `item.data` unchecked, so one malformed row
+ * takes the whole tab down rather than itself.
+ *
+ * Logged rather than dropped quietly — an item vanishing from the calendar is
+ * exactly the kind of thing that should leave a trace.
+ */
+function renderableOnly(items: unknown, source: string): CalendarItem[] {
+  if (!Array.isArray(items)) {
+    console.warn(`[calendarStore] ${source} was not an array — ignoring`);
+    return [];
+  }
+  const kept = items.filter(isRenderableCalendarItem);
+  if (kept.length !== items.length) {
+    console.warn(`[calendarStore] dropped ${items.length - kept.length} unrenderable item(s) from ${source}`);
+  }
+  return kept;
+}
+
 async function readCache(userId: string, start: string, end: string): Promise<CalendarItem[] | null> {
   try {
     const raw = await AsyncStorage.getItem(rangeKey(userId, start, end));
-    return raw ? (JSON.parse(raw) as CalendarItem[]) : null;
+    return raw ? renderableOnly(JSON.parse(raw), 'cache') : null;
   } catch {
     return null;
   }
@@ -169,6 +194,8 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
       // A later range change may have landed while this request was in flight.
       const current = get().loadedRange;
       if (current && (current.start !== start || current.end !== end)) return;
+
+      items = renderableOnly(items, 'fetch');
 
       const notes = items
         .filter((i) => i.type === 'note')
