@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import morgan from 'morgan';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
@@ -108,6 +108,69 @@ const refreshLimiter = rateLimit({
   message: { success: false, error: 'Too many refresh attempts. Please try again later.' },
 });
 app.use('/auth/refresh', refreshLimiter);
+
+// Password reset request. Two limiters, because they stop different things.
+//
+// By IP, at the same 30/15min the credential endpoints use: this is the volume
+// control, and it is the one that stops a single host firing resets at a list of
+// addresses to probe which ones exist.
+const resetIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTests,
+  message: { success: false, error: 'Too many attempts. Please try again later.' },
+});
+
+// By EMAIL, much tighter. Without this, the IP limiter alone still allows 30
+// reset mails to ONE person's inbox in a quarter of an hour, which is
+// harassment rather than enumeration and is a documented abuse of this
+// endpoint. Five in fifteen minutes is well past what an honest user retrying a
+// slow email needs.
+//
+// Keyed on the address itself, normalised the same way the route normalises it
+// so casing cannot be used to buy extra attempts. Falls back to the IP when the
+// body has no usable address, since express-rate-limit requires a key and a
+// malformed request must not become the free lane.
+const resetEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTests,
+  keyGenerator: (req) => {
+    const raw = (req.body as { email?: unknown } | undefined)?.email;
+    return typeof raw === 'string' && raw.trim()
+      ? `email:${raw.trim().toLowerCase()}`
+      : ipKeyGenerator(req.ip ?? '');
+  },
+  // Answers with the same shape the route does, so hitting the limit is not
+  // itself a signal that the address exists.
+  handler: (_req, res) => {
+    res.json({
+      success: true,
+      data: { message: "If an account exists for this email, we've sent a reset link." },
+    });
+  },
+});
+
+app.use('/auth/forgot-password', resetIpLimiter, resetEmailLimiter);
+
+// Redeeming a token is a guessing surface like login, so it gets the credential
+// limiter's SHAPE — but its own instance, not authLimiter itself. Sharing that
+// instance would share the bucket: someone who just failed login several times,
+// which is the exact reason a person reaches for a password reset, could find
+// the recovery path already spent. The two budgets have to be independent.
+const resetRedeemLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTests,
+  message: { success: false, error: 'Too many attempts. Please try again later.' },
+});
+app.use('/auth/reset-password', resetRedeemLimiter);
 
 // Bounds how much focus time one account can bank per hour. Combined with the
 // per-session cap in modules/timer/routes.ts this puts a hard ceiling on XP and

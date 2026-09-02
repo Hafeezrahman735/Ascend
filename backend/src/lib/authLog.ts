@@ -19,7 +19,10 @@ export type AuthFailureReason =
   | 'bad_password'
   | 'refresh_invalid'
   | 'refresh_unknown'
-  | 'refresh_user_missing';
+  | 'refresh_user_missing'
+  | 'reset_unknown_email'
+  | 'reset_token_invalid'
+  | 'reset_token_expired';
 
 /**
  * Emails are hashed, never logged in plaintext.

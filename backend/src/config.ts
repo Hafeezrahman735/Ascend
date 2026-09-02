@@ -28,6 +28,17 @@ const envSchema = z.object({
   // so an existing deploy does not fail to boot the moment this ships; unset,
   // tokens are stored as they always were. Generate with:
   //   openssl rand -hex 32
+  // Transactional email (password reset). All optional: unset, sending is a
+  // logged no-op and the server boots normally — see lib/email.ts for why that
+  // is a supported state rather than a hole. Any SMTP provider works; a free
+  // tier with single-sender verification needs no domain.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  /** The From header, e.g. 'Ascend <you@gmail.com>'. Must be an address the provider has verified. */
+  EMAIL_FROM: z.string().optional(),
+
   TOKEN_ENCRYPTION_KEY: z.string()
     .regex(/^[0-9a-fA-F]{64}$/, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (openssl rand -hex 32)')
     .optional(),

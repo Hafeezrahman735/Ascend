@@ -10,6 +10,12 @@ import {
 import { prisma } from '../../lib/prisma';
 import { handleAuthError, handleZodError } from '../../lib/errors';
 import { logAuthFailure } from '../../lib/authLog';
+import { sendEmail } from '../../lib/email';
+import {
+  mintResetToken, hashResetToken, resetTokenExpiry, resetDeepLink,
+  RESET_TOKEN_TTL_MINUTES,
+} from '../../lib/resetToken';
+import { config } from '../../config';
 export const authRouter = Router();
 
 // Email is stored and matched lowercase. Without this, signing up as
@@ -437,6 +443,154 @@ authRouter.patch('/auth/me/privacy', async (req: Request, res: Response) => {
     if (handleZodError(res, error)) return;
     if (handleAuthError(res, error)) return;
     console.error('Privacy update error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// ─── Password reset ──────────────────────────────────────────────────────────
+
+const forgotSchema = z.object({
+  email: z.string().trim().email().transform(normalizeEmail),
+});
+
+const resetSchema = z.object({
+  token: z.string().min(1).max(200),
+  // The SAME rule registration uses, referenced rather than restated. Two
+  // copies of a password policy is how a reset flow ends up accepting a
+  // password that signup would have refused.
+  password: registerSchema.shape.password,
+});
+
+/**
+ * Start a reset.
+ *
+ * Answers identically whether or not the address has an account. That is the
+ * whole point: a different message, a different status code, or a measurably
+ * different response time all turn this into an oracle for "does this person
+ * use Ascend", which is worth something to a spammer and more to someone
+ * targeting one individual.
+ *
+ * It follows that nothing below may return early with a distinguishable result,
+ * including on send failure — the caller is told the same thing regardless, and
+ * the real outcome goes to the log.
+ */
+authRouter.post('/auth/forgot-password', async (req: Request, res: Response) => {
+  // Identical for every caller. Built once so no branch can drift from it.
+  const genericResponse = {
+    success: true,
+    data: { message: "If an account exists for this email, we've sent a reset link." },
+  };
+
+  try {
+    const { email } = forgotSchema.parse(req.body);
+    const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+
+    if (!user) {
+      // Logged, not answered differently. This is the enumeration probe worth
+      // knowing about, and the log is where that belongs.
+      logAuthFailure(req, 'reset_unknown_email', { email });
+      res.json(genericResponse);
+      return;
+    }
+
+    const { token, tokenHash } = mintResetToken();
+    await prisma.passwordResetToken.create({
+      data: { userId: user.id, tokenHash, expiresAt: resetTokenExpiry() },
+    });
+
+    // Expired rows for this user, swept opportunistically — same approach the
+    // refresh-token routes take rather than adding a scheduled job.
+    prisma.passwordResetToken
+      .deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } })
+      .catch((err) => console.error('Reset token cleanup failed:', err));
+
+    const link = resetDeepLink(config.APP_DEEP_LINK_SCHEME, token);
+    // NOT awaited, and that is a security property rather than a performance
+    // one. Awaiting makes the "account exists" path wait for an SMTP round trip
+    // while the "no account" path returns immediately, so the two answers
+    // become distinguishable by RESPONSE TIME even though their bodies are
+    // byte-identical. A timing oracle enumerates just as well as a worded one.
+    //
+    // Safe to leave unhandled: sendEmail catches internally and resolves false
+    // rather than rejecting, so this can never become an unhandled rejection.
+    //
+    // `link` holds the RAW token and is never logged, here or in lib/email.ts.
+    void sendEmail({
+      to: email,
+      subject: 'Reset your Ascend password',
+      text: `Open this link to set a new password:\n\n${link}\n\nIt expires in ${RESET_TOKEN_TTL_MINUTES} minutes and can only be used once. If you didn't ask for this, you can ignore this email — your password has not changed.`,
+      html: `<p>Open this link to set a new password:</p><p><a href="${link}">Reset my password</a></p><p>It expires in ${RESET_TOKEN_TTL_MINUTES} minutes and can only be used once.</p><p>If you didn't ask for this, you can ignore this email — your password has not changed.</p>`,
+    });
+
+    res.json(genericResponse);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      // Even a malformed address gets the generic answer. Replying "that isn't
+      // an email" is harmless on its own, but it makes the endpoint's responses
+      // vary with the input, and the whole design here is that they do not.
+      res.json(genericResponse);
+      return;
+    }
+    console.error('Forgot password error:', error);
+    res.json(genericResponse);
+  }
+});
+
+/**
+ * Redeem a reset.
+ *
+ * Single-use, expiry-checked, and it revokes every existing session: an account
+ * that was compromised and then recovered must not still be reachable through a
+ * refresh token the attacker already holds. That is the step most reset flows
+ * omit, and it is the one that makes the reset actually mean something.
+ */
+authRouter.post('/auth/reset-password', async (req: Request, res: Response) => {
+  try {
+    const { token, password } = resetSchema.parse(req.body);
+
+    // Looked up BY HASH — the raw token is never stored, so this is the only
+    // way to find the row, which is the property we wanted.
+    const record = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash: hashResetToken(token) },
+      select: { id: true, userId: true, expiresAt: true },
+    });
+
+    // One message for "no such token" and "expired". A caller who can tell them
+    // apart learns whether a token ever existed.
+    if (!record || record.expiresAt.getTime() <= Date.now()) {
+      if (record) {
+        // Distinguished in the LOG only, and by id — never by the token itself.
+        logAuthFailure(req, 'reset_token_expired', { userId: record.userId });
+        await prisma.passwordResetToken.delete({ where: { id: record.id } }).catch(() => {});
+      } else {
+        logAuthFailure(req, 'reset_token_invalid');
+      }
+      res.status(400).json({
+        success: false,
+        error: 'This reset link has expired or already been used. Request a new one.',
+      });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // One transaction: the new password, the death of every reset token for
+    // this user, and the death of every session. Split across three statements,
+    // a failure between them could leave the password changed with the old
+    // sessions still live — which is the exact state this is meant to end.
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+      prisma.passwordResetToken.deleteMany({ where: { userId: record.userId } }),
+      prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
+    ]);
+
+    res.json({
+      success: true,
+      data: { message: 'Your password has been reset. Sign in with your new password.' },
+    });
+  } catch (error) {
+    if (handleZodError(res, error)) return;
+    console.error('Reset password error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
