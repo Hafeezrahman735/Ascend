@@ -11,6 +11,7 @@ import {
   addMonths,
   eachDayOfRange,
   pickerMinimumDate,
+  pickerAcceptsValue,
   parseLocalDate,
   isSameDay,
 } from './date';
@@ -188,6 +189,58 @@ describe('pickerMinimumDate', () => {
     for (const iso of ['2025-01-01', '2026-08-02', '2026-08-03', '2026-08-04', '2027-12-31']) {
       const value = parseLocalDate(iso);
       expect(pickerMinimumDate(value, now).getTime()).toBeLessThanOrEqual(value.getTime());
+    }
+  });
+});
+
+describe('pickerAcceptsValue', () => {
+  // The crash these guard against is a native one, and it survived the first
+  // fix. RNDateTimePickerComponentView.mm writes `picker.date` at line 172 and
+  // does not relax `picker.minimumDate` until line 188, so a commit that moves
+  // both props applies the new date against the OLD floor. Keeping the floor
+  // consistent with the value is not enough — the floor has to be captured when
+  // the picker opens and the picker has to unmount rather than be handed a value
+  // that has since fallen beneath it.
+  const floor = new Date(2026, 8, 1); // Sep 1, the start of today
+
+  it('accepts a value on the floor itself', () => {
+    expect(pickerAcceptsValue(floor, new Date(2026, 8, 1))).toBe(true);
+  });
+
+  it('accepts every value above the floor', () => {
+    expect(pickerAcceptsValue(floor, new Date(2026, 8, 2))).toBe(true);
+    expect(pickerAcceptsValue(floor, new Date(2027, 0, 1))).toBe(true);
+  });
+
+  it('rejects a value one day beneath the floor', () => {
+    expect(pickerAcceptsValue(floor, new Date(2026, 7, 31))).toBe(false);
+  });
+
+  it('rejects a value a whole month beneath the floor — the reported crash', () => {
+    // Opening the form on a fresh task fixes the floor at today, then the sheet
+    // is re-seeded for an overdue task without the picker ever closing.
+    expect(pickerAcceptsValue(floor, new Date(2026, 5, 15))).toBe(false);
+  });
+
+  it('rejects a value beneath the floor by less than a day', () => {
+    // Both sides are local midnights in the app, but the comparison must be an
+    // instant comparison rather than a day one, since that is what UIKit checks.
+    expect(pickerAcceptsValue(floor, new Date(2026, 7, 31, 23, 59, 59))).toBe(false);
+  });
+
+  it('admits everything a picker opened at that value can produce', () => {
+    // The composition that matters: a floor taken from pickerMinimumDate for a
+    // value is always one that value satisfies, however overdue it is. Without
+    // this, opening the picker would immediately unmount it.
+    const now = new Date(2026, 8, 1, 15, 30);
+    for (const value of [
+      new Date(2025, 0, 1),
+      new Date(2026, 5, 15),
+      new Date(2026, 8, 1),
+      new Date(2026, 8, 1, 23, 59),
+      new Date(2027, 11, 31),
+    ]) {
+      expect(pickerAcceptsValue(pickerMinimumDate(value, now), value)).toBe(true);
     }
   });
 });

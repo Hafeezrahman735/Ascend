@@ -152,3 +152,33 @@ export function pickerMinimumDate(value: Date, now: Date = new Date()): Date {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return value < startOfToday ? value : startOfToday;
 }
+
+/**
+ * Whether a picker that opened with `floor` can safely be handed `value`.
+ *
+ * This is the second half of the same iOS crash `pickerMinimumDate` addresses,
+ * and it is not a duplicate of it. That function keeps the two props consistent
+ * with each other; this one keeps them safe to APPLY, which is a different
+ * problem, because the native component does not apply them together:
+ *
+ *   RNDateTimePickerComponentView.mm, updatePropsForPicker
+ *     line 172:  picker.date = <new date>          // written first
+ *     line 188:  picker.minimumDate = nil          // floor relaxed sixteen
+ *     line 194:  picker.minimumDate = <new floor>  // lines later
+ *
+ * So a commit that moves both writes the new date while the OLD floor is still
+ * installed on the picker, and UIKit throws if the date is beneath it. Deriving
+ * the floor from the value — which is what makes them consistent — is exactly
+ * what makes them always move together, so the two fixes have to work as a pair.
+ *
+ * The rule that follows: capture the floor when the picker OPENS and hold it,
+ * then refuse to render a picker whose value has since dropped below it. While
+ * the picker is open every value comes from the picker itself and is inside its
+ * own bounds, so this is only ever false when something outside changed the date
+ * underneath it — re-seeding the form for another task, or clearing the field.
+ * Unmounting there is both correct and free: a picker left open from the item
+ * you were editing a moment ago should not still be on screen.
+ */
+export function pickerAcceptsValue(floor: Date, value: Date): boolean {
+  return value.getTime() >= floor.getTime();
+}

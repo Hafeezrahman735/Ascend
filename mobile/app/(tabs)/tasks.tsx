@@ -39,7 +39,7 @@ import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
 import {
   daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
-  parseLocalDate, pickerMinimumDate,
+  parseLocalDate, pickerAcceptsValue, pickerMinimumDate,
 } from '../../utils/date';
 import {
   useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
@@ -364,7 +364,11 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const [taskGoalId, setTaskGoalId] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState('');
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  // The picker's floor, or null when it is closed. One piece of state rather
+  // than a boolean beside a derived minimum: the floor must not move while the
+  // picker is mounted (see pickerAcceptsValue), and a value that is captured
+  // once on open cannot drift the way a recomputed one does.
+  const [datePickerFloor, setDatePickerFloor] = useState<Date | null>(null);
   const [showGoalPicker, setShowGoalPicker] = useState(false);
   const [startMinutes, setStartMinutes] = useState<number | null>(null);
   const [endMinutes, setEndMinutes] = useState<number | null>(null);
@@ -390,6 +394,10 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       setStartMinutes(task?.startMinutes ?? null);
       setEndMinutes(task?.endMinutes ?? null);
       setShowTimePicker(null);
+      // Closed alongside the time picker, and for a stronger reason than tidiness:
+      // re-seeding moves dueDate underneath a picker that may still be mounted,
+      // which is the exact prop transition the native component mishandles.
+      setDatePickerFloor(null);
     }
   }, [visible, task]);
 
@@ -448,9 +456,15 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
     () => (dueDate ? parseLocalDate(dueDate) : new Date()),
     [dueDate],
   );
-  const datePickerMinimum = useMemo(() => pickerMinimumDate(datePickerValue), [datePickerValue]);
+  const openDatePicker = () => setDatePickerFloor(pickerMinimumDate(datePickerValue));
+  // Unmount rather than hand the picker a date its floor forbids. Every date the
+  // user can pick is inside the bounds already, so this only fires when
+  // something outside the picker moved dueDate — and that is the case that
+  // crashes rather than misrenders.
+  const datePickerOpen = datePickerFloor !== null
+    && pickerAcceptsValue(datePickerFloor, datePickerValue);
   const handleDateChange = (_event: DateTimePickerEvent, date?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (Platform.OS === 'android') setDatePickerFloor(null);
     if (date) setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
 
@@ -550,7 +564,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
         </View>
         <Switch
           value={isRecurring}
-          onValueChange={(val) => { setIsRecurring(val); if (val) setDueDate(''); else setRecurringDays([]); }}
+          onValueChange={(val) => { setIsRecurring(val); setDatePickerFloor(null); if (val) setDueDate(''); else setRecurringDays([]); }}
           trackColor={{ false: Colors.inactive, true: Colors.primary }}
           thumbColor="#FFFFFF"
         />
@@ -617,15 +631,15 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
           <Text style={monoLabel}>DUE DATE</Text>
           {dueDate ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+              <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
                 <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
                 <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
               </TouchableOpacity>
               {/* A time cannot outlive its day — the server rejects that pair. */}
-              <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
+              <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); setDatePickerFloor(null); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+            <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
               <Ionicons name="calendar-outline" size={14} color={Colors.subtext} />
               <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>Set date</Text>
             </TouchableOpacity>
@@ -748,14 +762,14 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
         </View>
       )}
 
-      {showDatePicker && (
+      {datePickerOpen && (
         <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
           <DateTimePicker
             value={datePickerValue}
             mode="date"
             display={Platform.OS === 'ios' ? 'inline' : 'default'}
             onChange={handleDateChange}
-            minimumDate={datePickerMinimum}
+            minimumDate={datePickerFloor!}
             themeVariant={isDark ? 'dark' : 'light'}
             accentColor={Colors.primary}
           />
@@ -808,7 +822,9 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
   const [tag, setTag] = useState<string | null>(null);
   const [targetSessions, setTargetSessions] = useState(0);
   const [deadline, setDeadline] = useState('');
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  // See the task form above: the floor is captured on open and held, because the
+  // native picker writes a new date before it relaxes an old floor.
+  const [datePickerFloor, setDatePickerFloor] = useState<Date | null>(null);
   const [titleError, setTitleError] = useState(false);
 
   useEffect(() => {
@@ -816,6 +832,10 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
       setTitle(goal?.title ?? ''); setTag(goal?.tag ?? null);
       setTargetSessions(goal?.targetSessions ?? 0); setDeadline(goal?.deadline?.substring(0, 10) ?? '');
       setTitleError(false);
+      // This form previously reset nothing about the picker, so a calendar left
+      // open on one goal was still mounted when the next goal's deadline was
+      // seeded into it — the transition that crashes.
+      setDatePickerFloor(null);
     }
   }, [visible, goal]);
 
@@ -836,9 +856,11 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
     () => (deadline ? parseLocalDate(deadline) : new Date()),
     [deadline],
   );
-  const datePickerMinimum = useMemo(() => pickerMinimumDate(datePickerValue), [datePickerValue]);
+  const openDatePicker = () => setDatePickerFloor(pickerMinimumDate(datePickerValue));
+  const datePickerOpen = datePickerFloor !== null
+    && pickerAcceptsValue(datePickerFloor, datePickerValue);
   const handleDateChange = (_e: DateTimePickerEvent, date?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (Platform.OS === 'android') setDatePickerFloor(null);
     if (date) setDeadline(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
   const focusHours = targetSessions > 0 ? Math.round(targetSessions * sessionLengthMinutes / 60 * 10) / 10 : null;
@@ -892,12 +914,12 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
                   <TouchableOpacity onPress={() => setDeadline('')}><Ionicons name="close-circle" size={18} color={Colors.subtext} /></TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: 16 }]} onPress={() => setShowDatePicker(true)}>
+                <TouchableOpacity style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: 16 }]} onPress={openDatePicker}>
                   <Ionicons name="calendar-outline" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
                   <Text style={{ color: Colors.subtext, fontSize: 14 }}>Set deadline</Text>
                 </TouchableOpacity>
               )}
-              {showDatePicker && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={datePickerMinimum} />}
+              {datePickerOpen && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={datePickerFloor!} />}
 
               {/* Editing only. Goals previously had no delete affordance anywhere
                   in the app — they could be created but never removed. */}
