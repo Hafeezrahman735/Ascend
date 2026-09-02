@@ -384,7 +384,14 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       // New tasks default to today so they land on the calendar straight away.
       // Editing is left alone — silently dating an existing undated task on open
       // would reschedule it just for being looked at.
-      setDueDate(task?.dueDate ?? getLocalDateString()); setTags(task?.tags ?? []);
+      // substring, because dueDate is a Prisma DateTime and arrives as a full ISO
+      // string, while everything downstream here — parseLocalDate, the date
+      // picker, the label below — expects 'YYYY-MM-DD'. Without it parseLocalDate
+      // splits on '-' into ['2026','09','01T00:00:00.000Z'] and yields an Invalid
+      // Date, which rendered as the literal text "Invalid Date" and was handed
+      // straight to the native picker. GoalFormModal has always guarded this;
+      // the task form never did.
+      setDueDate(task?.dueDate?.substring(0, 10) ?? getLocalDateString()); setTags(task?.tags ?? []);
       setEstimatedMinutes(task?.estimatedMinutes ?? 0); setPriority(task?.priority ?? 'medium');
       setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTagEditorOpen(false); setTitleError(false);
       // Recurring lives on the template; an instance carries it via parentTaskId.
@@ -633,7 +640,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
                 <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
-                <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+                <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{parseLocalDate(dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
               </TouchableOpacity>
               {/* A time cannot outlive its day — the server rejects that pair. */}
               <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); setDatePickerFloor(null); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
