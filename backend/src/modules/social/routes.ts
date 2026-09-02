@@ -6,6 +6,7 @@ import { prisma } from '../../lib/prisma';
 import { getRankTitle } from '../../lib/rank';
 import { handleAuthError, handleZodError } from '../../lib/errors';
 import { getFriendIds, getFriendSessions } from '../../services/friendshipService';
+import { resolveProfileAccess } from '../../services/profileAccess';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
 
 export const socialRouter = Router();
@@ -408,8 +409,17 @@ socialRouter.get('/social/feed', async (req: Request, res: Response) => {
     const friendIds = await getFriendIds(userId);
     const hiddenSet = new Set(await getHiddenUserIds(userId));
 
+    // friendsCanSeeActivity is what this feed IS, and it was never consulted
+    // here — the flag was a stored column with no read path on the one surface
+    // it names. Own events always show: the setting governs who else sees you.
+    const sharing = await prisma.user.findMany({
+      where: { id: { in: friendIds }, friendsCanSeeActivity: true },
+      select: { id: true },
+    });
+    const sharingIds = sharing.map((u) => u.id);
+
     // Exclude blocked users (both directions) from the activity feed.
-    const userIds = [...friendIds, userId].filter((id) => !hiddenSet.has(id));
+    const userIds = [...sharingIds, userId].filter((id) => !hiddenSet.has(id));
 
     const where: Record<string, unknown> = {
       userId: { in: userIds },
@@ -1407,13 +1417,28 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
     const requestingUserId = authenticate(req);
     const { userId: targetId } = req.params;
 
+    // This route used to SELECT privacySetting and never read it: there was no
+    // private check, no friends_only check, and no publicProfile check, so a
+    // profile marked private returned username, level, XP, both streaks and the
+    // three most recent achievements to any signed-in stranger.
+    const access = await resolveProfileAccess(requestingUserId, targetId);
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, error: access.error });
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: targetId },
       select: {
         id: true, username: true, avatarUrl: true, level: true, xp: true,
         currentStreak: true, longestStreak: true,
         totalSessions: true, totalFocusTime: true,
-        privacySetting: true, shareFocusStats: true, avatarEmoji: true,
+        avatarEmoji: true,
+        // privacySetting and shareFocusStats deliberately NOT selected here any
+        // more. resolveProfileAccess above owns both, and selecting them where
+        // nothing reads them is what made this route look protected when it was
+        // not — the original bug was a privacySetting select with no matching
+        // check anywhere below it.
       },
     });
     if (!user) {
@@ -1427,8 +1452,11 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
         }))
       : false;
 
-    // Hide focus stats from non-followers when the user keeps them private.
-    const hideStats = requestingUserId !== targetId && !user.shareFocusStats && !isFollowing;
+    // Following no longer unlocks stats. It used to: `!shareFocusStats &&
+    // !isFollowing`. But following is unilateral — POST /social/follow/:userId
+    // is a bare upsert with no approval — so anyone could switch off someone
+    // else's privacy setting by tapping Follow.
+    const hideStats = access.hideStats;
 
     const isBlocked = requestingUserId !== targetId
       ? !!(await prisma.userBlock.findUnique({

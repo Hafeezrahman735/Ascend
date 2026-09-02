@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { resolveProfileAccess } from './profileAccess';
 
 export async function getFriendIds(userId: string): Promise<string[]> {
   const friendships = await prisma.friendship.findMany({
@@ -75,29 +76,17 @@ export async function getFriendSessions(
   targetUserId: string,
   limit = 10,
 ) {
-  if (requestingUserId !== targetUserId) {
-    const targetUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { privacySetting: true },
-    });
-    if (!targetUser) throw new Error('User not found');
-
-    if (targetUser.privacySetting === 'private') {
-      return [];
-    }
-
-    if (targetUser.privacySetting === 'friends_only') {
-      const friendship = await prisma.friendship.findFirst({
-        where: {
-          OR: [
-            { requesterId: requestingUserId, addresseeId: targetUserId, status: 'accepted' },
-            { requesterId: targetUserId, addresseeId: requestingUserId, status: 'accepted' },
-          ],
-        },
-      });
-      if (!friendship) return [];
-    }
+  // One gate, shared with the profile and achievement reads. This used to check
+  // `privacySetting` alone, which meant `publicProfile: false` was ignored here
+  // and — more to the point — `shareFocusStats: false` was ignored entirely.
+  // These rows carry `taskLabel`, so what leaked was not just how much someone
+  // focused but what they called the work.
+  const access = await resolveProfileAccess(requestingUserId, targetUserId);
+  if (!access.ok) {
+    if (access.status === 404) throw new Error('User not found');
+    return [];
   }
+  if (access.hideStats) return [];
 
   const sessions = await prisma.session.findMany({
     where: { userId: targetUserId },

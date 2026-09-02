@@ -1,5 +1,5 @@
 import { prisma } from '../../lib/prisma';
-import { PrivacySetting } from '@prisma/client';
+import { resolveProfileAccess } from '../../services/profileAccess';
 
 interface FriendSummaryResult {
   totalSessions: number;
@@ -14,33 +14,15 @@ export async function getFriendSummary(
   requestingUserId: string,
   targetUserId: string,
 ): Promise<FriendSummaryResult> {
-  if (requestingUserId !== targetUserId) {
-    const targetUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { privacySetting: true },
-    });
-
-    if (!targetUser) {
-      throw new Error('User not found');
-    }
-
-    if (targetUser.privacySetting === PrivacySetting.private) {
-      throw new Error('This user\'s stats are private');
-    }
-
-    if (targetUser.privacySetting === PrivacySetting.friends_only) {
-      const friendship = await prisma.friendship.findFirst({
-        where: {
-          OR: [
-            { requesterId: requestingUserId, addresseeId: targetUserId, status: 'accepted' },
-            { requesterId: targetUserId, addresseeId: requestingUserId, status: 'accepted' },
-          ],
-        },
-      });
-      if (!friendship) {
-        throw new Error('This user\'s stats are private');
-      }
-    }
+  // Shared gate. Previously this honoured `privacySetting` only, so a user who
+  // switched OFF "share focus stats" still had their totals, streaks and weekly
+  // counts returned to exactly the people the setting was supposed to stop.
+  const access = await resolveProfileAccess(requestingUserId, targetUserId);
+  if (!access.ok) {
+    throw new Error(access.status === 404 ? 'User not found' : "This user's stats are private");
+  }
+  if (access.hideStats) {
+    throw new Error("This user's stats are private");
   }
 
   const weekStart = new Date();
