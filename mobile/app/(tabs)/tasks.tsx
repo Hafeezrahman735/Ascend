@@ -17,6 +17,7 @@ import { useAppForeground } from '../../hooks/useAppState';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
+import { hasUrgentTask, isUrgencyEligible, URGENCY_WINDOW } from '../../lib/heroCard';
 import {
   composeTaskList, nextOccurrenceLabel, type RecurringTemplate,
 } from '../../lib/recurringDisplay';
@@ -1402,9 +1403,10 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
   // "todays" in one render.
   const now = new Date();
   const urgent = tasks
-    .filter((t) => !t.isCompleted && !t.isArchived && !!t.dueDate)
     .map((t) => ({ ...t, daysLeft: daysUntilDue(t.dueDate, now) }))
-    .filter((t): t is typeof t & { daysLeft: number } => t.daysLeft !== null && t.daysLeft >= 0 && t.daysLeft <= 6)
+    .filter((t): t is typeof t & { daysLeft: number } =>
+      t.daysLeft !== null && t.daysLeft >= 0 && t.daysLeft <= URGENCY_WINDOW.rotation
+      && isUrgencyEligible(t, t.daysLeft))
     .sort((a, b) => a.daysLeft - b.daysLeft)
     .slice(0, 3);
 
@@ -1653,11 +1655,10 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
   const availableCards = CARD_ORDER.filter((c) => {
     switch (c) {
       case 'urgency':
-        return tasks.some((t) => {
-          if (t.isCompleted || t.isArchived || !t.dueDate) return false;
-          const d = daysUntilDue(t.dueDate, new Date());
-          return d !== null && d >= 0 && d <= 6;
-        });
+        // Same predicate selectHeroCard uses, at the rotation horizon rather
+        // than the lead one. Previously this was a third hand-written copy that
+        // had already drifted: it lacked the recurring-instance exclusion.
+        return hasUrgentTask(tasks, new Date(), URGENCY_WINDOW.rotation);
       case 'goal_progress': return goals.some((g) => !g.isCompleted && !g.isArchived);
       case 'time_nudge':    return peakHour !== null;
       case 'momentum':      return currentStreak > 0;
