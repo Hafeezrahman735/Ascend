@@ -17,7 +17,7 @@ import { useAppForeground } from '../../hooks/useAppState';
 import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
-import { hasUrgentTask, isUrgencyEligible, URGENCY_WINDOW } from '../../lib/heroCard';
+import { urgentTasks } from '../../lib/heroCard';
 import {
   composeTaskList, nextOccurrenceLabel, type RecurringTemplate,
 } from '../../lib/recurringDisplay';
@@ -39,7 +39,7 @@ import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '
 import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
 import {
-  daysUntilDue, daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
+  daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
   parseLocalDate, pickerAcceptsValue, pickerMinimumDate,
 } from '../../utils/date';
 import {
@@ -51,7 +51,7 @@ import {
   getMonday, isToday, formatSeconds,
   formatDuration, getDueChip, isYesterdayLocal,
   startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
-  getPeakHour, formatPeakWindow, getCompletionRate,
+  getPeakHour, formatPeakWindow, getCompletionRate, formatOverdue,
   compactDuration,
   formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
@@ -125,6 +125,17 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
   // Until analytics land, the server-derived cells show an em-dash; sessions come from the task itself.
   const ready = !!analytics;
   const val = (v: string) => (ready ? v : '—');
+  // Read from `task`, not from `analytics`. Every other cell in the grid is
+  // derived and arrives with GET /tasks/:id, so it shows an em-dash behind a
+  // spinner first. A deadline is known locally and instantly, and it is the
+  // INPUT to the decision this sheet exists to support rather than a
+  // measurement of it — so it must not arrive late with the averages.
+  const dueChip = getDueChip(task, Colors);
+  const dueDateLabel = task.dueDate
+    ? parseLocalDate(task.dueDate.substring(0, 10))
+        .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    : null;
+  const isOverdue = !task.isCompleted && !!dueChip?.a11yLabel.includes('overdue');
 
   return (
     <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.66}>
@@ -227,6 +238,21 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
               value={ready ? formatLastWorked(analytics?.lastSessionAt ?? null) : '—'}
             />
           </View>
+
+          {/* Due date. Rendered only when there is one — the grid already shows
+              six em-dashes while analytics load, and a seventh absence is noise.
+              `feature` when overdue: at most one feature cell per grid, and an
+              overdue deadline is the one thing here that outranks the ring. */}
+          {dueDateLabel && (
+            <BentoCell
+              Colors={Colors}
+              icon="calendar-outline"
+              label="Due"
+              value={dueDateLabel}
+              sub={dueChip?.a11yLabel}
+              feature={isOverdue}
+            />
+          )}
         </View>
         {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: Space.md }} />}
         {analyticsError && <Text style={{ color: Colors.text, fontSize: 12, marginBottom: Space.md }}>Analytics unavailable — try again later.</Text>}
@@ -1031,7 +1057,7 @@ function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = f
         {(task.sessionsOnTask > 0 || chip) && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
             {task.sessionsOnTask > 0 && <Text style={{ color: isActive ? Colors.primarySoft : Colors.subtext, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
-            {chip && <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
+            {chip && <View accessible accessibilityLabel={chip.a11yLabel} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
           </View>
         )}
         {progressFrac !== null && (
@@ -1401,36 +1427,47 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
   // One clock for the whole pass. The previous `new Date()` inside .map ran once
   // per task, so a list evaluated across midnight could measure two different
   // "todays" in one render.
+  // One clock for the whole pass, and one ordering rule shared with the two
+  // gates that decide whether this card renders at all.
   const now = new Date();
-  const urgent = tasks
-    .map((t) => ({ ...t, daysLeft: daysUntilDue(t.dueDate, now) }))
-    .filter((t): t is typeof t & { daysLeft: number } =>
-      t.daysLeft !== null && t.daysLeft >= 0 && t.daysLeft <= URGENCY_WINDOW.rotation
-      && isUrgencyEligible(t, t.daysLeft))
-    .sort((a, b) => a.daysLeft - b.daysLeft)
-    .slice(0, 3);
+  const urgent = urgentTasks(tasks, now).slice(0, 3);
 
   if (urgent.length === 0) return null;
 
-  const urgencyColor = (d: number) => d <= 2 ? ROSE : d <= 5 ? AMBER : Colors.subtext;
+  const overdue = urgent.filter((u) => u.daysLeft < 0).length;
+  // Amber for a fresh slip, rose once it has been sitting. ROSE is this app's
+  // destructive colour — the delete button, and `error` itself in the light
+  // palette — so it has to be earned rather than applied to anything late.
+  const dayColor = (d: number) => (d < -2 ? ROSE : d <= 1 ? AMBER : Colors.subtext);
+  const dayLabel = (d: number) =>
+    d < 0 ? formatOverdue(d) : d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : `${d}d`;
+  // "Due soon" is simply false once overdue rows are in the list, and calling the
+  // whole card "Overdue" mislabels the today-items sitting underneath.
+  const heading = overdue === 0
+    ? '⚠ Due soon'
+    : overdue === urgent.length
+      ? `⚠ ${overdue} overdue`
+      : '⚠ Needs attention';
+  const accent = overdue > 0 ? AMBER : ROSE;
 
   return (
-    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: ROSE }]}>
-      <HeroLabel text="⚠ Due soon" color={ROSE} />
-      {urgent.map((t) => (
+    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: accent }]}>
+      <HeroLabel text={heading} color={accent} />
+      {urgent.map(({ task: t, daysLeft }) => (
         <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-          <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: urgencyColor(t.daysLeft), marginRight: 10 }} />
+          <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: dayColor(daysLeft), marginRight: 10 }} />
           <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{t.title}</Text>
-          <Text style={{ color: urgencyColor(t.daysLeft), fontSize: 12, fontWeight: '700', marginLeft: 8 }}>
-            {t.daysLeft === 0 ? 'Today' : t.daysLeft === 1 ? 'Tomorrow' : `${t.daysLeft}d`}
+          <Text style={{ color: dayColor(daysLeft), fontSize: 12, fontWeight: '700', marginLeft: 8 }}>
+            {dayLabel(daysLeft)}
           </Text>
         </View>
       ))}
       <TouchableOpacity
-        onPress={() => onSelectAndFocus(urgent[0].id)}
-        style={{ marginTop: 4, backgroundColor: ROSE + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: ROSE + '40' }}
+        onPress={() => onSelectAndFocus(urgent[0].task.id)}
+        accessibilityRole="button"
+        style={{ marginTop: 4, backgroundColor: accent + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: accent + '40' }}
       >
-        <Text style={{ color: ROSE, fontWeight: '700', fontSize: 13 }}>Focus on this now →</Text>
+        <Text style={{ color: accent, fontWeight: '700', fontSize: 13 }}>Focus on this now →</Text>
       </TouchableOpacity>
     </View>
   );
@@ -1655,10 +1692,10 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
   const availableCards = CARD_ORDER.filter((c) => {
     switch (c) {
       case 'urgency':
-        // Same predicate selectHeroCard uses, at the rotation horizon rather
-        // than the lead one. Previously this was a third hand-written copy that
-        // had already drifted: it lacked the recurring-instance exclusion.
-        return hasUrgentTask(tasks, new Date(), URGENCY_WINDOW.rotation);
+        // Whatever the card would actually render. Asking the same function
+        // rather than re-deriving the rule is what stops this gate and the card
+        // disagreeing — which they did, in two different ways, before.
+        return urgentTasks(tasks, new Date()).length > 0;
       case 'goal_progress': return goals.some((g) => !g.isCompleted && !g.isArchived);
       case 'time_nudge':    return peakHour !== null;
       case 'momentum':      return currentStreak > 0;

@@ -1,6 +1,7 @@
 import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
 import { calcDaysUntilDue } from '../store/selectors/tasks';
+import { parseLocalDate } from '../utils/date';
 import type { ThemeColors } from '../hooks/useTheme';
 
 /**
@@ -43,19 +44,100 @@ export function formatDuration(seconds: number): string {
   if (seconds >= 3600) { const h = Math.floor(seconds/3600); const m = Math.round((seconds%3600)/60); return m > 0 ? `${h}h ${m}m` : `${h}h`; }
   return `${Math.round(seconds/60)}m`;
 }
-export function getDueChip(task: Task, c: ThemeColors, now: Date = new Date()): { label: string; bg: string; fg: string } | null {
+/**
+ * How long past due, in the same d/w/mo shape formatLastWorked uses.
+ *
+ * Bounded on purpose. An unbounded day count renders "178d overdue" on a task
+ * abandoned in spring, which is false precision — nobody triages on 178 versus
+ * 179 — and it is the most punitive string this app can produce. Thresholds are
+ * copied from formatLastWorked deliberately so the two cannot drift.
+ */
+export function formatOverdue(days: number): string {
+  const d = Math.abs(days);
+  if (d < 7) return `${d}d overdue`;
+  if (d < 30) return `${Math.floor(d / 7)}w overdue`;
+  return `${Math.floor(d / 30)}mo overdue`;
+}
+
+/**
+ * The due-date chip for a task row: what it says, how it is tinted, and what
+ * VoiceOver reads.
+ *
+ * The whole ladder is here rather than the overdue branch alone, because the
+ * other branches were the worse bug. A task due TODAY used to render the
+ * weekday name — "⚠ Mon" — which reads as "due on Monday". Seven days out
+ * rendered "Due Mon", colliding with the same weekday the week after and every
+ * week after that. Meanwhile the urgency card forty pixels away said "Today"
+ * and "Tomorrow". One fact, two vocabularies, one screen.
+ *
+ * Colour runs in two tiers, not one. ROSE is this app's DESTRUCTIVE colour —
+ * the delete-goal button, and `error` itself in the light palette — and a task
+ * that is one day late is neither destructive nor broken. So a fresh slip gets
+ * `warning`, which is already this app's "behind, not broken" (SelfComparisonCard
+ * uses it for "you can catch up"), and ROSE starts at three days, where it is
+ * earned. The two tiers also do triage work one tier cannot: amber is today's
+ * slip, rose is a decision you have been avoiding.
+ *
+ * No "⚠" in the label. The chip is already tinted, so the glyph is decoration
+ * for sighted users and noise for everyone else — VoiceOver read every overdue
+ * row as "warning, overdue". Colour carries the alarm; `a11yLabel` carries the
+ * meaning.
+ */
+export function getDueChip(
+  task: Task,
+  c: ThemeColors,
+  now: Date = new Date(),
+): { label: string; bg: string; fg: string; a11yLabel: string } | null {
   if (!task.dueDate) return null;
-  if (task.isCompleted) return { label: '✓ Done', bg: c.tealDim, fg: c.accent };
+  if (task.isCompleted) {
+    return { label: '✓ Done', bg: c.tealDim, fg: c.accent, a11yLabel: 'Done' };
+  }
   const daysLeft = calcDaysUntilDue(task, now);
+  // null covers a malformed dueDate as well as a missing one. Without this the
+  // old code fell through to `Due ${dayName}` and rendered "Due Invalid Date" —
+  // reachable, because tasks hydrate from an unvalidated AsyncStorage cache.
   if (daysLeft === null) return null;
-  // Recurring instances are day-of habits, not deadlines — a past-due one is just a
-  // stale instance awaiting cleanup on the next spawn, so never flag it "overdue".
+
+  // A past-due recurring instance is a stale row awaiting the next spawn, not a
+  // missed deadline. One due today is a habit you still have time to do.
   if (task.parentTaskId && daysLeft < 0) return null;
-  const dueDateOnly = task.dueDate.substring(0, 10);
-  const dayName = new Date(dueDateOnly + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-  if (daysLeft < 0) return { label: '⚠ Overdue', bg: c.ROSE_DIM, fg: c.ROSE };
-  if (daysLeft <= 3) return { label: `⚠ ${dayName}`, bg: c.ROSE_DIM, fg: c.ROSE };
-  return { label: `Due ${dayName}`, bg: c.inactive, fg: c.subtext };
+
+  if (daysLeft < 0) {
+    const label = formatOverdue(daysLeft);
+    const fresh = daysLeft >= -2;
+    return {
+      label,
+      bg: fresh ? c.warning + '1A' : c.ROSE_DIM,
+      fg: fresh ? c.warning : c.ROSE,
+      a11yLabel: label,
+    };
+  }
+  if (daysLeft === 0) {
+    return { label: 'Due today', bg: c.warning + '1A', fg: c.warning, a11yLabel: 'Due today' };
+  }
+  if (daysLeft === 1) {
+    return { label: 'Due tomorrow', bg: c.warning + '1A', fg: c.warning, a11yLabel: 'Due tomorrow' };
+  }
+  const due = parseLocalDate(task.dueDate.substring(0, 10));
+  if (daysLeft <= 6) {
+    const dayName = due.toLocaleDateString('en-US', { weekday: 'short' });
+    return {
+      label: `Due ${dayName}`,
+      bg: c.warning + '1A',
+      fg: c.warning,
+      a11yLabel: `Due in ${daysLeft} days, ${dayName}`,
+    };
+  }
+  if (daysLeft <= 13) {
+    return {
+      label: `Due in ${daysLeft}d`,
+      bg: c.inactive,
+      fg: c.subtext,
+      a11yLabel: `Due in ${daysLeft} days`,
+    };
+  }
+  const date = due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return { label: `Due ${date}`, bg: c.inactive, fg: c.subtext, a11yLabel: `Due ${date}` };
 }
 
 // Time-per-category grouping used to live here, resolving each session's tag on

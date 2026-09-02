@@ -11,6 +11,7 @@ import { useTimerStore, initTimerStore } from '../stores/timerStore';
 import { useSocialStore } from '../stores/socialStore';
 import { useGoalStore } from '../stores/goalStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
+import { useHeroCardStore } from '../stores/heroCardStore';
 import { useTheme, useIsDark } from '../hooks/useTheme';
 import UnlockOverlay from '../components/achievements/UnlockOverlay';
 import { setupNotifications, configureNotificationHandler } from '../services/notifications';
@@ -29,6 +30,10 @@ async function hydrateForUser(userId: string): Promise<void> {
   await useTaskStore.getState().hydrateTasks(userId);
   await useGoalStore.getState().hydrateGoals(userId);
   await useTimerStore.getState().hydrate(userId);
+  // Before the first paint of the Tasks tab: without the baseline the hero
+  // rotation thinks it has never shown overdue work, and the urgency card leads
+  // again on every cold launch — the behaviour the cap exists to prevent.
+  await useHeroCardStore.getState().load(userId);
 }
 
 // Non-blocking refresh. Deliberately unawaited — these populate screens the

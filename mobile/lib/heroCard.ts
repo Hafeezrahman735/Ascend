@@ -53,7 +53,17 @@ function diffMinutes(a: Date, b: Date): number {
  * three separate copies of this predicate — one here, one in the availableCards
  * filter, one inside UrgencyCard itself.
  */
-export const URGENCY_WINDOW = { lead: 3, rotation: 6 } as const;
+export const URGENCY_WINDOW = {
+  lead: 3,
+  rotation: 6,
+  /**
+   * How far back overdue work still counts. Without a floor, one task abandoned
+   * in March satisfies "overdue" forever, and since the manual override resets
+   * on every tab focus the card would return on every single app open until the
+   * task is deleted. Genuinely dead work ages out instead.
+   */
+  floor: -14,
+} as const;
 
 /**
  * Whether a task belongs on the urgency card, given how far off it is.
@@ -82,6 +92,100 @@ export function hasUrgentTask(tasks: Task[], now: Date, horizon: number): boolea
   });
 }
 
+/** Tasks inside the urgency window, overdue included, in the order they should be shown. */
+export function urgentTasks(tasks: Task[], now: Date): { task: Task; daysLeft: number }[] {
+  const found: { task: Task; daysLeft: number }[] = [];
+  for (const task of tasks) {
+    const daysLeft = daysUntilDue(task.dueDate, now);
+    if (daysLeft === null) continue;
+    if (daysLeft > URGENCY_WINDOW.rotation || daysLeft < URGENCY_WINDOW.floor) continue;
+    if (!isUrgencyEligible(task, daysLeft)) continue;
+    found.push({ task, daysLeft });
+  }
+  return found.sort(compareUrgency);
+}
+
+/** How many of those are actually past due. */
+export function overdueCount(tasks: Task[], now: Date): number {
+  return urgentTasks(tasks, now).filter((u) => u.daysLeft < 0).length;
+}
+
+/**
+ * Order by what to do next, not by what is worst.
+ *
+ * Sorting by days ascending — the obvious choice, and what the card did — puts
+ * the MOST overdue item first. That is close to a definition of the task the
+ * user has already decided not to do, and with only three rows on the card it
+ * pushes today's real work off the bottom. So: today, then tomorrow, then
+ * overdue, then the rest of the week; and within overdue, LEAST overdue first,
+ * because a task one day late is the one still worth rescuing.
+ */
+function urgencyBand(daysLeft: number): number {
+  if (daysLeft === 0) return 0;
+  if (daysLeft === 1) return 1;
+  if (daysLeft < 0) return 2;
+  return 3;
+}
+
+function compareUrgency(
+  a: { task: Task; daysLeft: number },
+  b: { task: Task; daysLeft: number },
+): number {
+  const band = urgencyBand(a.daysLeft) - urgencyBand(b.daysLeft);
+  if (band !== 0) return band;
+  // Within a band: overdue counts up toward zero, everything else counts away.
+  const byDay = a.daysLeft < 0 ? b.daysLeft - a.daysLeft : a.daysLeft - b.daysLeft;
+  if (byDay !== 0) return byDay;
+  // Stable tiebreak. Input order is the server's `order`/`createdAt`, which says
+  // nothing about urgency, so decide it here rather than inherit it.
+  return a.task.id < b.task.id ? -1 : a.task.id > b.task.id ? 1 : 0;
+}
+
+/** What the app remembers about overdue work between launches. */
+export interface HeroCardMemory {
+  /** The largest overdue count this baseline has seen. */
+  overdueSeen: number;
+  /** getLocalDateString() of the last day urgency was allowed to lead. */
+  ledOn: string | null;
+}
+
+export const EMPTY_HERO_MEMORY: HeroCardMemory = { overdueSeen: 0, ledOn: null };
+
+/**
+ * Whether overdue work may TAKE the hero slot right now.
+ *
+ * This governs leading, never existing: the urgency card stays in the rotation
+ * either way, so the dot never disappears and the user can always swipe to it.
+ * A card that vanished would read as the app hiding overdue work.
+ *
+ * The rule is once a day, and again within the day only if the pile grows.
+ * Without it the card leads forever: `useHeroCard` resets the manual override on
+ * every tab focus, so swiping away does not survive leaving the tab, and every
+ * encouraging card in the rotation becomes permanently unreachable for anyone
+ * who has fallen behind. That is a state machine with no exit.
+ *
+ * Note this is only consulted when overdue work is the ONLY reason urgency would
+ * lead. A task due today or tomorrow still wins the slot unconditionally, as it
+ * always has.
+ */
+export function shouldUrgencyLead(
+  memory: HeroCardMemory,
+  count: number,
+  today: string,
+): boolean {
+  if (count <= 0) return false;
+  return count > memory.overdueSeen || memory.ledOn !== today;
+}
+
+/**
+ * The baseline after urgency has led. Resetting on zero is what stops a user who
+ * clears five items and later acquires three from never seeing the card again.
+ */
+export function nextHeroMemory(count: number, today: string): HeroCardMemory {
+  if (count <= 0) return EMPTY_HERO_MEMORY;
+  return { overdueSeen: count, ledOn: today };
+}
+
 // ─── Pure selection function — NO store reads ─────────────────────────────────
 
 // Note: 'recent_activity' is deliberately absent from the priority chain below.
@@ -94,14 +198,27 @@ export function selectHeroCard(params: {
   sessionHistory: SessionRecord[];
   currentStreak: number;
   peakHour: number | null;
+  /** What the app remembers about overdue work. Defaults to knowing nothing. */
+  memory?: HeroCardMemory;
   now?: Date;
 }): HeroCardType {
-  const { tasks, goals, sessionHistory, currentStreak, peakHour, now = new Date() } = params;
+  const {
+    tasks, goals, sessionHistory, currentStreak, peakHour,
+    memory = EMPTY_HERO_MEMORY, now = new Date(),
+  } = params;
   const hour = now.getHours();
 
   // Priority 1 — Urgency. One shared predicate with the rotation filter and the
   // card itself, so the three can no longer disagree about who is urgent.
+  // Something due within the lead window wins the slot unconditionally, exactly
+  // as before.
   if (hasUrgentTask(tasks, now, URGENCY_WINDOW.lead)) return 'urgency';
+
+  // Priority 1b — overdue work may take the slot, but only when it is news.
+  // See shouldUrgencyLead for why this is capped and the case above is not.
+  if (shouldUrgencyLead(memory, overdueCount(tasks, now), getLocalDateString(now))) {
+    return 'urgency';
+  }
 
   // Priority 2 — Time nudge: within ±30 min of peak hour, no session in last 60 min
   if (peakHour !== null && sessionHistory.length >= 5) {

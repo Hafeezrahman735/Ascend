@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CARD_ORDER, URGENCY_WINDOW, isUrgencyEligible, hasUrgentTask, selectHeroCard,
+  urgentTasks, overdueCount, shouldUrgencyLead, nextHeroMemory, EMPTY_HERO_MEMORY,
 } from './heroCard';
 import type { Task } from '../types';
 
@@ -101,5 +102,120 @@ describe('selectHeroCard', () => {
 
   it('always returns a card that exists in the rotation', () => {
     expect(CARD_ORDER).toContain(selectHeroCard({ ...base, tasks: [] }));
+  });
+});
+
+describe('urgentTasks — ordering and the floor', () => {
+  const NOW2 = new Date(2026, 8, 1, 12, 0);
+  const t = (id: string, dueDate: string) => task({ id, dueDate });
+
+  it('leads with today, not with the most overdue', () => {
+    // The regression this guards: sorting by days ascending put the MOST overdue
+    // item first, which is close to a definition of the task the user has already
+    // decided not to do — and with three rows it pushed today's real work off.
+    const ordered = urgentTasks(
+      [t('a', '2026-08-20'), t('b', '2026-09-01'), t('c', '2026-08-30')],
+      NOW2,
+    );
+    expect(ordered.map((u) => u.task.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('puts tomorrow above overdue, and least-overdue first', () => {
+    const ordered = urgentTasks(
+      [t('late', '2026-08-25'), t('tmrw', '2026-09-02'), t('slip', '2026-08-31')],
+      NOW2,
+    );
+    expect(ordered.map((u) => u.task.id)).toEqual(['tmrw', 'slip', 'late']);
+  });
+
+  it('drops work older than the floor so it cannot haunt the card forever', () => {
+    expect(urgentTasks([t('ancient', '2026-08-01')], NOW2)).toHaveLength(0);
+    expect(urgentTasks([t('inside', '2026-08-18')], NOW2)).toHaveLength(1);
+  });
+
+  it('is inclusive at exactly the floor and exactly the ceiling', () => {
+    expect(urgentTasks([t('floor', '2026-08-18')], NOW2)).toHaveLength(1);   // -14
+    expect(urgentTasks([t('below', '2026-08-17')], NOW2)).toHaveLength(0);   // -15
+    expect(urgentTasks([t('ceil', '2026-09-07')], NOW2)).toHaveLength(1);    // +6
+    expect(urgentTasks([t('above', '2026-09-08')], NOW2)).toHaveLength(0);   // +7
+  });
+
+  it('breaks ties stably rather than inheriting server order', () => {
+    const a = urgentTasks([t('z', '2026-09-03'), t('a', '2026-09-03')], NOW2);
+    const b = urgentTasks([t('a', '2026-09-03'), t('z', '2026-09-03')], NOW2);
+    expect(a.map((u) => u.task.id)).toEqual(b.map((u) => u.task.id));
+  });
+
+  it('counts only the past-due ones as overdue', () => {
+    expect(overdueCount([t('x', '2026-08-30'), t('y', '2026-09-03')], NOW2)).toBe(1);
+  });
+});
+
+describe('shouldUrgencyLead — the cap that stops a permanent red card', () => {
+  const TODAY = '2026-09-01';
+
+  it('never leads with nothing overdue', () => {
+    expect(shouldUrgencyLead(EMPTY_HERO_MEMORY, 0, TODAY)).toBe(false);
+  });
+
+  it('leads the first time overdue work appears', () => {
+    expect(shouldUrgencyLead(EMPTY_HERO_MEMORY, 1, TODAY)).toBe(true);
+  });
+
+  it('yields once it has already led today with the same pile', () => {
+    // Without this the card returns on every single app open, forever: the manual
+    // override resets on every tab focus, so swiping away never survives.
+    expect(shouldUrgencyLead({ overdueSeen: 3, ledOn: TODAY }, 3, TODAY)).toBe(false);
+  });
+
+  it('leads again when the pile grows within the day', () => {
+    expect(shouldUrgencyLead({ overdueSeen: 3, ledOn: TODAY }, 4, TODAY)).toBe(true);
+  });
+
+  it('leads again tomorrow', () => {
+    expect(shouldUrgencyLead({ overdueSeen: 3, ledOn: '2026-08-31' }, 3, TODAY)).toBe(true);
+  });
+
+  it('does not lead when the pile shrank but the day has not turned', () => {
+    expect(shouldUrgencyLead({ overdueSeen: 5, ledOn: TODAY }, 2, TODAY)).toBe(false);
+  });
+
+  it('resets on zero, so a cleared list can raise the card again later', () => {
+    // The inverse failure: clear five items, acquire three, and a stale baseline
+    // of 5 would mean the card never appears again.
+    const cleared = nextHeroMemory(0, TODAY);
+    expect(cleared).toEqual(EMPTY_HERO_MEMORY);
+    expect(shouldUrgencyLead(cleared, 3, TODAY)).toBe(true);
+  });
+});
+
+describe('the cap governs leading, never existing', () => {
+  it('leaves an overdue task inside the window even when it may not lead', () => {
+    // The card must stay in the rotation so the dot never disappears. A card that
+    // vanished would read as the app hiding overdue work, not as it moving on.
+    const NOW2 = new Date(2026, 8, 1, 12, 0);
+    const tasks = [task({ id: 'a', dueDate: '2026-08-30' })];
+    expect(shouldUrgencyLead({ overdueSeen: 1, ledOn: '2026-09-01' }, 1, '2026-09-01')).toBe(false);
+    expect(urgentTasks(tasks, NOW2)).toHaveLength(1);
+  });
+
+  it('lets a task due today lead regardless of the overdue cap', () => {
+    const NOW2 = new Date(2026, 8, 1, 12, 0);
+    const card = selectHeroCard({
+      tasks: [task({ id: 'a', dueDate: '2026-09-01' }), task({ id: 'b', dueDate: '2026-08-30' })],
+      goals: [], sessionHistory: [], currentStreak: 0, peakHour: null,
+      memory: { overdueSeen: 9, ledOn: '2026-09-01' }, now: NOW2,
+    });
+    expect(card).toBe('urgency');
+  });
+
+  it('yields the slot when overdue is capped and nothing else is due', () => {
+    const NOW2 = new Date(2026, 8, 1, 12, 0);
+    const card = selectHeroCard({
+      tasks: [task({ id: 'b', dueDate: '2026-08-30' })],
+      goals: [], sessionHistory: [], currentStreak: 0, peakHour: null,
+      memory: { overdueSeen: 1, ledOn: '2026-09-01' }, now: NOW2,
+    });
+    expect(card).not.toBe('urgency');
   });
 });

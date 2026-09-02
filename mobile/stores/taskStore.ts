@@ -444,6 +444,10 @@ export function initTaskStore(): void {
       useTaskStore.getState().clearTasks(userId);
       // Lazy import to avoid circular deps
       import('./goalStore').then(({ useGoalStore }) => useGoalStore.getState().clearGoals(userId));
+      // The hero baseline is keyed per user, so this is belt-and-braces — but the
+      // in-memory copy would otherwise carry one account's overdue count into the
+      // next sign-in on the same device.
+      import('./heroCardStore').then(({ useHeroCardStore }) => useHeroCardStore.getState().clear(userId));
     }
   });
 }

@@ -10,7 +10,9 @@ import {
   formatLastWorked,
   formatConsistency,
   compactDuration,
+  getDueChip,
 } from './taskMetrics';
+import type { ThemeColors } from '../hooks/useTheme';
 import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
 
@@ -207,5 +209,106 @@ describe('formatConsistency', () => {
 
   it('renders an em-dash for a task never worked', () => {
     expect(formatConsistency(null)).toBe('—');
+  });
+});
+
+// ─── getDueChip ──────────────────────────────────────────────────────────────
+
+/**
+ * A sentinel palette rather than the real one. Asserting `fg === 'ROSE'` also
+ * tests the tint MAPPING, which real hex values could not: two theme tokens can
+ * share a colour, and then a test that passes proves nothing about which token
+ * was chosen.
+ */
+const C = {
+  tealDim: 'tealDim', accent: 'accent',
+  ROSE_DIM: 'ROSE_DIM', ROSE: 'ROSE',
+  warning: 'warning', inactive: 'inactive', subtext: 'subtext',
+} as unknown as ThemeColors;
+
+function dueTask(over: Partial<Task> = {}): Task {
+  return {
+    id: 't1', title: 'T', isCompleted: false, isArchived: false,
+    dueDate: null, parentTaskId: null, tags: [], priority: 'medium',
+    sessionsOnTask: 0, totalTimeOnTask: 0, sessionDates: [],
+    ...over,
+  } as unknown as Task;
+}
+
+describe('getDueChip', () => {
+  const NOW = new Date(2026, 8, 1, 12, 0); // Tue 1 Sep 2026
+
+  it('returns null with no due date', () => {
+    expect(getDueChip(dueTask(), C, NOW)).toBeNull();
+  });
+
+  it('returns null for a malformed due date rather than "Due Invalid Date"', () => {
+    // Reachable: tasks hydrate from an unvalidated AsyncStorage cache.
+    expect(getDueChip(dueTask({ dueDate: 'not-a-date' }), C, NOW)).toBeNull();
+  });
+
+  it('says Done for a completed task, whatever its date', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-01-01', isCompleted: true }), C, NOW)?.label)
+      .toBe('✓ Done');
+  });
+
+  it('says "Due today", not a weekday name', () => {
+    // The old ladder rendered "⚠ Tue" here, which reads as "due on Tuesday".
+    expect(getDueChip(dueTask({ dueDate: '2026-09-01' }), C, NOW)?.label).toBe('Due today');
+  });
+
+  it('says "Due tomorrow"', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-09-02' }), C, NOW)?.label).toBe('Due tomorrow');
+  });
+
+  it('names the weekday only inside the coming week', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-09-04' }), C, NOW)?.label).toBe('Due Fri');
+  });
+
+  it('switches to a day count past the week, so weekdays cannot collide', () => {
+    // "Due Fri" a week out and "Due Fri" tomorrow-ish were indistinguishable.
+    expect(getDueChip(dueTask({ dueDate: '2026-09-11' }), C, NOW)?.label).toBe('Due in 10d');
+  });
+
+  it('switches to a date past a fortnight', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-09-24' }), C, NOW)?.label).toBe('Due Sep 24');
+  });
+
+  it('carries how overdue it is, which is the whole point', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-08-27' }), C, NOW)?.label).toBe('5d overdue');
+  });
+
+  it('bounds the overdue count instead of rendering 178d', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-08-11' }), C, NOW)?.label).toBe('3w overdue');
+    expect(getDueChip(dueTask({ dueDate: '2026-03-01' }), C, NOW)?.label).toBe('6mo overdue');
+  });
+
+  it('tints a fresh slip amber and a stale one rose', () => {
+    // ROSE is this app's destructive colour. One day late is not destructive.
+    expect(getDueChip(dueTask({ dueDate: '2026-08-31' }), C, NOW)?.fg).toBe('warning');
+    expect(getDueChip(dueTask({ dueDate: '2026-08-25' }), C, NOW)?.fg).toBe('ROSE');
+  });
+
+  it('keeps no warning glyph in the label', () => {
+    for (const d of ['2026-08-27', '2026-09-01', '2026-09-04']) {
+      expect(getDueChip(dueTask({ dueDate: d }), C, NOW)!.label).not.toContain('⚠');
+    }
+  });
+
+  it('gives VoiceOver the meaning rather than the glyph', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-08-27' }), C, NOW)?.a11yLabel).toBe('5d overdue');
+    expect(getDueChip(dueTask({ dueDate: '2026-09-04' }), C, NOW)?.a11yLabel)
+      .toBe('Due in 3 days, Fri');
+  });
+
+  it('hides a stale recurring instance but keeps one due today', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-08-27', parentTaskId: 'tpl' }), C, NOW)).toBeNull();
+    expect(getDueChip(dueTask({ dueDate: '2026-09-01', parentTaskId: 'tpl' }), C, NOW)?.label)
+      .toBe('Due today');
+  });
+
+  it('reads the server ISO form identically to the date-only form', () => {
+    expect(getDueChip(dueTask({ dueDate: '2026-08-27T00:00:00.000Z' }), C, NOW)?.label)
+      .toBe(getDueChip(dueTask({ dueDate: '2026-08-27' }), C, NOW)?.label);
   });
 });
