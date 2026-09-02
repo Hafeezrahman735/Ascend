@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View, Text, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, ActivityIndicator, Pressable, ScrollView,
@@ -8,11 +9,13 @@ import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTheme } from '../../hooks/useTheme';
 import PasswordField from '../../components/PasswordField';
+import { validateNewPassword } from '../../lib/passwordRules';
 
 type Mode = 'login' | 'register';
 
 export default function AuthScreen() {
   const Colors = useTheme();
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>('login');
   const { login, register, isLoading, error, clearError } = useAuthStore();
 
@@ -44,12 +47,9 @@ export default function AuthScreen() {
         setLocalError('All fields are required');
         return;
       }
-      if (password !== confirmPassword) {
-        setLocalError('Passwords do not match');
-        return;
-      }
-      if (password.length < 8) {
-        setLocalError('Password must be at least 8 characters');
+      const passwordError = validateNewPassword(password, confirmPassword);
+      if (passwordError) {
+        setLocalError(passwordError);
         return;
       }
       const success = await register(email, username, password);
@@ -186,6 +186,19 @@ export default function AuthScreen() {
                 onChangeText={(t) => { setConfirmPassword(t); clearError(); setLocalError(null); }}
                 autoComplete="new-password"
               />
+            )}
+
+            {mode === 'login' && (
+              <TouchableOpacity
+                onPress={() => router.push('/(auth)/forgot-password')}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={{ alignSelf: 'flex-end', marginTop: -6 }}
+              >
+                <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '600' }}>
+                  Forgot password?
+                </Text>
+              </TouchableOpacity>
             )}
 
             <TouchableOpacity

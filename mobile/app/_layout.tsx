@@ -108,8 +108,14 @@ export default function RootLayout() {
     // Having no user because the server was unreachable is not the same as being
     // signed out. Redirecting in that case strands the user on a login screen
     // that cannot work either — the retry screen below handles it instead.
+    // The password-reset screens must open even for someone already signed in.
+    // The link arrives by email and gets tapped on whatever device is to hand,
+    // which is often one that still holds a session — and without this the
+    // guard sees a user inside (auth) and bounces them to the tabs, so the
+    // emailed link simply appears broken.
+    const onPasswordReset = currentScreen === 'reset-password' || currentScreen === 'forgot-password';
     const needsAuth = !user && !inAuthGroup && !sessionUnavailable;
-    const needsApp = !!user && inAuthGroup && !onOnboarding;
+    const needsApp = !!user && inAuthGroup && !onOnboarding && !onPasswordReset;
 
     if (!needsAuth && !needsApp) return;
     if (isNavigating.current) return;
