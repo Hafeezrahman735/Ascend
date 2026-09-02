@@ -9,6 +9,7 @@ import {
 } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { handleAuthError, handleZodError } from '../../lib/errors';
+import { logAuthFailure } from '../../lib/authLog';
 export const authRouter = Router();
 
 // Email is stored and matched lowercase. Without this, signing up as
@@ -101,12 +102,19 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
+      // Logged separately from a bad password so credential stuffing (many
+      // unknown addresses) is distinguishable from a targeted guess against one
+      // real account. The RESPONSE stays identical either way — the distinction
+      // belongs in the log, never on the wire, or it becomes an enumeration
+      // oracle.
+      logAuthFailure(req, 'no_such_email', { email });
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
     }
 
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
+      logAuthFailure(req, 'bad_password', { email, userId: user.id });
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
     }
@@ -161,6 +169,7 @@ authRouter.post('/auth/refresh', async (req: Request, res: Response) => {
     try {
       payload = verifyRefreshToken(refreshToken);
     } catch {
+      logAuthFailure(req, 'refresh_invalid');
       res.status(401).json({ success: false, error: 'Invalid or expired refresh token' });
       return;
     }
@@ -169,6 +178,10 @@ authRouter.post('/auth/refresh', async (req: Request, res: Response) => {
       where: { token: refreshToken },
     });
     if (!storedToken) {
+      // A signature-valid token that is not in the table has already been spent.
+      // That is either a benign race or a replay of a stolen token, and it is
+      // the single most interesting line in this file.
+      logAuthFailure(req, 'refresh_unknown', { userId: payload.userId });
       res.status(401).json({ success: false, error: 'Refresh token not found' });
       return;
     }
@@ -177,6 +190,7 @@ authRouter.post('/auth/refresh', async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
     if (!user) {
+      logAuthFailure(req, 'refresh_user_missing', { userId: payload.userId });
       res.status(401).json({ success: false, error: 'User not found' });
       return;
     }

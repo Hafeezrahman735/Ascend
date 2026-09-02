@@ -5,7 +5,8 @@ import { projectRecurring } from './recurringProjection';
 import { config } from '../../config';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError, handleZodError } from '../../lib/errors';
-import { fetchGoogleEvents, isGoogleConfigured, buildAuthUrl, getOAuthClient } from '../../lib/googleCalendar';
+import { fetchGoogleEvents, isGoogleConfigured, buildAuthUrl, getOAuthClient, userIdFromOAuthState } from '../../lib/googleCalendar';
+import { seal } from '../../lib/secretBox';
 
 export const calendarRouter = Router();
 
@@ -19,8 +20,8 @@ export const calendarPublicRouter = Router();
 calendarPublicRouter.get('/calendar/google/callback', async (req: Request, res: Response) => {
   const deepLink = (status: string) => `${config.APP_DEEP_LINK_SCHEME}://calendar/google-${status}`;
   try {
-    const { code, state: userId } = req.query as { code?: string; state?: string };
-    if (!code || !userId) {
+    const { code, state } = req.query as { code?: string; state?: string };
+    if (!code || !state) {
       res.redirect(deepLink('failed'));
       return;
     }
@@ -29,8 +30,19 @@ calendarPublicRouter.get('/calendar/google/callback', async (req: Request, res: 
       return;
     }
 
-    // `state` comes back from Google unverified, so confirm it names a real user
-    // before writing a connection row against it.
+    // `state` is a short-lived token this server signed when the flow started,
+    // so a valid one proves the flow was begun BY this user. It previously
+    // carried the bare user id and was checked only for naming a real account —
+    // which meant anyone who knew a user id (they are returned by search, the
+    // leaderboards and /social/users/:userId) could attach their own Google
+    // account to that user's row.
+    const userId = userIdFromOAuthState(state);
+    if (!userId) {
+      console.warn('[oauth] google callback rejected: invalid or expired state');
+      res.redirect(deepLink('failed'));
+      return;
+    }
+
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
     if (!user) {
       res.redirect(deepLink('failed'));
@@ -50,16 +62,16 @@ calendarPublicRouter.get('/calendar/google/callback', async (req: Request, res: 
       create: {
         userId,
         provider: 'google',
-        accessToken: tokens.access_token,
+        accessToken: seal(tokens.access_token),
         // No refresh token means we could never renew — prompt:'consent' is set
         // precisely so Google always returns one.
-        refreshToken: tokens.refresh_token ?? '',
+        refreshToken: seal(tokens.refresh_token ?? ''),
         expiresAt,
         calendarId: 'primary',
       },
       update: {
-        accessToken: tokens.access_token,
-        ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+        accessToken: seal(tokens.access_token),
+        ...(tokens.refresh_token ? { refreshToken: seal(tokens.refresh_token) } : {}),
         expiresAt,
       },
     });

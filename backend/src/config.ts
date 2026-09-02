@@ -23,6 +23,14 @@ const envSchema = z.object({
   // Deep-link scheme the OAuth callback bounces back into. Matches `scheme` in
   // mobile/app.json.
   APP_DEEP_LINK_SCHEME: z.string().default('ascend'),
+
+  // Encrypts third-party OAuth tokens at rest (see lib/secretBox.ts). Optional
+  // so an existing deploy does not fail to boot the moment this ships; unset,
+  // tokens are stored as they always were. Generate with:
+  //   openssl rand -hex 32
+  TOKEN_ENCRYPTION_KEY: z.string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (openssl rand -hex 32)')
+    .optional(),
 });
 
 function loadConfig() {
