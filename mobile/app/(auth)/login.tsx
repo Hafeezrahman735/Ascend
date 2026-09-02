@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTheme } from '../../hooks/useTheme';
+import PasswordField from '../../components/PasswordField';
 
 type Mode = 'login' | 'register';
 
@@ -167,50 +168,24 @@ export default function AuthScreen() {
               />
             </View>
 
-            <View>
-              <Text style={{
-                color: Colors.subtext, fontSize: 12, fontWeight: '600',
-                letterSpacing: 0.5, marginBottom: 7,
-              }}>
-                PASSWORD
-              </Text>
-              <TextInput
-                style={{
-                  backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
-                  borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
-                  color: Colors.textBright, fontSize: 15,
-                }}
-                placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'}
-                placeholderTextColor={Colors.subtext}
-                value={password}
-                onChangeText={(t) => { setPassword(t); clearError(); setLocalError(null); }}
-                secureTextEntry
-                autoComplete={mode === 'register' ? 'new-password' : 'password'}
-              />
-            </View>
+            <PasswordField
+              label="PASSWORD"
+              accessibilityName="password"
+              placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'}
+              value={password}
+              onChangeText={(t) => { setPassword(t); clearError(); setLocalError(null); }}
+              autoComplete={mode === 'register' ? 'new-password' : 'password'}
+            />
 
             {mode === 'register' && (
-              <View>
-                <Text style={{
-                  color: Colors.subtext, fontSize: 12, fontWeight: '600',
-                  letterSpacing: 0.5, marginBottom: 7,
-                }}>
-                  CONFIRM PASSWORD
-                </Text>
-                <TextInput
-                  style={{
-                    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
-                    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
-                    color: Colors.textBright, fontSize: 15,
-                  }}
-                  placeholder="Confirm your password"
-                  placeholderTextColor={Colors.subtext}
-                  value={confirmPassword}
-                  onChangeText={(t) => { setConfirmPassword(t); clearError(); setLocalError(null); }}
-                  secureTextEntry
-                  autoComplete="new-password"
-                />
-              </View>
+              <PasswordField
+                label="CONFIRM PASSWORD"
+                accessibilityName="confirm password"
+                placeholder="Confirm your password"
+                value={confirmPassword}
+                onChangeText={(t) => { setConfirmPassword(t); clearError(); setLocalError(null); }}
+                autoComplete="new-password"
+              />
             )}
 
             <TouchableOpacity
