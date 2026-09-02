@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router';
 import { useGamificationStore } from '../stores/gamificationStore';
 import type { Task, TaskGoal } from '../types';
 import type { SessionRecord } from '../store/sync';
+import { daysUntilDue } from '../utils/date';
 
 export type HeroCardType =
   | 'urgency'
@@ -25,12 +26,6 @@ export const CARD_ORDER: HeroCardType[] = [
 
 function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function diffCalendarDays(a: Date, b: Date): number {
-  const aD = new Date(a.getFullYear(), a.getMonth(), a.getDate());
-  const bD = new Date(b.getFullYear(), b.getMonth(), b.getDate());
-  return Math.round((aD.getTime() - bD.getTime()) / 86_400_000);
 }
 
 function isTodayLocal(ts: number): boolean {
@@ -61,8 +56,8 @@ export function selectHeroCard(params: {
   // Priority 1 — Urgency: any task due within 3 calendar days
   const hasUrgent = tasks.some((t) => {
     if (t.isCompleted || t.isArchived || !t.dueDate) return false;
-    const days = diffCalendarDays(new Date(t.dueDate), now);
-    return days >= 0 && days <= 3;
+    const days = daysUntilDue(t.dueDate, now);
+    return days !== null && days >= 0 && days <= 3;
   });
   if (hasUrgent) return 'urgency';
 

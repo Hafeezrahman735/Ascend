@@ -38,7 +38,7 @@ import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '
 import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
 import {
-  daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
+  daysUntilDue, daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
   parseLocalDate, pickerAcceptsValue, pickerMinimumDate,
 } from '../../utils/date';
 import {
@@ -50,7 +50,7 @@ import {
   getMonday, isToday, formatSeconds,
   formatDuration, getDueChip, isYesterdayLocal,
   startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
-  diffCalendarDaysTasks, getPeakHour, formatPeakWindow, getCompletionRate,
+  getPeakHour, formatPeakWindow, getCompletionRate,
   compactDuration,
   formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
@@ -1397,10 +1397,14 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
   const { ROSE } = Colors;
   const AMBER = Colors.warning;
   const styles = useMemo(() => getStyles(Colors), [Colors]);
+  // One clock for the whole pass. The previous `new Date()` inside .map ran once
+  // per task, so a list evaluated across midnight could measure two different
+  // "todays" in one render.
+  const now = new Date();
   const urgent = tasks
     .filter((t) => !t.isCompleted && !t.isArchived && !!t.dueDate)
-    .map((t) => ({ ...t, daysLeft: diffCalendarDaysTasks(new Date(t.dueDate!), new Date()) }))
-    .filter((t) => t.daysLeft >= 0 && t.daysLeft <= 6)
+    .map((t) => ({ ...t, daysLeft: daysUntilDue(t.dueDate, now) }))
+    .filter((t): t is typeof t & { daysLeft: number } => t.daysLeft !== null && t.daysLeft >= 0 && t.daysLeft <= 6)
     .sort((a, b) => a.daysLeft - b.daysLeft)
     .slice(0, 3);
 
@@ -1651,8 +1655,8 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
       case 'urgency':
         return tasks.some((t) => {
           if (t.isCompleted || t.isArchived || !t.dueDate) return false;
-          const d = diffCalendarDaysTasks(new Date(t.dueDate), new Date());
-          return d >= 0 && d <= 6;
+          const d = daysUntilDue(t.dueDate, new Date());
+          return d !== null && d >= 0 && d <= 6;
         });
       case 'goal_progress': return goals.some((g) => !g.isCompleted && !g.isArchived);
       case 'time_nudge':    return peakHour !== null;

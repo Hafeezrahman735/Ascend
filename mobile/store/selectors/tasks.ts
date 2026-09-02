@@ -1,4 +1,5 @@
 import { Task } from '../../types';
+import { daysUntilDue } from '../../utils/date';
 
 export function calcSelectedTask(tasks: Task[], selectedTaskId: string | null): Task | null {
   if (!selectedTaskId) return null;
@@ -14,11 +15,9 @@ export function calcDaysWorked(task: Task): number {
   return new Set(task.sessionDates).size;
 }
 
-export function calcDaysUntilDue(task: Task): number | null {
-  if (!task.dueDate) return null;
-  // Normalize both "YYYY-MM-DD" (local form) and full ISO strings from the backend
-  const dateOnly = task.dueDate.substring(0, 10);
-  const due = new Date(dateOnly + 'T00:00:00').getTime();
-  const now = new Date().setHours(0, 0, 0, 0);
-  return Math.ceil((due - now) / 86_400_000);
+export function calcDaysUntilDue(task: Task, now: Date = new Date()): number | null {
+  // Delegates rather than computing. The local-midnight subtraction that used to
+  // live here returned -0 across a DST boundary, and `-0 < 0` is false, so every
+  // overdue check downstream silently failed on that day.
+  return daysUntilDue(task.dueDate, now);
 }

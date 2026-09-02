@@ -43,10 +43,10 @@ export function formatDuration(seconds: number): string {
   if (seconds >= 3600) { const h = Math.floor(seconds/3600); const m = Math.round((seconds%3600)/60); return m > 0 ? `${h}h ${m}m` : `${h}h`; }
   return `${Math.round(seconds/60)}m`;
 }
-export function getDueChip(task: Task, c: ThemeColors): { label: string; bg: string; fg: string } | null {
+export function getDueChip(task: Task, c: ThemeColors, now: Date = new Date()): { label: string; bg: string; fg: string } | null {
   if (!task.dueDate) return null;
   if (task.isCompleted) return { label: '✓ Done', bg: c.tealDim, fg: c.accent };
-  const daysLeft = calcDaysUntilDue(task);
+  const daysLeft = calcDaysUntilDue(task, now);
   if (daysLeft === null) return null;
   // Recurring instances are day-of habits, not deadlines — a past-due one is just a
   // stale instance awaiting cleanup on the next spawn, so never flag it "overdue".
@@ -103,11 +103,11 @@ export function getLastWeekCompletionRate(tasks: Task[]): number | null {
   return Math.round((done.length / planned.length) * 100);
 }
 
-export function diffCalendarDaysTasks(a: Date, b: Date): number {
-  const aD = new Date(a.getFullYear(), a.getMonth(), a.getDate());
-  const bD = new Date(b.getFullYear(), b.getMonth(), b.getDate());
-  return Math.round((aD.getTime() - bD.getTime()) / 86_400_000);
-}
+// diffCalendarDaysTasks lived here. It parsed Task.dueDate as an instant and then
+// read LOCAL calendar fields off it, and because dueDate is stored at UTC midnight
+// that measured a day early for every user west of UTC. Callers use
+// daysUntilDue(task.dueDate, now) from utils/date.ts, which compares UTC midnights
+// on both sides and takes the raw string rather than a pre-parsed Date.
 
 // ─── Peak focus ───────────────────────────────────────────────────────────────
 /**

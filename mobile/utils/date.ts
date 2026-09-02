@@ -52,6 +52,45 @@ export function daysUntilLocalDate(target: string | null | undefined): number | 
   return Math.round((targetUTC - todayUTC) / 86400000);
 }
 
+/**
+ * Whole calendar days from `now` until a task's due date. Negative is overdue,
+ * 0 is today.
+ *
+ * This exists because the task path had three different answers to one question
+ * and two of them were wrong:
+ *
+ *   - `calcDaysUntilDue` used Math.ceil over LOCAL midnights. Across a
+ *     spring-forward boundary the raw difference is -23h, and Math.ceil(-23/24)
+ *     is -0. `-0 < 0` is false in JavaScript, so a task one day overdue did not
+ *     take the overdue branch at all — it fell through and rendered as due on a
+ *     weekday. The same `< 0` test guards the recurring-task exemption, so that
+ *     leaked on the same day.
+ *   - The hero card parsed `dueDate` as an instant and then read LOCAL calendar
+ *     fields off it. `Task.dueDate` is stored at UTC midnight, so west of UTC a
+ *     task due today measured -1 and was excluded by the `>= 0` floor, while a
+ *     task due tomorrow measured 0 and was labelled "Today". The row chip on the
+ *     same screen said 0. They disagreed by a day.
+ *
+ * Both sides are UTC midnights here, so the subtraction is exact whole days and
+ * never crosses a DST boundary mid-calculation. The regex is a prefix match, not
+ * anchored, because both shapes reach the client: the server's ISO DateTime and
+ * the date-only string `taskStore.createTask` writes optimistically.
+ *
+ * `now` is required rather than defaulted. An optional clock is how a test
+ * passes and production drifts.
+ */
+export function daysUntilDue(value: string | null | undefined, now: Date): number | null {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!m) return null;
+  const target = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(target)) return null;
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  // `|| 0` normalises -0, which is not a value any caller should have to think
+  // about and which `< 0` silently disagrees with.
+  return (target - today) / 86_400_000 || 0;
+}
+
 // ─── Calendar view ranges ────────────────────────────────────────────────────
 // All range maths runs on local calendar days and returns 'YYYY-MM-DD', matching
 // what the /calendar endpoint expects.
