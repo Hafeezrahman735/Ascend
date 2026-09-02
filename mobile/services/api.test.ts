@@ -1,21 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// api.ts reaches for AsyncStorage and Config at import time; both are native /
-// env-dependent, so they are stubbed to keep this runnable under plain Node
-// (see the note in vitest.config.mts).
+// api.ts reaches for AsyncStorage, SecureStore and Config at import time; all
+// three are native / env-dependent, so they are stubbed to keep this runnable
+// under plain Node (see the note in vitest.config.mts). expo-secure-store in
+// particular pulls react-native, whose Flow syntax the Node runner cannot parse.
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     setItem: vi.fn(async () => undefined),
     getItem: vi.fn(async () => null),
     removeItem: vi.fn(async () => undefined),
+    multiRemove: vi.fn(async () => undefined),
   },
+}));
+
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: vi.fn(async () => null),
+  setItemAsync: vi.fn(async () => undefined),
+  deleteItemAsync: vi.fn(async () => undefined),
 }));
 
 vi.mock('../constants/Config', () => ({
   Config: { API_URL: 'http://api.test', WS_URL: '', SOCIAL_WS_URL: '' },
 }));
 
-const { apiRequest } = await import('./api');
+const { apiRequest, loadTokensFromStorage, clearTokens } = await import('./api');
+const SecureStore = await import('expo-secure-store');
+const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
 
 const jsonResponse = (status: number, body: unknown): Response =>
   ({ status, ok: status >= 200 && status < 300, json: async () => body }) as Response;
@@ -124,5 +134,74 @@ describe('apiRequest', () => {
     await apiRequest('/tasks');
 
     expect(fetchMock.mock.calls[0][1].signal).toBeDefined();
+  });
+});
+
+describe('token storage', () => {
+  /**
+   * The migration is the risky half of moving off AsyncStorage: get it wrong and
+   * every signed-in user is silently logged out by the update, because their
+   * tokens are still on the device just not where the app now looks.
+   */
+  beforeEach(() => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    vi.mocked(SecureStore.setItemAsync).mockClear();
+    vi.mocked(AsyncStorage.multiRemove).mockClear();
+  });
+
+  it('reads tokens from the secure store when they are there', async () => {
+    vi.mocked(SecureStore.getItemAsync)
+      .mockImplementation(async (k: string) => (k === 'auth_access_token' ? 'A' : 'R'));
+
+    const { accessToken, refreshToken } = await loadTokensFromStorage();
+    expect(accessToken).toBe('A');
+    expect(refreshToken).toBe('R');
+    // No legacy read is attempted once the secure pair is present.
+    expect(AsyncStorage.getItem).not.toHaveBeenCalled();
+  });
+
+  it('migrates a legacy AsyncStorage pair, then deletes the plaintext', async () => {
+    vi.mocked(AsyncStorage.getItem)
+      .mockImplementation(async (k: string) => (k === 'auth:access_token' ? 'oldA' : 'oldR'));
+
+    const { accessToken, refreshToken } = await loadTokensFromStorage();
+
+    expect(accessToken).toBe('oldA');
+    expect(refreshToken).toBe('oldR');
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith('auth_access_token', 'oldA');
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith('auth_refresh_token', 'oldR');
+    // The whole point: the unencrypted copy does not survive the migration.
+    expect(AsyncStorage.multiRemove)
+      .toHaveBeenCalledWith(['auth:access_token', 'auth:refresh_token']);
+  });
+
+  it('clears the legacy keys even when only half a pair is left behind', async () => {
+    // A half-written pair is unusable, and leaving either half is leaving a
+    // token on disk.
+    vi.mocked(AsyncStorage.getItem)
+      .mockImplementation(async (k: string) => (k === 'auth:access_token' ? 'orphan' : null));
+
+    const { accessToken } = await loadTokensFromStorage();
+    expect(accessToken).toBeNull();
+    expect(AsyncStorage.multiRemove).toHaveBeenCalled();
+  });
+
+  it('survives a secure-store read failure instead of crashing the bootstrap', async () => {
+    // SecureStore can throw on a device with no passcode, or when the item was
+    // written under a different accessibility class.
+    vi.mocked(SecureStore.getItemAsync).mockRejectedValue(new Error('keychain unavailable'));
+
+    await expect(loadTokensFromStorage()).resolves.toEqual({
+      accessToken: null,
+      refreshToken: null,
+    });
+  });
+
+  it('removes both the secure and the legacy copies on sign-out', async () => {
+    clearTokens();
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('auth_access_token');
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('auth_refresh_token');
+    expect(AsyncStorage.multiRemove).toHaveBeenCalled();
   });
 });

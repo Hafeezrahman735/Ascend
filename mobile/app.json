@@ -70,7 +70,8 @@
           "bundleIdentifier": "com.hafeezrahman.ascend.ExpoWidgetsTarget",
           "groupIdentifier": "group.com.hafeezrahman.ascend"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "router": {},

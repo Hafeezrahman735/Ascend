@@ -1,10 +1,29 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { Config } from '../constants/Config';
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
 
-const STORAGE_KEYS = {
+/**
+ * Tokens live in the Keychain (iOS) / Keystore-backed store (Android), not in
+ * AsyncStorage.
+ *
+ * AsyncStorage is app-sandboxed but not encrypted: on a jailbroken or rooted
+ * device, in an unencrypted device backup, or through any path that can read the
+ * app container, the refresh token sat there in plaintext — and it is valid for
+ * seven days and mints access tokens for the whole of that window.
+ *
+ * SecureStore keys cannot contain a colon, so these are not the AsyncStorage
+ * key names. The old names are still read once, below, to migrate.
+ */
+const SECURE_KEYS = {
+  access: 'auth_access_token',
+  refresh: 'auth_refresh_token',
+};
+
+/** What AsyncStorage used to hold. Read once at startup, then deleted. */
+const LEGACY_KEYS = {
   access: 'auth:access_token',
   refresh: 'auth:refresh_token',
 };
@@ -12,22 +31,65 @@ const STORAGE_KEYS = {
 export function setTokens(access: string, refresh: string): void {
   accessToken = access;
   refreshToken = refresh;
-  AsyncStorage.setItem(STORAGE_KEYS.access, access).catch((err) => console.warn('[api] persist access token failed:', err));
-  AsyncStorage.setItem(STORAGE_KEYS.refresh, refresh).catch((err) => console.warn('[api] persist refresh token failed:', err));
+  SecureStore.setItemAsync(SECURE_KEYS.access, access).catch((err) => console.warn('[api] persist access token failed:', err));
+  SecureStore.setItemAsync(SECURE_KEYS.refresh, refresh).catch((err) => console.warn('[api] persist refresh token failed:', err));
 }
 
 export function clearTokens(): void {
   accessToken = null;
   refreshToken = null;
-  AsyncStorage.removeItem(STORAGE_KEYS.access).catch((err) => console.warn('[api] clear access token failed:', err));
-  AsyncStorage.removeItem(STORAGE_KEYS.refresh).catch((err) => console.warn('[api] clear refresh token failed:', err));
+  SecureStore.deleteItemAsync(SECURE_KEYS.access).catch((err) => console.warn('[api] clear access token failed:', err));
+  SecureStore.deleteItemAsync(SECURE_KEYS.refresh).catch((err) => console.warn('[api] clear refresh token failed:', err));
+  // Belt and braces: if a legacy pair somehow survived the migration below, a
+  // sign-out must not leave it behind.
+  AsyncStorage.multiRemove([LEGACY_KEYS.access, LEGACY_KEYS.refresh]).catch(() => {});
 }
 
+/**
+ * Reads the secure store, falling back once to the old AsyncStorage pair and
+ * migrating it across.
+ *
+ * Without the migration every existing user would be silently signed out by the
+ * update — the tokens would still be on the device, just not where the app now
+ * looks. The plaintext copy is deleted as soon as the secure copy is written,
+ * which is the whole point of the exercise.
+ */
 export async function loadTokensFromStorage(): Promise<{ accessToken: string | null; refreshToken: string | null }> {
-  const [access, refresh] = await Promise.all([
-    AsyncStorage.getItem(STORAGE_KEYS.access),
-    AsyncStorage.getItem(STORAGE_KEYS.refresh),
-  ]);
+  let access: string | null = null;
+  let refresh: string | null = null;
+
+  try {
+    [access, refresh] = await Promise.all([
+      SecureStore.getItemAsync(SECURE_KEYS.access),
+      SecureStore.getItemAsync(SECURE_KEYS.refresh),
+    ]);
+  } catch (err) {
+    // A SecureStore read can fail on a device with no passcode set, or if the
+    // keychain item was written under a different accessibility class. Treat it
+    // as "no tokens" and let the legacy path or the login screen take over,
+    // rather than crashing the whole bootstrap.
+    console.warn('[api] secure token read failed:', err);
+  }
+
+  if (!access && !refresh) {
+    try {
+      const [legacyAccess, legacyRefresh] = await Promise.all([
+        AsyncStorage.getItem(LEGACY_KEYS.access),
+        AsyncStorage.getItem(LEGACY_KEYS.refresh),
+      ]);
+      if (legacyAccess && legacyRefresh) {
+        access = legacyAccess;
+        refresh = legacyRefresh;
+        setTokens(legacyAccess, legacyRefresh);
+      }
+      // Removed whether or not the pair was complete: a half-written legacy
+      // entry is unusable, and leaving either half is leaving a token on disk.
+      await AsyncStorage.multiRemove([LEGACY_KEYS.access, LEGACY_KEYS.refresh]);
+    } catch (err) {
+      console.warn('[api] legacy token migration failed:', err);
+    }
+  }
+
   accessToken = access;
   refreshToken = refresh;
   return { accessToken: access, refreshToken: refresh };
