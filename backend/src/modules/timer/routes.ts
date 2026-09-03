@@ -10,6 +10,7 @@ import { runGamification } from '../../lib/gamification';
 import { getLevelTitle } from '../../lib/xp';
 import { resolveLocalDate } from '../../lib/localDate';
 import { syncGoalCompletion } from '../../lib/goalProgress';
+import { upsertDailyTracePost } from '../social/tracePost';
 import {
   MAX_SESSION_SECONDS,
   isCompletionTimeAcceptable,
@@ -323,6 +324,27 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       }
 
       const gamification = await runGamification(userId, creditedSeconds, completedAtDate, sessionLocalDate);
+
+      // The session leaves a trace: today's public receipt is created on the
+      // first session of the day and revised by every one after it. Runs after
+      // gamification because it reads the streak that call just moved.
+      //
+      // Non-fatal by design, exactly like the task-counter update above. The
+      // session is already committed at this point, and a feed post failing is
+      // a cosmetic problem — throwing here would turn it into lost focus time,
+      // and the client would retry a completion the database already has.
+      try {
+        const trace = await upsertDailyTracePost({
+          userId,
+          localDate: sessionLocalDate,
+          timeZone: tz,
+        });
+        if ('skipped' in trace) {
+          console.log(`[timer] Trace post skipped (${trace.skipped}) for user=${userId}`);
+        }
+      } catch (traceErr) {
+        console.warn(`[timer] Trace post failed for user=${userId}:`, traceErr);
+      }
 
       eventBus.emit(EventTypes.FEED_CREATE, {
         userId,

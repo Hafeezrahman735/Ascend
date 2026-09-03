@@ -7,7 +7,7 @@
  * door. The store, the API surface and every type below are unchanged — only
  * the route position and the name moved.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Pressable, FlatList, ScrollView,
   TextInput, ActivityIndicator, Modal, RefreshControl,
@@ -15,16 +15,25 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSocialStore } from '../../stores/socialStore';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { useGamification } from '../../store/hooks';
 import { useTimerStore } from '../../stores/timerStore';
-import { getSessionHistory } from '../../store/sync';
+import { getSessionHistory, type SessionRecord } from '../../store/sync';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
 import { TraceWordmark } from '../../components/TraceMark';
+import {
+  TraceCardShell, TraceCardHeader, TraceCardLabel, TraceStats, TraceLine,
+  type TraceStat,
+} from '../../components/trace/TraceCard';
+import { computeTodayTrace, isTraceEmpty, formatTraceDuration } from '../../lib/todayTrace';
+import { useTaskStore } from '../../stores/taskStore';
+import { useUserProfileStore } from '../../stores/userProfileStore';
+import { getLocalDateString } from '../../utils/date';
+import { Font } from '../../constants/typography';
 import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -178,33 +187,55 @@ function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePo
   );
 }
 
-// ─── Stat pill ───────────────────────────────────────────────────────────────
+// ─── The stat row a post carries ─────────────────────────────────────────────
 
-function StatPill({ label, value }: { label: string; value: string }) {
-  const Colors = useTheme();
-  const RAISED = Colors.raised;
-  return (
-    <View style={{
-      backgroundColor: RAISED, borderRadius: 10,
-      paddingHorizontal: 12, paddingVertical: 6, marginRight: 8, alignItems: 'center',
-    }}>
-      <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>{value}</Text>
-      <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 1 }}>{label}</Text>
-    </View>
-  );
+/**
+ * Which numbers this post puts on its receipt.
+ *
+ * One function rather than a stat block per post type, because the row is the
+ * card's constant: whatever kind of post it is, the reader looks in the same
+ * place for "what did they actually do". A type with nothing to count returns
+ * an empty row and the card simply has no stats — that is a valid post, not a
+ * missing one.
+ *
+ * A count of 1 gets a singular label. "1 SESSIONS" on a card whose whole job is
+ * to look like an honest receipt undoes a lot of that work for one character.
+ */
+function traceStatsFor(post: SocialPost): TraceStat[] {
+  if (post.type === 'session_recap') {
+    const sessions = post.sessionCount ?? 0;
+    const stats: TraceStat[] = [
+      { label: sessions === 1 ? 'SESSION' : 'SESSIONS', value: String(sessions) },
+      { label: 'FOCUSED', value: formatFocusMinutes(post.focusMinutes ?? 0) },
+    ];
+    // Only on auto-generated daily traces; a hand-written recap has no task count
+    // and must not be given a fake zero.
+    if (post.tasksCompleted != null) {
+      stats.push({ label: post.tasksCompleted === 1 ? 'TASK DONE' : 'TASKS DONE', value: String(post.tasksCompleted) });
+    }
+    if (post.streakAtPost != null) {
+      stats.push({ label: 'STREAK', value: `${post.streakAtPost}d`, emphasis: true });
+    }
+    return stats;
+  }
+
+  if (post.type === 'streak_milestone') {
+    return [
+      { label: 'STREAK', value: `${post.streakAtPost ?? 0}d`, emphasis: true },
+      { label: 'SESSIONS', value: String(post.totalSessionsAtPost ?? 0) },
+      { label: 'ALL-TIME FOCUS', value: `${post.totalFocusHoursAtPost ?? 0}h` },
+    ];
+  }
+
+  // Whatever the author chose to attach to a written post.
+  if (post.type === 'free_post') {
+    return (post.attachedStats ?? []).map((s) => ({ label: s.label.toUpperCase(), value: s.value }));
+  }
+
+  return [];
 }
 
 // ─── Type-specific content blocks ────────────────────────────────────────────
-
-function SessionRecapBlock({ post }: { post: SocialPost }) {
-  return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
-      <StatPill label="Sessions" value={String(post.sessionCount ?? 0)} />
-      <StatPill label="Focus" value={formatFocusMinutes(post.focusMinutes ?? 0)} />
-      <StatPill label="Streak" value={`${post.streakAtPost ?? 0}d`} />
-    </View>
-  );
-}
 
 function AchievementUnlockBlock({ post }: { post: SocialPost }) {
   const Colors = useTheme();
@@ -273,12 +304,94 @@ function AccountabilityBlock({ post }: { post: SocialPost }) {
   );
 }
 
-function StreakMilestoneBlock({ post }: { post: SocialPost }) {
+// ─── Your own trace, today ───────────────────────────────────────────────────
+
+/**
+ * The card at the top of your feed.
+ *
+ * Drawn from the device's own session and task caches, never from the feed
+ * response. Three things follow from that, and all three are the point:
+ *
+ *  - the landing screen is never empty, even for somebody who installed the app
+ *    a minute ago and follows nobody;
+ *  - it is correct the instant a session ends, rather than after the next feed
+ *    fetch happens to come back;
+ *  - it works offline.
+ *
+ * The server writes an equivalent post for other people to see. This is not
+ * that post — it is the same day told locally, which is why the matching server
+ * post is filtered out of the list below rather than rendered twice.
+ */
+function OwnTraceCard({ emoji, sessionCount, focusSeconds, tasksCompleted, streakDays, onStartSession }: {
+  emoji: string;
+  sessionCount: number;
+  focusSeconds: number;
+  tasksCompleted: number;
+  streakDays: number;
+  onStartSession: () => void;
+}) {
+  const Colors = useTheme();
+  const empty = isTraceEmpty({ sessionCount, focusSeconds, tasksCompleted, streakDays });
+
+  const stats: TraceStat[] = [
+    { label: sessionCount === 1 ? 'SESSION' : 'SESSIONS', value: String(sessionCount) },
+    { label: 'FOCUSED', value: formatTraceDuration(focusSeconds) },
+    { label: tasksCompleted === 1 ? 'TASK DONE' : 'TASKS DONE', value: String(tasksCompleted) },
+    { label: 'STREAK', value: `${streakDays}d`, emphasis: true },
+  ];
+
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
-      <StatPill label="Day Streak" value={`${post.streakAtPost ?? 0}d`} />
-      <StatPill label="Total Sessions" value={String(post.totalSessionsAtPost ?? 0)} />
-      <StatPill label="All-time Focus" value={`${post.totalFocusHoursAtPost ?? 0}h`} />
+    <TraceCardShell own>
+      <TraceCardLabel text="YOUR TRACE · TODAY" />
+      <TraceCardHeader
+        emoji={emoji}
+        name="You"
+        meta={empty ? 'Nothing yet · Public' : 'Today · Public'}
+      />
+
+      {empty ? (
+        // An invitation, not a scolding. The empty state is the first thing a
+        // new user ever sees on this screen, and it should read as a door.
+        <>
+          <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 19, marginBottom: 12 }}>
+            No trace yet today. Run a session and it shows up here.
+          </Text>
+          <Pressable
+            onPress={onStartSession}
+            accessibilityRole="button"
+            style={{
+              alignSelf: 'flex-start', backgroundColor: Colors.primary,
+              borderRadius: 20, paddingHorizontal: 18, paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Start a session</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <TraceStats stats={stats} />
+          <View style={{ marginTop: 11 }}><TraceLine /></View>
+        </>
+      )}
+    </TraceCardShell>
+  );
+}
+
+// ─── Header streak pill ──────────────────────────────────────────────────────
+
+function StreakPill({ days }: { days: number }) {
+  const Colors = useTheme();
+  return (
+    <View
+      accessibilityLabel={`${days} day streak`}
+      style={{
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        backgroundColor: Colors.traceDim, borderRadius: 9,
+        paddingHorizontal: 10, paddingVertical: 6, marginRight: 10,
+      }}
+    >
+      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.trace }} />
+      <Text style={{ color: Colors.trace, fontFamily: Font.monoMedium, fontSize: 12 }}>{days}d</Text>
     </View>
   );
 }
@@ -329,39 +442,29 @@ function ReactionRow({ post, currentUserId, onToggle }: {
 
 // ─── Free Post block ─────────────────────────────────────────────────────────
 
+/**
+ * The photo on a written post. Any stats the author attached are drawn by the
+ * card's own stat row (see traceStatsFor) rather than here, so every card puts
+ * its numbers in the same place regardless of type.
+ */
 function FreePostBlock({ post }: { post: SocialPost }) {
   const [photoFullscreen, setPhotoFullscreen] = useState(false);
-  const hasPhoto  = !!post.photoUrl;
-  const hasStats  = (post.attachedStats ?? []).length > 0;
-  const hasAnything = hasPhoto || hasStats;
-
-  if (!hasAnything) return null;
+  if (!post.photoUrl) return null;
 
   return (
     <View style={{ marginBottom: 10 }}>
-      {hasPhoto && (
-        <>
-          <Pressable onPress={() => setPhotoFullscreen(true)}>
-            <Image
-              source={{ uri: post.photoUrl! }}
-              style={{ width: '100%', height: 220, borderRadius: 12, marginBottom: hasStats ? 10 : 0 }}
-              resizeMode="cover"
-            />
-          </Pressable>
-          <Modal visible={photoFullscreen} transparent animationType="fade" onRequestClose={() => setPhotoFullscreen(false)}>
-            <Pressable style={{ flex: 1, backgroundColor: '#000000EE', justifyContent: 'center' }} onPress={() => setPhotoFullscreen(false)}>
-              <Image source={{ uri: post.photoUrl! }} style={{ width: '100%', height: '70%' }} resizeMode="contain" />
-            </Pressable>
-          </Modal>
-        </>
-      )}
-      {hasStats && (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {(post.attachedStats ?? []).map((s, i) => (
-            <StatPill key={i} label={s.label} value={s.value} />
-          ))}
-        </View>
-      )}
+      <Pressable onPress={() => setPhotoFullscreen(true)}>
+        <Image
+          source={{ uri: post.photoUrl }}
+          style={{ width: '100%', height: 220, borderRadius: 12 }}
+          resizeMode="cover"
+        />
+      </Pressable>
+      <Modal visible={photoFullscreen} transparent animationType="fade" onRequestClose={() => setPhotoFullscreen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: '#000000EE', justifyContent: 'center' }} onPress={() => setPhotoFullscreen(false)}>
+          <Image source={{ uri: post.photoUrl! }} style={{ width: '100%', height: '70%' }} resizeMode="contain" />
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -374,8 +477,6 @@ function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
   onAuthorPress?: (authorId: string) => void;
 }) {
   const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const RAISED = Colors.raised;
   const { BORDER_SOFT, GOLD } = Colors;
   const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
   const isOwnPost = post.authorId === currentUserId;
@@ -398,50 +499,43 @@ function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
     );
   };
 
+  // A daily trace is drawn as the receipt itself: its numbers ARE the post, so
+  // it gets no type tag and no pill block above them. Every other type keeps its
+  // own body and simply sits inside the same frame.
+  const isDailyTrace = post.type === 'session_recap' && post.auto === true;
+  const stats = traceStatsFor(post);
+
   return (
-    <View style={{
-      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
-      marginHorizontal: 16, marginBottom: 12, padding: 14,
-    }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-        <Pressable
-          onPress={() => onAuthorPress?.(post.authorId)}
-          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-        >
-          <View style={{
-            width: 36, height: 36, borderRadius: 11, backgroundColor: RAISED,
-            alignItems: 'center', justifyContent: 'center', marginRight: 10,
-          }}>
-            <Text style={{ fontSize: 20 }}>{post.authorEmoji || getAvatarEmoji(post.authorId)}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
+    <TraceCardShell>
+      <Pressable onPress={() => onAuthorPress?.(post.authorId)}>
+        <TraceCardHeader
+          emoji={post.authorEmoji || getAvatarEmoji(post.authorId)}
+          name={post.authorName}
+          meta={`${timeAgo(post.createdAt)}${post.groupName ? ` · ${post.groupName}` : ' · Public'}`}
+          trailing={
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 14 }}>{post.authorName}</Text>
               <View style={{
-                marginLeft: 6, backgroundColor: rankColor + '22', borderRadius: 6,
-                paddingHorizontal: 6, paddingVertical: 2,
+                backgroundColor: rankColor + '22', borderRadius: 7,
+                paddingHorizontal: 8, paddingVertical: 4,
               }}>
                 <Text style={{ color: rankColor, fontSize: 10, fontWeight: '600' }}>{post.authorRank}</Text>
               </View>
+              {!isOwnPost && (
+                <Pressable
+                  onPress={handleReport}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={{ padding: 4, marginLeft: 6 }}
+                  accessibilityLabel="Report post"
+                >
+                  <Ionicons name="flag-outline" size={16} color={Colors.subtext} />
+                </Pressable>
+              )}
             </View>
-            <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>
-              {post.groupName ? `${post.groupName} · ` : ''}{timeAgo(post.createdAt)}
-            </Text>
-          </View>
-        </Pressable>
-        {!isOwnPost && (
-          <Pressable
-            onPress={handleReport}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ padding: 4, marginLeft: 8 }}
-            accessibilityLabel="Report post"
-          >
-            <Ionicons name="flag-outline" size={16} color={Colors.subtext} />
-          </Pressable>
-        )}
-      </View>
+          }
+        />
+      </Pressable>
 
-      <PostTypeTag type={post.type} contentTag={post.contentTag} />
+      {!isDailyTrace && <PostTypeTag type={post.type} contentTag={post.contentTag} />}
 
       {post.caption ? (
         <Text style={{ color: Colors.text, fontSize: 13, marginBottom: 10, lineHeight: 19 }}>
@@ -449,20 +543,25 @@ function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
         </Text>
       ) : null}
 
-      {post.type === 'session_recap'      && <SessionRecapBlock post={post} />}
       {post.type === 'achievement_unlock' && <AchievementUnlockBlock post={post} />}
       {post.type === 'accountability'     && <AccountabilityBlock post={post} />}
-      {post.type === 'streak_milestone'   && <StreakMilestoneBlock post={post} />}
       {post.type === 'free_post'          && <FreePostBlock post={post} />}
 
-      <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 10 }} />
+      {stats.length > 0 && (
+        <>
+          <TraceStats stats={stats} />
+          <View style={{ marginTop: 11 }}><TraceLine /></View>
+        </>
+      )}
+
+      <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 11 }} />
 
       <ReactionRow
         post={post}
         currentUserId={currentUserId}
         onToggle={(emoji) => onToggleReaction(post.id, emoji)}
       />
-    </View>
+    </TraceCardShell>
   );
 }
 
@@ -1146,6 +1245,46 @@ export default function TraceScreen() {
     social.fetchNotifications();
   }, []);
 
+  // ── Your own day, read locally ────────────────────────────────────────────
+  // See OwnTraceCard for why this is computed on the device rather than fetched.
+  const gamification = useGamification();
+  const tasks = useTaskStore((s) => s.tasks);
+  const profileAvatar = useUserProfileStore((s) => s.avatarEmoji);
+  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
+
+  // Re-read whenever the screen regains focus: a session finished on the Focus
+  // tab writes to this cache, and coming back here must show it.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      getSessionHistory().then((s) => { if (!cancelled) setSessionHistory(s); });
+      return () => { cancelled = true; };
+    }, []),
+  );
+
+  const todayTrace = useMemo(
+    () => computeTodayTrace({ sessionHistory, tasks, currentStreak: gamification.currentStreak }),
+    [sessionHistory, tasks, gamification.currentStreak],
+  );
+
+  /**
+   * The feed minus the server's copy of the card already drawn at the top.
+   *
+   * Without this the user sees their own day twice — once locally and once as
+   * it came back from /social/posts — which looks like a duplicate-post bug
+   * rather than a design. Only today's AUTO trace is dropped; a recap they wrote
+   * by hand is a real post and stays in the list.
+   */
+  const feedPosts = useMemo(() => {
+    const today = getLocalDateString();
+    return social.posts.filter((p) => !(
+      p.authorId === currentUserId
+      && p.type === 'session_recap'
+      && p.auto === true
+      && p.localDate === today
+    ));
+  }, [social.posts, currentUserId]);
+
   useEffect(() => {
     social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
   }, [scope]);
@@ -1247,12 +1386,27 @@ export default function TraceScreen() {
       )}
 
       <FlatList
-        data={social.posts}
+        data={feedPosts}
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefreshFeed} tintColor={Colors.primary} />}
         onEndReached={() => { if (social.postsCursor) social.fetchMorePosts(); }}
         onEndReachedThreshold={0.3}
-        ListHeaderComponent={<View style={{ height: 8 }} />}
+        ListHeaderComponent={
+          <View style={{ paddingTop: 8 }}>
+            {/* Only on your own feed. Inside a group, the card would be claiming
+                you posted today's trace there, which you may not have. */}
+            {!social.selectedGroupId && (
+              <OwnTraceCard
+                emoji={profileAvatar || getAvatarEmoji(currentUserId)}
+                sessionCount={todayTrace.sessionCount}
+                focusSeconds={todayTrace.focusSeconds}
+                tasksCompleted={todayTrace.tasksCompleted}
+                streakDays={todayTrace.streakDays}
+                onStartSession={() => router.push('/(tabs)/focus' as never)}
+              />
+            )}
+          </View>
+        }
         ListFooterComponent={
           social.postsCursor
             ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
@@ -1266,22 +1420,30 @@ export default function TraceScreen() {
               ))}
             </View>
           ) : (
-            <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 32 }}>
-              <Ionicons name="newspaper-outline" size={48} color={Colors.subtext} />
-              <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
+            // Sits UNDER your own trace card, which is always drawn above. So
+            // this is never the whole screen — it explains what is missing
+            // (other people) rather than implying you have done nothing.
+            <View style={{ alignItems: 'center', paddingVertical: 36, paddingHorizontal: 32 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600', textAlign: 'center' }}>
                 {social.selectedGroupId
-                  ? 'No posts in this group yet — be the first to share'
-                  : 'Follow people to see their public posts here'}
+                  ? 'No traces in this group yet'
+                  : 'Nobody else here yet'}
+              </Text>
+              <Text style={{ color: Colors.subtext, fontSize: 13, lineHeight: 19, marginTop: 8, textAlign: 'center' }}>
+                {social.selectedGroupId
+                  ? 'Be the first to leave one.'
+                  : 'Follow a few people and their traces show up here as they show up.'}
               </Text>
               {!social.selectedGroupId && (
                 <Pressable
                   onPress={() => router.push('/search' as never)}
+                  accessibilityRole="button"
                   style={{
                     marginTop: 16, paddingHorizontal: 24, paddingVertical: 10,
                     backgroundColor: Colors.primary, borderRadius: 20,
                   }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Find People</Text>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Find people</Text>
                 </Pressable>
               )}
             </View>
@@ -1388,7 +1550,15 @@ export default function TraceScreen() {
         <View style={{ flex: 1 }}>
           <TraceWordmark size={26} />
         </View>
-        <Pressable style={{ marginRight: 14 }} onPress={() => router.push('/search' as never)}>
+        {/* Streak first, then the two actions. The number is the only thing in
+            this cluster that is about you rather than about navigating. */}
+        {gamification.currentStreak > 0 && <StreakPill days={gamification.currentStreak} />}
+        <Pressable
+          style={{ marginRight: 14 }}
+          accessibilityRole="button"
+          accessibilityLabel="Search people and groups"
+          onPress={() => router.push('/search' as never)}
+        >
           <Ionicons name="search" size={22} color={Colors.text} />
         </Pressable>
         <Pressable style={{ marginRight: 14 }} onPress={() => {

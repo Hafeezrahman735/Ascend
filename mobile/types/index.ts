@@ -527,6 +527,17 @@ export interface SocialPost {
   sessionCount: number | null;
   focusMinutes: number | null;
   streakAtPost: number | null;
+  /** Tasks finished on the post's day. Only on auto-generated daily traces. */
+  tasksCompleted?: number | null;
+  /**
+   * Set by the server on a daily trace it generated from finished sessions, as
+   * opposed to a recap the user wrote by hand. The Trace screen uses it to know
+   * which card is already being drawn locally as "your trace today", so the
+   * same day is not shown twice.
+   */
+  auto?: boolean;
+  /** 'YYYY-MM-DD' — the local day an auto-generated trace covers. */
+  localDate?: string;
   totalSessionsAtPost: number | null;
   totalFocusHoursAtPost: number | null;
   achievementId: string | null;
