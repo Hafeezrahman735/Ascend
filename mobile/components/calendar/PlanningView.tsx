@@ -9,6 +9,7 @@ import {
   getCalendarStyles, bookedMinutes, formatMinutes, formatSeconds,
   countsTowardLoad, isPastEvent, calendarItemKey,
 } from './shared';
+import { weekTasksToWorkOn, estimatedMinutesRemaining } from '../../lib/planningTasks';
 import StatsView from './StatsView';
 
 /**
@@ -25,6 +26,14 @@ type Mode = 'plan' | 'stats';
 
 /** Rows a section shows before it collapses into a "+N more" line. */
 const MAX_SECTION_ROWS = 5;
+
+/**
+ * The week's task list gets a longer leash than the other sections. It is the
+ * one people came to read, and truncating a real week's work at five rows sends
+ * them to the Tasks tab to see the rest, which is the whole point of the section
+ * defeated.
+ */
+const MAX_WEEK_TASK_ROWS = 8;
 
 function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => void }) {
   const Colors = useTheme();
@@ -74,12 +83,14 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
  * on white at 10px, below the contrast floor for small text.
  */
 function SectionHeader({
-  label, count, onAdd, addLabel,
+  label, count, onAdd, addLabel, trailing,
 }: {
   label: string;
   count?: number;
   onAdd?: () => void;
   addLabel?: string;
+  /** Quiet right-aligned detail, e.g. the week's estimated workload. */
+  trailing?: string;
 }) {
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
@@ -94,6 +105,11 @@ function SectionHeader({
       ]}>
         {label}{count !== undefined ? ` · ${count}` : ''}
       </Text>
+      {trailing && (
+        <Text style={{ color: Colors.subtext, fontSize: 10, marginRight: onAdd ? 8 : 0 }}>
+          {trailing}
+        </Text>
+      )}
       {onAdd && (
         <TouchableOpacity
           onPress={onAdd}
@@ -203,6 +219,13 @@ export default function PlanningView({
   const events = useMemo(() => weekItems.filter((i) => i.type === 'event'), [weekItems]);
   const notes = useMemo(() => weekItems.filter((i) => i.type === 'note'), [weekItems]);
 
+  // The week's actual work. Derived from weekItems — the same array the day
+  // strip counts — so the list and the per-day numbers above it can never
+  // disagree about what the week holds.
+  const todayKey = getLocalDateString();
+  const weekTasks = useMemo(() => weekTasksToWorkOn(weekItems, todayKey), [weekItems, todayKey]);
+  const weekTaskMinutes = useMemo(() => estimatedMinutesRemaining(weekTasks), [weekTasks]);
+
   // Read per render rather than memoised: whether an event has passed changes
   // with the clock, not with the data, so pinning it to a dependency would leave
   // this afternoon looking live all evening.
@@ -222,33 +245,88 @@ export default function PlanningView({
       <ModeToggle mode={mode} onChange={setMode} />
 
       <View style={{ paddingHorizontal: 16 }}>
-        {/* ── Unscheduled ─────────────────────────────────────────────── */}
-        <SectionHeader label="UNSCHEDULED" count={unscheduled.length} />
+        {/* ── This week's work ─────────────────────────────────────────────
+            The section that answers "what do I actually have to do this week".
+            It leads because that is the question you open Planning to ask; the
+            events and notes below are context around it, not the work itself. */}
+        {/* formatSeconds, not formatMinutes, for the estimate: this is a
+            DURATION. formatMinutes renders minutes-from-midnight as a clock time
+            and clamps at 23:59, so a 30-hour week would have read "11:59 PM". */}
+        <SectionHeader
+          label="THIS WEEK"
+          count={weekTasks.length}
+          trailing={weekTaskMinutes > 0 ? `${formatSeconds(weekTaskMinutes * 60)} estimated` : undefined}
+        />
 
-        {unscheduled.length === 0 ? (
+        {weekTasks.length === 0 ? (
           <EmptyBox
             icon="checkmark-done-outline"
-            text="Everything has a day. Nothing waiting to be placed."
+            text="No tasks due this week. Nothing waiting on you."
           />
         ) : (
           <Card>
-            {unscheduled.map((task) => (
-              <View key={task.id} style={styles.itemRow}>
+            {weekTasks.slice(0, MAX_WEEK_TASK_ROWS).map((t) => (
+              <View key={t.key} style={styles.itemRow}>
                 <View style={{
                   width: 3, alignSelf: 'stretch', borderRadius: 2,
-                  backgroundColor: task.estimatedMinutes ? Colors.primary : Colors.subtext,
+                  backgroundColor: t.isOverdue ? Colors.ROSE : t.isToday ? Colors.AMBER : Colors.primary,
                 }} />
                 <Text style={{ flex: 1, color: Colors.text, fontSize: 13 }} numberOfLines={1}>
-                  {task.title}
+                  {t.title}
                 </Text>
-                {task.estimatedMinutes ? (
-                  <Text style={{ color: Colors.subtext, fontSize: 10 }}>
-                    {task.estimatedMinutes}m
-                  </Text>
-                ) : null}
+                {t.isRecurring && (
+                  <Ionicons name="repeat" size={12} color={Colors.subtext} />
+                )}
+                <Text style={{
+                  fontSize: 10,
+                  color: t.isOverdue ? Colors.ROSE : t.isToday ? Colors.AMBER : Colors.subtext,
+                  fontWeight: t.isOverdue || t.isToday ? '700' : '400',
+                }}>
+                  {t.isOverdue ? 'Late' : t.isToday ? 'Today' : dayBadge(t.dateKey)}
+                  {t.startMinutes != null ? ` · ${formatMinutes(t.startMinutes)}` : ''}
+                  {t.startMinutes == null && t.estimatedMinutes ? ` · ${t.estimatedMinutes}m` : ''}
+                </Text>
               </View>
             ))}
+            {weekTasks.length > MAX_WEEK_TASK_ROWS && (
+              <Text style={{ color: Colors.subtext, fontSize: 11, paddingVertical: 7 }}>
+                +{weekTasks.length - MAX_WEEK_TASK_ROWS} more this week
+              </Text>
+            )}
           </Card>
+        )}
+
+        {/* ── Unscheduled ──────────────────────────────────────────────────
+            Tasks with no due date — work that appears on no day in the calendar,
+            so this stays its only home here. Rendered only when there is some:
+            a permanently empty box was most of what this tab used to show. */}
+        {unscheduled.length > 0 && (
+          <>
+            <SectionHeader label="UNSCHEDULED" count={unscheduled.length} />
+            <Card>
+              {unscheduled.slice(0, MAX_SECTION_ROWS).map((task) => (
+                <View key={task.id} style={styles.itemRow}>
+                  <View style={{
+                    width: 3, alignSelf: 'stretch', borderRadius: 2,
+                    backgroundColor: task.estimatedMinutes ? Colors.primary : Colors.subtext,
+                  }} />
+                  <Text style={{ flex: 1, color: Colors.text, fontSize: 13 }} numberOfLines={1}>
+                    {task.title}
+                  </Text>
+                  {task.estimatedMinutes ? (
+                    <Text style={{ color: Colors.subtext, fontSize: 10 }}>
+                      {task.estimatedMinutes}m
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+              {unscheduled.length > MAX_SECTION_ROWS && (
+                <Text style={{ color: Colors.subtext, fontSize: 11, paddingVertical: 7 }}>
+                  +{unscheduled.length - MAX_SECTION_ROWS} more
+                </Text>
+              )}
+            </Card>
+          </>
         )}
 
         {/* ── Events ──────────────────────────────────────────────────────
