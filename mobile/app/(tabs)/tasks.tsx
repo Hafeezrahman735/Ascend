@@ -55,6 +55,7 @@ import {
   compactDuration,
   formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
+import { dailyFocusTargetSeconds as focusTargetSeconds } from '../../lib/dailyTarget';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
@@ -1990,7 +1991,8 @@ export default function TasksScreen() {
   const yesterdayCompleted = useMemo(() => tasks.filter((t) => t.isCompleted && t.completedAt && isYesterdayLocal(new Date(t.completedAt).getTime())).length, [tasks]);
   const totalActiveTasks = nonArchived.length;
   const lastWeekCompletionRate = useMemo(() => getLastWeekCompletionRate(tasks), [tasks]);
-  const dailyFocusTargetSeconds = dailySessionTarget * sessionLengthMinutes * 60;
+  // Shared with the Focus tab's "Target left" card — see lib/dailyTarget.ts.
+  const dailyFocusTargetSeconds = focusTargetSeconds(dailySessionTarget, settings.workDuration);
 
   // ── Smart hero card ──
   const goalsForHero = goals; // goalStore exists; pass through

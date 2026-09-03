@@ -660,9 +660,19 @@ function HeroCard({
 
 // ─── Week dots ────────────────────────────────────────────────────────────────
 
+/**
+ * A day you showed up is drawn in `trace`; today, still unfinished, keeps its
+ * amber ring.
+ *
+ * The two colours are saying different things and that is the point. `trace` is
+ * the colour of a day that happened — the same hue the feed cards and the mark
+ * use for done. Amber is the nudge on the day you can still do something about.
+ * Painting today's ring `trace` as well would quietly congratulate you for a day
+ * you have not had yet.
+ */
 function WeekDots({ days, studiedToday }: { days: boolean[]; studiedToday: boolean }) {
   const Colors = useTheme();
-  const { AMBER_DIM, AMBER } = Colors;
+  const { AMBER } = Colors;
   const todayIdx = (new Date().getDay() + 6) % 7;
 
   return (
@@ -676,14 +686,14 @@ function WeekDots({ days, studiedToday }: { days: boolean[]; studiedToday: boole
           <View key={idx} style={{ flex: 1, alignItems: 'center', gap: 5 }}>
             <View style={{
               width: 36, height: 36, borderRadius: 8,
-              backgroundColor: isDone ? AMBER_DIM : isFuture ? Colors.inactive : Colors.raised,
+              backgroundColor: isDone ? Colors.traceDim : isFuture ? Colors.inactive : Colors.raised,
               borderWidth: 1.5,
-              borderColor: isDone ? AMBER : isToday ? AMBER : isFuture ? Colors.border : Colors.border,
+              borderColor: isDone ? Colors.trace : isToday ? AMBER : Colors.border,
               alignItems: 'center', justifyContent: 'center',
               opacity: isFuture ? 0.4 : 1,
             }}>
               {isDone && (
-                <Text style={{ color: AMBER, fontSize: 14, fontWeight: '700' }}>✓</Text>
+                <Text style={{ color: Colors.trace, fontSize: 14, fontWeight: '700' }}>✓</Text>
               )}
             </View>
             <Text style={{
@@ -728,7 +738,9 @@ function StreakSection({
           borderWidth: 1, borderColor: Colors.border,
           overflow: 'hidden',
         }}>
-          {/* Amber glow */}
+          {/* Amber glow — stays. The number below is `trace` now, but the warmth
+              behind the flame is what makes this card feel like a streak rather
+              than another statistic, and the two read fine together. */}
           <View style={{
             position: 'absolute', top: -30, right: -30,
             width: 120, height: 120, borderRadius: 60,
@@ -738,7 +750,7 @@ function StreakSection({
           <FlameIcon isMilestone={isMilestone} reduceMotion={reduceMotion} />
 
           <Text style={{
-            color: currentStreak > 0 ? AMBER : Colors.subtext,
+            color: currentStreak > 0 ? Colors.trace : Colors.subtext,
             fontSize: 40, fontWeight: '800', fontFamily: Font.mono,
             marginTop: 4, opacity: currentStreak === 0 ? 0.5 : 1,
           }}>

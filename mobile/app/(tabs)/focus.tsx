@@ -13,6 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
 import { getPhaseDuration } from '../../lib/phaseDuration';
 import { getSessionPlan } from '../../lib/sessionPlan';
+import { dailyFocusTargetSeconds, targetProgress } from '../../lib/dailyTarget';
 import { cancelAllTimerNotifications } from '../../services/notifications';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -108,6 +109,49 @@ function StepperRow({ label, value, min, max, step, onChange }: {
           <Ionicons name="add" size={18} color={Colors.text} />
         </AppPressable>
       </View>
+    </View>
+  );
+}
+
+/**
+ * One card in the bottom stats row.
+ *
+ * Extracted when the row went from two cards to three: at two, the styling was
+ * duplicated inline and that was tolerable; at three it would have been the same
+ * twenty lines written out a third time, with three places to keep in step.
+ * Sizes are a touch tighter than the two-up version so three labels still fit
+ * on one line on a small phone.
+ */
+function FocusStatCard({ value, valueColor, label }: {
+  value: string;
+  valueColor: string;
+  label: string;
+}) {
+  const Colors = useTheme();
+  return (
+    <View style={{
+      flex: 1,
+      backgroundColor: Colors.darkCard,
+      borderRadius: Radius.lg,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      paddingVertical: Space.lg,
+      paddingHorizontal: Space.sm,
+      alignItems: 'center',
+    }}>
+      <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: valueColor, fontSize: 22, fontWeight: '700' }}>
+        {value}
+      </Text>
+      <Text style={{
+        color: Colors.text,
+        fontSize: 11,
+        fontWeight: '600',
+        letterSpacing: 0.3,
+        marginTop: Space.xs,
+        textAlign: 'center',
+      }}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -308,6 +352,27 @@ export default function TimerScreen() {
     if (mins >= 1) return `${mins}m`;
     return `${seconds}s`;
   };
+
+  // ── Target left ───────────────────────────────────────────────────────────
+  // Same derivation the Tasks pill strip uses (lib/dailyTarget.ts), so the two
+  // screens can never quote different numbers for the same target.
+  //
+  // Colour carries the state: amber while there is work left, `trace` once the
+  // target is met — matching how the Tasks strip already tints "to goal" vs
+  // "Goal reached". With no target configured there is nothing to be short of,
+  // so it reads as a muted dash rather than a zero, which would look achieved.
+  const targetLeft = useMemo(
+    () => targetProgress(globalTotalTime, dailyFocusTargetSeconds(settings.dailySessionTarget, settings.workDuration)),
+    [globalTotalTime, settings.dailySessionTarget, settings.workDuration],
+  );
+  const targetLeftValue =
+    targetLeft.kind === 'none' ? '—'
+    : targetLeft.kind === 'reached' ? 'Done'
+    : formatGlobalTime(targetLeft.seconds);
+  const targetLeftColor =
+    targetLeft.kind === 'none' ? Colors.subtext
+    : targetLeft.kind === 'reached' ? Colors.trace
+    : Colors.AMBER;
 
   const handleStopwatchStart = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -697,64 +762,32 @@ export default function TimerScreen() {
           ) : null}
         </AppPressable>
 
-        {/* STATS SECTION */}
+        {/* STATS SECTION
+            Three cards, not two. "Target left" was ADDED beside the session
+            count rather than replacing it: the count answers "how much have I
+            done", the target answers "how much is left", and dropping either
+            one leaves the row unable to answer the other question. */}
         <View style={{
           flexDirection: 'row',
+          gap: 8,
           marginTop: 12,
           marginBottom: 6,
         }}>
-          <View style={{
-            flex: 1,
-            backgroundColor: Colors.darkCard,
-            borderRadius: Radius.lg,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            paddingVertical: Space.lg,
-            paddingHorizontal: Space.md,
-            alignItems: 'center',
-            marginRight: 6,
-          }}>
-            <Text style={{ color: Colors.trace, fontSize: 24, fontWeight: '700' }}>
-              {formatGlobalTime(globalTotalTime)}
-            </Text>
-            <Text style={{
-              color: Colors.text,
-              fontSize: 12,
-              fontWeight: '600',
-              letterSpacing: 0.5,
-              marginTop: Space.xs,
-              textAlign: 'center',
-            }}>
-              Focus Time Today
-
-            </Text>
-          </View>
-
-          <View style={{
-            flex: 1,
-            backgroundColor: Colors.darkCard,
-            borderRadius: Radius.lg,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            paddingVertical: Space.lg,
-            paddingHorizontal: Space.md,
-            alignItems: 'center',
-            marginLeft: 6,
-          }}>
-            <Text style={{ color: Colors.textBright, fontSize: 24, fontWeight: '700' }}>
-              {globalSessions}
-            </Text>
-            <Text style={{
-              color: Colors.text,
-              fontSize: 12,
-              fontWeight: '600',
-              letterSpacing: 0.5,
-              marginTop: Space.xs,
-              textAlign: 'center',
-            }}>
-              Sessions Completed
-            </Text>
-          </View>
+          <FocusStatCard
+            value={formatGlobalTime(globalTotalTime)}
+            valueColor={Colors.trace}
+            label="Focus Time Today"
+          />
+          <FocusStatCard
+            value={String(globalSessions)}
+            valueColor={Colors.textBright}
+            label="Sessions Completed"
+          />
+          <FocusStatCard
+            value={targetLeftValue}
+            valueColor={targetLeftColor}
+            label="Target Left"
+          />
         </View>
 
       </View>
