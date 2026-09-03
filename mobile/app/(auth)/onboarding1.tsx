@@ -68,7 +68,7 @@ export default function Onboarding1Screen() {
             No one is telling you what to do next
           </Text>
           <Text style={{ color: Colors.subtext, fontSize: 15, marginBottom: 36, lineHeight: 22 }}>
-            That is the hard part of working for yourself. Ascend is the structure
+            That is the hard part of working for yourself. Trace is the structure
             you would otherwise have to invent every morning. First — what should
             we call you?
           </Text>

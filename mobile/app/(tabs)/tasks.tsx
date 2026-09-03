@@ -1995,8 +1995,8 @@ export default function TasksScreen() {
   // ── Smart hero card ──
   const goalsForHero = goals; // goalStore exists; pass through
   const hero = useHeroCard({ tasks, goals: goalsForHero, sessionHistory, peakHour });
-  const goToFocus = useCallback(() => router.push('/(tabs)'), [router]);
-  const selectAndFocus = useCallback((id: string) => { taskActions.selectTask(id); router.push('/(tabs)'); }, [taskActions, router]);
+  const goToFocus = useCallback(() => router.push('/(tabs)/focus'), [router]);
+  const selectAndFocus = useCallback((id: string) => { taskActions.selectTask(id); router.push('/(tabs)/focus'); }, [taskActions, router]);
 
   // ── Filtered tasks for detail view ──
   const filteredTasks = useMemo(() => {
@@ -2041,7 +2041,7 @@ export default function TasksScreen() {
    */
   const handleGoalAction = useCallback((action: GoalStatusAction, goalId: string) => {
     setStatsGoalId(null);
-    if (action === 'start-session') { router.push('/'); return; }
+    if (action === 'start-session') { router.push('/(tabs)/focus'); return; }
     // Linking and rescheduling both happen in a form. A task is linked from the
     // TASK form (that is where taskGoalId lives), a deadline from the GOAL form.
     if (action === 'link-task') { setFormTask(null); setShowFormModal(true); return; }

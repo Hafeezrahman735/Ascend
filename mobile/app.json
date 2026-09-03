@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Ascend",
+    "name": "Trace",
     "slug": "ascend",
     "version": "1.0.2",
     "orientation": "portrait",
@@ -60,7 +60,7 @@
       [
         "expo-calendar",
         {
-          "calendarPermission": "Ascend shows the events already on your calendar beside your tasks, so you can plan focus sessions around them. Events are read on your device and never leave it.",
+          "calendarPermission": "Trace shows the events already on your calendar beside your tasks, so you can plan focus sessions around them. Events are read on your device and never leave it.",
           "remindersPermission": false
         }
       ],

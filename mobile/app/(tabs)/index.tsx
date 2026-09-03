@@ -1,973 +1,1503 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Dimensions, Modal, ScrollView, Alert, AppState } from 'react-native';
+/**
+ * Trace — the landing tab.
+ *
+ * This is the screen formerly known as Circle/Social. It owns the (tabs) index
+ * route on purpose: the app opens on what the people around you have been
+ * doing, and the timer is one tap away at /(tabs)/focus rather than the front
+ * door. The store, the API surface and every type below are unchanged — only
+ * the route position and the name moved.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  View, Text, Pressable, FlatList, ScrollView,
+  TextInput, ActivityIndicator, Modal, RefreshControl,
+  KeyboardAvoidingView, Platform, Share, Image, Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, {
-  useSharedValue,
-  useAnimatedProps,
-  useAnimatedStyle,
-  withTiming,
-} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Circle } from 'react-native-svg';
-import * as Haptics from 'expo-haptics';
-import { useTimerStore } from '../../stores/timerStore';
-import { getPhaseDuration } from '../../lib/phaseDuration';
-import { getSessionPlan } from '../../lib/sessionPlan';
-import { cancelAllTimerNotifications } from '../../services/notifications';
-import { useTaskStore } from '../../stores/taskStore';
+import { useRouter } from 'expo-router';
+import { useSocialStore } from '../../stores/socialStore';
+import { api } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
-import { useAppForeground } from '../../hooks/useAppState';
-import { useTheme } from '../../hooks/useTheme';
-import { Space, Radius } from '../../constants/spacing';
-import { Font } from '../../constants/typography';
-import AppPressable from '../../components/AppPressable';
+import { useGamification } from '../../store/hooks';
+import { useTimerStore } from '../../stores/timerStore';
+import { getSessionHistory } from '../../store/sync';
+import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
+import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
 
-const { width } = Dimensions.get('window');
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-const STROKE_WIDTH = 8;
-const DOT_RADIUS = 5;
-const RADIUS = Math.min(width * 0.46, 140);
-const SVG_PADDING = 12;
-const SIZE = (RADIUS + STROKE_WIDTH / 2 + DOT_RADIUS) * 2 + SVG_PADDING * 2;
-const CX = SIZE / 2;
-const CY = SIZE / 2;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+const AVATAR_EMOJIS = ['🦊','🐸','🦁','🐳','🦉','🐰','🦋','🐙','🦚','🐻','🦝','🐵'];
+const REACTIONS = ['🔥','🫡','❤️','💪'] as const;
 
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+// Theme-aware group chip palettes, derived from the active Colors object.
+function groupBg(c: ThemeColors): Record<string, string> {
+  return { purple: c.primaryDim, teal: c.tealDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
+}
+function groupBorderColor(c: ThemeColors): Record<string, string> {
+  return { purple: c.primary, teal: c.accent, amber: c.AMBER, rose: c.ROSE };
+}
 
-// ─── Ring glow ────────────────────────────────────────────────────────────────
-// The only glow left on this screen that changes, and the only one carrying
-// meaning: it is the timer's status light. Bright while something is counting,
-// dim when nothing is. Everything else on the screen stopped emitting light —
-// static furniture that glows is decoration, and this screen has to be able to
-// disappear during a session.
-const RING_GLOW_RUNNING = 0.2;
-const RING_GLOW_IDLE = 0.08;
-const RING_GLOW_FADE_MS = 420;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Android ignores shadowOpacity and reads elevation instead, so the same two
-// states are expressed on both scales rather than letting one platform lose the
-// distinction entirely.
-const RING_ELEVATION_RUNNING = 12;
-const RING_ELEVATION_IDLE = 5;
+function getAvatarEmoji(seed: string): string {
+  let h = 0;
+  for (const c of seed) h = ((h * 31) + c.charCodeAt(0)) & 0x7fffffff;
+  return AVATAR_EMOJIS[h % AVATAR_EMOJIS.length];
+}
 
-function StepperRow({ label, value, min, max, step, onChange }: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (v: number) => void;
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? 'Yesterday' : `${d}d ago`;
+}
+
+function formatFocusMinutes(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function isGoldRank(rank: string): boolean {
+  return rank === 'Champion' || rank === 'Legend';
+}
+
+// ─── Focus Group chips ───────────────────────────────────────────────────────
+
+function GroupChip({ group, selected, onPress }: {
+  group: StudyGroup; selected: boolean; onPress: () => void;
 }) {
   const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const GROUP_BG = groupBg(Colors);
+  const GROUP_BORDER_COLOR = groupBorderColor(Colors);
+  const border = selected ? Colors.primary : (GROUP_BORDER_COLOR[group.color] ?? Colors.border);
+  const bg = GROUP_BG[group.color] ?? SURFACE;
+  return (
+    <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
+      <View style={{
+        width: 44, height: 44, borderRadius: 14, backgroundColor: bg,
+        borderWidth: selected ? 2 : 1, borderColor: border,
+        alignItems: 'center', justifyContent: 'center',
+        ...(selected ? { shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 8, elevation: 4 } : {}),
+      }}>
+        <Text style={{ fontSize: 22 }}>{group.emoji}</Text>
+        {group.hasRecentActivity && (
+          <View style={{
+            position: 'absolute', bottom: -2, right: -2,
+            width: 10, height: 10, borderRadius: 5,
+            backgroundColor: Colors.accent, borderWidth: 1.5, borderColor: Colors.bg,
+          }} />
+        )}
+      </View>
+      <Text numberOfLines={1} style={{ color: Colors.subtext, fontSize: 10, marginTop: 4, textAlign: 'center', width: 60 }}>
+        {group.name}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * The public feed as a chip, sitting first in the same row as the groups.
+ * Where a post goes and where you read it are the same set of destinations, so
+ * they belong in one strip. "No group selected" used to mean the public feed
+ * implicitly, with nothing on screen saying so.
+ */
+function PublicFeedChip({ selected, onPress }: { selected: boolean; onPress: () => void }) {
+  const Colors = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel="Public feed"
+      style={{ alignItems: 'center', marginRight: 12, width: 64 }}
+    >
+      <View style={{
+        width: 44, height: 44, borderRadius: 14,
+        backgroundColor: selected ? Colors.primary : Colors.surface,
+        borderWidth: selected ? 2 : 1,
+        borderColor: selected ? Colors.primary : Colors.border,
+        alignItems: 'center', justifyContent: 'center',
+        ...(selected ? { shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 8, elevation: 4 } : {}),
+      }}>
+        <Ionicons name="earth" size={22} color={selected ? '#fff' : Colors.subtext} />
+      </View>
+      <Text numberOfLines={1} style={{
+        color: selected ? Colors.primarySoft : Colors.subtext,
+        fontSize: 10, marginTop: 4, textAlign: 'center', width: 60,
+        fontWeight: selected ? '700' : '400',
+      }}>
+        Public
+      </Text>
+    </Pressable>
+  );
+}
+
+function JoinChip({ onPress }: { onPress: () => void }) {
+  const Colors = useTheme();
+  return (
+    <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
+      <View style={{
+        width: 44, height: 44, borderRadius: 14,
+        borderWidth: 1.5, borderColor: Colors.border,
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Ionicons name="add" size={20} color={Colors.subtext} />
+      </View>
+      <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 4 }}>Join</Text>
+    </Pressable>
+  );
+}
+
+// ─── Post type tag ───────────────────────────────────────────────────────────
+
+
+function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePostTag | null }) {
+  const Colors = useTheme();
+  const POST_TYPE_META = makePostTypeMeta(Colors);
+  const base = POST_TYPE_META[type];
+  const label = type === 'free_post' && contentTag
+    ? `${FREE_TAG_META[contentTag].emoji} ${FREE_TAG_META[contentTag].label}`
+    : base.label;
   return (
     <View style={{
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingVertical: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: Colors.border,
+      alignSelf: 'flex-start', backgroundColor: base.bg, borderRadius: 8,
+      paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8,
     }}>
-      <Text style={{ color: Colors.text, fontSize: 15 }}>{label}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <AppPressable
-          onPress={() => onChange(Math.max(min, value - step))}
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 22,
-            backgroundColor: Colors.darkBg,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Ionicons name="remove" size={18} color={Colors.text} />
-        </AppPressable>
-        <Text style={{
-          color: Colors.textBright,
-          fontSize: 18,
-          fontWeight: '700',
-          marginHorizontal: 16,
-          width: 36,
-          textAlign: 'center',
-        }}>
-          {value}
-        </Text>
-        <AppPressable
-          onPress={() => onChange(Math.min(max, value + step))}
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 22,
-            backgroundColor: Colors.darkBg,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Ionicons name="add" size={18} color={Colors.text} />
-        </AppPressable>
+      <Text style={{ color: base.color, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Stat pill ───────────────────────────────────────────────────────────────
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  const Colors = useTheme();
+  const RAISED = Colors.raised;
+  return (
+    <View style={{
+      backgroundColor: RAISED, borderRadius: 10,
+      paddingHorizontal: 12, paddingVertical: 6, marginRight: 8, alignItems: 'center',
+    }}>
+      <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '700' }}>{value}</Text>
+      <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 1 }}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Type-specific content blocks ────────────────────────────────────────────
+
+function SessionRecapBlock({ post }: { post: SocialPost }) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+      <StatPill label="Sessions" value={String(post.sessionCount ?? 0)} />
+      <StatPill label="Focus" value={formatFocusMinutes(post.focusMinutes ?? 0)} />
+      <StatPill label="Streak" value={`${post.streakAtPost ?? 0}d`} />
+    </View>
+  );
+}
+
+function AchievementUnlockBlock({ post }: { post: SocialPost }) {
+  const Colors = useTheme();
+  const { GOLD, GOLD_DIM } = Colors;
+  return (
+    <View style={{
+      backgroundColor: GOLD_DIM, borderRadius: 12, borderWidth: 1,
+      borderColor: GOLD + '40', padding: 12, marginBottom: 10,
+      flexDirection: 'row', alignItems: 'center',
+    }}>
+      <Text style={{ fontSize: 32, marginRight: 12 }}>{post.achievementIcon ?? '🏅'}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: GOLD, fontWeight: '700', fontSize: 14 }}>{post.achievementName ?? 'Achievement'}</Text>
+        {post.achievementDescription ? (
+          <Text style={{ color: Colors.text, fontSize: 12, marginTop: 2 }}>{post.achievementDescription}</Text>
+        ) : null}
+        {post.achievementXpReward != null && (
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 3 }}>
+            +{post.achievementXpReward} XP{post.achievementRank ? ` · ${post.achievementRank} rank` : ''}
+          </Text>
+        )}
       </View>
     </View>
   );
 }
 
-export default function TimerScreen() {
+function AccountabilityBlock({ post }: { post: SocialPost }) {
   const Colors = useTheme();
-  const status = useTimerStore((s) => s.status);
-  const currentPhase = useTimerStore((s) => s.currentPhase);
-  const timeLeft = useTimerStore((s) => s.timeLeft);
-  const pomodoroRounds = useTimerStore((s) => s.pomodoroRounds);
-  const globalSessions = useTimerStore((s) => s.globalSessions);
-  const globalTotalTime = useTimerStore((s) => s.globalTotalTime);
-  const settings = useTimerStore((s) => s.settings);
-  const plannedFocusSeconds = useTimerStore((s) => s.plannedFocusSeconds);
-  const start = useTimerStore((s) => s.start);
-  const pause = useTimerStore((s) => s.pause);
-  const resume = useTimerStore((s) => s.resume);
-  const skip = useTimerStore((s) => s.skip);
-  const tick = useTimerStore((s) => s.tick);
-  const setWorkDuration = useTimerStore((s) => s.setWorkDuration);
-  const setShortBreakDuration = useTimerStore((s) => s.setShortBreakDuration);
-  const setLongBreakDuration = useTimerStore((s) => s.setLongBreakDuration);
-  const mode = useTimerStore((s) => s.mode);
-  const stopwatchElapsed = useTimerStore((s) => s.stopwatchElapsed);
-  const setMode = useTimerStore((s) => s.setMode);
-  const startStopwatch = useTimerStore((s) => s.startStopwatch);
-  const pauseStopwatch = useTimerStore((s) => s.pauseStopwatch);
+  const SURFACE = Colors.surface;
+  const ch = post.challenge;
+  if (!ch) return null;
+  const completed = Object.values(ch.memberProgress).reduce((a, b) => a + b, 0);
+  const pct = ch.targetValue > 0 ? Math.min(100, Math.round((completed / ch.targetValue) * 100)) : 0;
+  const dl = Math.ceil((new Date(ch.deadline).getTime() - Date.now()) / 86400000);
+  return (
+    <View style={{
+      backgroundColor: Colors.tealDim, borderRadius: 12, borderWidth: 1,
+      borderColor: Colors.accent + '40', padding: 12, marginBottom: 10,
+    }}>
+      <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13, marginBottom: 6 }}>
+        🎯 Group Challenge
+      </Text>
+      <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 8 }}>{ch.title}</Text>
+      <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 6 }}>
+        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.accent }} />
+      </View>
+      <Text style={{ color: Colors.subtext, fontSize: 11 }}>
+        {ch.metric === 'focus_hours'
+          ? `${completed.toFixed(1)} / ${Number(ch.targetValue).toFixed(1)} focus hours`
+          : `${completed} / ${ch.targetValue} sessions`}
+        {` · ${pct}% · `}{dl > 0 ? `${dl} days left` : 'Deadline passed'}
+      </Text>
+      {(ch.memberEmojis ?? []).length > 0 && (
+        <View style={{ flexDirection: 'row', marginTop: 8 }}>
+          {(ch.memberEmojis ?? []).slice(0, 5).map((e, i) => (
+            <View key={i} style={{
+              width: 24, height: 24, borderRadius: 7, backgroundColor: SURFACE,
+              alignItems: 'center', justifyContent: 'center', marginRight: 4,
+            }}>
+              <Text style={{ fontSize: 14 }}>{e}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
 
-  const tasks = useTaskStore((s) => s.tasks);
-  const selectedTaskId = useTaskStore((s) => s.selectedTaskId);
-  const selectTask = useTaskStore((s) => s.selectTask);
-  const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+function StreakMilestoneBlock({ post }: { post: SocialPost }) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+      <StatPill label="Day Streak" value={`${post.streakAtPost ?? 0}d`} />
+      <StatPill label="Total Sessions" value={String(post.totalSessionsAtPost ?? 0)} />
+      <StatPill label="All-time Focus" value={`${post.totalFocusHoursAtPost ?? 0}h`} />
+    </View>
+  );
+}
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tickRef = useRef(tick);
-  useEffect(() => { tickRef.current = tick; }, [tick]);
+// ─── Reaction row ────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const userId = useAuthStore.getState().user?.id ?? '';
-    useTimerStore.getState().hydrate(userId);
-  }, []);
+function ReactionRow({ post, currentUserId, onToggle }: {
+  post: SocialPost; currentUserId: string; onToggle: (emoji: string) => void;
+}) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT } = Colors;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {REACTIONS.map((emoji) => {
+        const count = (post.reactions[emoji] ?? []).length;
+        const reacted = (post.reactions[emoji] ?? []).includes(currentUserId);
+        return (
+          <Pressable
+            key={emoji}
+            onPress={() => onToggle(emoji)}
+            style={{
+              flexDirection: 'row', alignItems: 'center',
+              backgroundColor: reacted ? Colors.primaryDim : SURFACE,
+              borderWidth: 1, borderColor: reacted ? Colors.primary : BORDER_SOFT,
+              borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 6,
+            }}
+          >
+            <Text style={{ fontSize: 13 }}>{emoji}</Text>
+            {count > 0 && (
+              <Text style={{ color: reacted ? Colors.primarySoft : Colors.subtext, fontSize: 11, marginLeft: 4, fontWeight: '600' }}>
+                {count}
+              </Text>
+            )}
+          </Pressable>
+        );
+      })}
+      <Pressable
+        onPress={() => Share.share({ message: 'Check out this study post!' })}
+        style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center' }}
+      >
+        <Ionicons name="share-outline" size={14} color={Colors.subtext} />
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginLeft: 4 }}>Share</Text>
+      </Pressable>
+    </View>
+  );
+}
 
-  useAppForeground(() => {
-    // Snappy catch-up: a running segment's clock is wall-clock based, so on return
-    // recompute timeLeft immediately (and auto-complete if it already hit 0 while
-    // backgrounded) instead of waiting up to 1s for the next interval tick.
-    if (useTimerStore.getState().status === 'running') {
-      useTimerStore.getState().tick();
-    }
+// ─── Free Post block ─────────────────────────────────────────────────────────
 
-    const today = new Date().toISOString().split('T')[0];
-    const lastDate = useTimerStore.getState().lastSessionDate;
-    if (lastDate && lastDate !== today) {
-      const userId = useAuthStore.getState().user?.id;
-      if (userId) useTimerStore.getState().hydrate(userId);
-    }
-  });
+function FreePostBlock({ post }: { post: SocialPost }) {
+  const [photoFullscreen, setPhotoFullscreen] = useState(false);
+  const hasPhoto  = !!post.photoUrl;
+  const hasStats  = (post.attachedStats ?? []).length > 0;
+  const hasAnything = hasPhoto || hasStats;
 
-  // Tracks whether the app was backgrounded at any point during the current
-  // running segment. If so, the OS notification is the completion surface and we
-  // suppress the on-screen Alert — the Alert is only for fully-foreground runs.
-  const backgroundedDuringRunRef = useRef(false);
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (next) => {
-      if (next !== 'active' && useTimerStore.getState().status === 'running') {
-        backgroundedDuringRunRef.current = true;
-      }
-    });
-    return () => sub.remove();
-  }, []);
-
-  useEffect(() => {
-    if (status === 'running') {
-      // Clear any existing interval before starting a new one — prevents stacking
-      // if this effect fires more than once while status is already 'running'.
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(() => {
-        tickRef.current();
-      }, 1000);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [status]);
-
-  // Completion alerts — detect transitions via previous-value refs
-  const prevStatusRef = useRef(status);
-  const prevPhaseRef = useRef(currentPhase);
-  useEffect(() => {
-    const prevStatus = prevStatusRef.current;
-    const prevPhase = prevPhaseRef.current;
-
-    // A new running segment began — reset the backgrounded tracker so this run
-    // starts fresh.
-    if (prevStatus !== 'running' && status === 'running') {
-      backgroundedDuringRunRef.current = false;
-    }
-
-    // Focus session just completed: was running focus, now break idle
-    if (prevStatus === 'running' && prevPhase === 'focus' && status === 'break') {
-      if (!backgroundedDuringRunRef.current) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert('Focus Complete! 🎯', 'Great work. Start your break when ready.');
-      }
-      backgroundedDuringRunRef.current = false;
-    }
-
-    // Break just completed: was running a break, now focus idle
-    if (prevStatus === 'running' && prevPhase !== 'focus' && status === 'idle' && currentPhase === 'focus') {
-      if (!backgroundedDuringRunRef.current) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        Alert.alert('Break Over', 'Ready for another focus session?');
-      }
-      backgroundedDuringRunRef.current = false;
-    }
-
-    prevStatusRef.current = status;
-    prevPhaseRef.current = currentPhase;
-  }, [status, currentPhase]);
-
-  const currentPhaseDuration = getPhaseDuration(currentPhase, settings, plannedFocusSeconds);
-
-  const progress = useSharedValue(currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1);
-
-  useEffect(() => {
-    const newProgress = mode === 'stopwatch'
-      ? 1
-      : (currentPhaseDuration > 0 ? timeLeft / currentPhaseDuration : 1);
-    progress.value = withTiming(newProgress, { duration: 400 });
-  }, [timeLeft, currentPhaseDuration, mode]);
-
-  const circleProps = useAnimatedProps(() => ({
-    strokeDashoffset: CIRCUMFERENCE * (1 - progress.value),
-  }));
-
-  const dotProps = useAnimatedProps(() => {
-    const angle = progress.value * 2 * Math.PI;
-    return {
-      cx: CX - RADIUS * Math.sin(angle),
-      cy: CY - RADIUS * Math.cos(angle),
-    };
-  });
-
-  const handleStart = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    start();
-  };
-
-  const handlePause = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    pause();
-  };
-
-  const handleResume = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    resume();
-  };
-
-  const handleSkip = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    skip();
-  };
-
-  const isRunning = status === 'running';
-  const isPaused = status === 'paused';
-  const isStopwatch = mode === 'stopwatch';
-
-  // Status light. `isRunning` covers the stopwatch too — it drives the same
-  // store status — so counting up and counting down both read as "live".
-  const ringGlow = useSharedValue(RING_GLOW_IDLE);
-  const ringElevation = useSharedValue(RING_ELEVATION_IDLE);
-
-  useEffect(() => {
-    const opts = { duration: RING_GLOW_FADE_MS };
-    ringGlow.value = withTiming(isRunning ? RING_GLOW_RUNNING : RING_GLOW_IDLE, opts);
-    ringElevation.value = withTiming(
-      isRunning ? RING_ELEVATION_RUNNING : RING_ELEVATION_IDLE,
-      opts,
-    );
-  }, [isRunning, ringGlow, ringElevation]);
-
-  const ringGlowStyle = useAnimatedStyle(() => ({
-    shadowOpacity: ringGlow.value,
-    elevation: ringElevation.value,
-  }));
-
-  const formatGlobalTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-    if (mins >= 1) return `${mins}m`;
-    return `${seconds}s`;
-  };
-
-  const handleStopwatchStart = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    startStopwatch();
-  };
-
-  const handleStopwatchPause = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // The store returns what it actually credited, which is not always what the
-    // display showed: the readout is up to a tick behind, and a very long run is
-    // capped to the maximum a single session can record.
-    const added = pauseStopwatch();
-    if (added > 0) {
-      Alert.alert('Focus time saved', `Added ${formatGlobalTime(added)} to your focus time.`);
-    }
-  };
-
-  const handleStopwatchDiscard = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    setMode('stopwatch'); // resets stopwatch to idle / 00:00 without saving
-  };
-
-  const phaseLabel = isStopwatch
-    ? (isRunning ? 'STOPWATCH' : 'STOPWATCH · READY')
-    : currentPhase === 'longBreak'
-      ? 'LONG BREAK'
-      : currentPhase === 'shortBreak'
-      ? 'BREAK'
-      : isRunning || isPaused
-      ? 'FOCUS'
-      : 'READY';
-
-  // Show all dots filled when heading into a long break; otherwise show cycle progress
-  const completedDots =
-    currentPhase === 'longBreak'
-      ? settings.sessionsUntilLong
-      : pomodoroRounds % settings.sessionsUntilLong;
-  const totalBreakBlocks = settings.sessionsUntilLong;
-
-  // Derived on render, deliberately not stored. The value the running timer
-  // uses is frozen separately in timerStore.plannedFocusSeconds; this is only
-  // for display, so it is free to recompute when the task or the setting moves.
-  const planBlocks = useMemo(() => {
-    if (isStopwatch || !selectedTask?.estimatedMinutes) return null;
-    const loggedMinutes = Math.round((selectedTask.totalTimeOnTask ?? 0) / 60);
-    const remaining = selectedTask.estimatedMinutes - loggedMinutes;
-    return getSessionPlan(remaining, Math.round(settings.workDuration / 60));
-  }, [isStopwatch, selectedTask, settings.workDuration]);
-
-  const planLabel = useMemo(() => {
-    if (!planBlocks || planBlocks.length === 0) return null;
-    if (planBlocks.length === 1) return `${planBlocks[0]} min`;
-    const allSame = planBlocks.every((b) => b === planBlocks[0]);
-    return allSame
-      ? `${planBlocks.length} × ${planBlocks[0]} min`
-      : `${planBlocks.join(' + ')} min`;
-  }, [planBlocks]);
-
-  const minutes = Math.floor(timeLeft / 60).toString().padStart(2, '0');
-  const seconds = (timeLeft % 60).toString().padStart(2, '0');
-
-  // Stopwatch counts up; show H:MM:SS past an hour, otherwise MM:SS.
-  const swDisplay = stopwatchElapsed >= 3600
-    ? `${Math.floor(stopwatchElapsed / 3600)}:${String(Math.floor((stopwatchElapsed % 3600) / 60)).padStart(2, '0')}:${String(stopwatchElapsed % 60).padStart(2, '0')}`
-    : `${Math.floor(stopwatchElapsed / 60).toString().padStart(2, '0')}:${(stopwatchElapsed % 60).toString().padStart(2, '0')}`;
-  const mainDisplay = isStopwatch ? swDisplay : `${minutes}:${seconds}`;
-
-  const [showDurationModal, setShowDurationModal] = useState(false);
-  const [draftFocus, setDraftFocus] = useState(0);
-  const [draftShort, setDraftShort] = useState(0);
-  const [draftLong, setDraftLong] = useState(0);
-  const [showTaskPicker, setShowTaskPicker] = useState(false);
+  if (!hasAnything) return null;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.darkBg }}>
-      <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 4 }}>
-
-        {/* HEADER */}
-        <View style={{ alignItems: 'center', paddingVertical: 10 }}>
-          <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '500', letterSpacing: 0.5 }}>
-            Stay focused, stay unstoppable
-          </Text>
+    <View style={{ marginBottom: 10 }}>
+      {hasPhoto && (
+        <>
+          <Pressable onPress={() => setPhotoFullscreen(true)}>
+            <Image
+              source={{ uri: post.photoUrl! }}
+              style={{ width: '100%', height: 220, borderRadius: 12, marginBottom: hasStats ? 10 : 0 }}
+              resizeMode="cover"
+            />
+          </Pressable>
+          <Modal visible={photoFullscreen} transparent animationType="fade" onRequestClose={() => setPhotoFullscreen(false)}>
+            <Pressable style={{ flex: 1, backgroundColor: '#000000EE', justifyContent: 'center' }} onPress={() => setPhotoFullscreen(false)}>
+              <Image source={{ uri: post.photoUrl! }} style={{ width: '100%', height: '70%' }} resizeMode="contain" />
+            </Pressable>
+          </Modal>
+        </>
+      )}
+      {hasStats && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {(post.attachedStats ?? []).map((s, i) => (
+            <StatPill key={i} label={s.label} value={s.value} />
+          ))}
         </View>
+      )}
+    </View>
+  );
+}
 
-        {/* MAIN TIMER RING */}
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Animated.View style={[{
-            width: SIZE,
-            height: SIZE,
-            alignItems: 'center',
-            justifyContent: 'center',
-            shadowColor: Colors.primary,
-            shadowOffset: { width: 0, height: 0 },
-            shadowRadius: 16,
-          }, ringGlowStyle]}>
-            <Svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-              <Circle
-                cx={CX}
-                cy={CY}
-                r={RADIUS}
-                stroke={Colors.inactive}
-                strokeWidth={STROKE_WIDTH}
-                fill="none"
-              />
-              <AnimatedCircle
-                cx={CX}
-                cy={CY}
-                r={RADIUS}
-                stroke={Colors.primary}
-                strokeWidth={STROKE_WIDTH}
-                fill="none"
-                strokeDasharray={CIRCUMFERENCE}
-                strokeLinecap="round"
-                animatedProps={circleProps}
-                transform={`
-                  translate(${CX}, ${CY})
-                  scale(-1, 1)
-                  translate(${-CX}, ${-CY})
-                  rotate(-90 ${CX} ${CY})
-                `}
-              />
-              {/* Glow under the progress dot. It takes its position from the
-                  same dotProps as the dot itself — without that it renders at
-                  the SVG's centre, which put a faint green disc behind the time
-                  readout and left the dot orbiting with no glow. Drawn first so
-                  it sits beneath. */}
-              <AnimatedCircle
-                r={DOT_RADIUS + 3}
-                fill={Colors.accent}
-                opacity={0.15}
-                animatedProps={dotProps}
-              />
-              <AnimatedCircle
-                r={DOT_RADIUS}
-                fill={Colors.accent}
-                animatedProps={dotProps}
-              />
-            </Svg>
+// ─── Post card ───────────────────────────────────────────────────────────────
 
-            <View style={{ position: 'absolute', alignItems: 'center' }}>
-              <Text style={{
-                fontSize: isStopwatch && stopwatchElapsed >= 3600 ? 44 : 56,
-                fontFamily: Font.display,
-                color: Colors.textBright,
-                fontVariant: ['tabular-nums'],
-                // Space Grotesk's digits already carry the vertical rhythm the
-                // old tracking was faking; 2 was pushing them apart.
-                letterSpacing: 1,
-              }}>
-                {mainDisplay}
-              </Text>
-              <Text style={{
-                color: Colors.text,
-                fontSize: 12,
-                fontWeight: '600',
-                letterSpacing: 1,
-                marginTop: Space.sm,
-              }}>
-                {phaseLabel}
-              </Text>
-            </View>
-          </Animated.View>
-        </View>
+function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
+  post: SocialPost; currentUserId: string;
+  onToggleReaction: (postId: string, emoji: string) => void;
+  onAuthorPress?: (authorId: string) => void;
+}) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT, GOLD } = Colors;
+  const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
+  const isOwnPost = post.authorId === currentUserId;
 
-        {/* SEQUENCE ROW — the task plan when one is loaded, else the pomodoro cycle */}
-        <View
-          accessible
-          accessibilityRole="progressbar"
-          accessibilityLabel={planBlocks
-            ? `Task plan, block 1 of ${planBlocks.length}, ${planLabel}`
-            : `Pomodoro cycle, ${completedDots} of ${totalBreakBlocks} complete`}
-          accessibilityValue={{ min: 0, max: planBlocks ? planBlocks.length : totalBreakBlocks, now: planBlocks ? 1 : completedDots }}
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingVertical: 10,
-          }}>
-          {/* With a plan loaded this row shows THAT plan — one segment per
-              remaining block, width proportional to its length — instead of the
-              global pomodoro cycle. Two rows answering "how many blocks am I
-              doing" with different numbers would be worse than either alone. */}
-          {!isStopwatch && planBlocks
-            ? planBlocks.map((minutes, i) => {
-                const total = planBlocks.reduce((a, b) => a + b, 0);
-                const isCurrent = i === 0;
-                return (
-                  <View
-                    key={i}
-                    style={{
-                      width: Math.max(12, Math.round((minutes / total) * 180)),
-                      height: 6,
-                      borderRadius: 3,
-                      backgroundColor: isCurrent ? Colors.accent : Colors.inactive,
-                      marginHorizontal: 3,
-                    }}
-                  />
-                );
-              })
-            : !isStopwatch && Array.from({ length: totalBreakBlocks }).map((_, i) => (
-                <View
-                  key={i}
-                  style={{
-                    width: i < completedDots ? 28 : 20,
-                    height: 6,
-                    borderRadius: 3,
-                    backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
-                    marginHorizontal: 3,
-                  }}
-                />
-              ))}
-        </View>
+  const handleReport = () => {
+    Alert.alert(
+      'Report Post',
+      'Report this post as inappropriate? Our team will review it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Report',
+          style: 'destructive',
+          onPress: async () => {
+            await api.post(`/social/posts/${post.id}/report`, { reason: 'inappropriate' });
+            Alert.alert('Reported', 'Thanks — we\'ll review this post.');
+          },
+        },
+      ],
+    );
+  };
 
-        {/* CONTROL BUTTONS */}
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'center',
-          alignItems: 'center',
-          paddingVertical: 8,
-        }}>
-          <AppPressable
-            onPress={isStopwatch ? handleStopwatchDiscard : handleSkip}
-            disabled={isStopwatch && stopwatchElapsed === 0 && !isRunning}
-            style={{
-              width: 50,
-              height: 50,
-              borderRadius: 25,
-              backgroundColor: Colors.darkCard,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderWidth: 1,
-              borderColor: Colors.border,
-              marginRight: 32,
-            }}
-          >
-            <Ionicons name={isStopwatch ? 'refresh' : 'play-skip-forward'} size={20} color={Colors.text} />
-          </AppPressable>
-
-          <View style={{ alignItems: 'center' }}>
-            <AppPressable
-              onPress={
-                isStopwatch
-                  ? (isRunning ? handleStopwatchPause : handleStopwatchStart)
-                  : (isRunning ? handlePause : isPaused ? handleResume : handleStart)
-              }
-              style={{
-                width: 72,
-                height: 72,
-                borderRadius: 36,
-                backgroundColor: Colors.primary,
-                alignItems: 'center',
-                justifyContent: 'center',
-                shadowColor: Colors.primary,
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.25,
-                shadowRadius: 12,
-                elevation: 8,
-              }}
-            >
-              <Ionicons
-                name={isRunning ? 'pause' : 'play'}
-                size={32}
-                color="#FFFFFF"
-              />
-            </AppPressable>
-            <Text style={{
-              color: Colors.text,
-              fontSize: 12,
-              fontWeight: '700',
-              letterSpacing: 1,
-              marginTop: Space.sm,
-            }}>
-              {isStopwatch
-                ? (isRunning ? 'PAUSE & SAVE' : 'START')
-                : (isRunning ? 'PAUSE' : isPaused ? 'RESUME' : 'START')}
-            </Text>
-          </View>
-
-          <AppPressable
-            onPress={() => {
-              setDraftFocus(Math.round(settings.workDuration / 60));
-              setDraftShort(Math.round(settings.shortBreakDuration / 60));
-              setDraftLong(Math.round(settings.longBreakDuration / 60));
-              setShowDurationModal(true);
-            }}
-            style={{
-              width: 50,
-              height: 50,
-              borderRadius: 25,
-              backgroundColor: Colors.darkCard,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderWidth: 1,
-              borderColor: Colors.border,
-              marginLeft: 32,
-            }}
-          >
-            <Ionicons name="timer-outline" size={20} color={Colors.text} />
-            {/* A plan is currently overriding this control. Without the marker the
-                button silently shows a number the timer is not using. */}
-            {planBlocks && (
-              <View style={{
-                position: 'absolute', top: 8, right: 8,
-                width: 8, height: 8, borderRadius: 4,
-                backgroundColor: Colors.accent,
-              }} />
-            )}
-          </AppPressable>
-        </View>
-
-        {/* TASK CARD */}
-        <AppPressable
-          onPress={() => setShowTaskPicker(true)}
-          accessibilityRole="button"
-          scaleOnPress={false}
-          style={{
-            backgroundColor: Colors.surface,
-            borderRadius: Radius.xl,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            padding: Space.lg,
-            marginTop: Space.lg,
-          }}
+  return (
+    <View style={{
+      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
+      marginHorizontal: 16, marginBottom: 12, padding: 14,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+        <Pressable
+          onPress={() => onAuthorPress?.(post.authorId)}
+          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
         >
-          <Text style={{
-            color: Colors.text,
-            fontSize: 12,
-            fontWeight: '700',
-            letterSpacing: 1,
-            marginBottom: Space.xs,
+          <View style={{
+            width: 36, height: 36, borderRadius: 11, backgroundColor: RAISED,
+            alignItems: 'center', justifyContent: 'center', marginRight: 10,
           }}>
-            CURRENT TASK
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={{
-              color: Colors.textBright,
-              fontSize: 17,
-              fontWeight: '600',
-              flex: 1,
-            }} numberOfLines={1}>
-              {selectedTask?.title || 'Select a task'}
-            </Text>
-            <Ionicons name="chevron-forward" size={18} color={Colors.text} style={{ marginLeft: 8 }} />
+            <Text style={{ fontSize: 20 }}>{post.authorEmoji || getAvatarEmoji(post.authorId)}</Text>
           </View>
-
-          {/* Say where the duration came from. Without this the timer silently
-              changes length between task selections with nothing on screen to
-              explain why — which reads as a bug rather than a feature. */}
-          {selectedTask && !isStopwatch && (
-            <Text
-              style={{ color: Colors.text, fontSize: 12, marginTop: Space.sm }}
-              numberOfLines={2}
-            >
-              {planLabel
-                ? `From this task’s plan · ${planLabel}`
-                : `Your default · ${Math.round(settings.workDuration / 60)} min`}
-            </Text>
-          )}
-
-          {selectedTask?.estimatedMinutes ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ color: Colors.textBright, fontWeight: '700', fontSize: 14 }}>{post.authorName}</Text>
               <View style={{
-                flex: 1,
-                height: 6,
-                backgroundColor: Colors.inactive,
-                borderRadius: 3,
-                overflow: 'hidden',
-                marginRight: 10,
+                marginLeft: 6, backgroundColor: rankColor + '22', borderRadius: 6,
+                paddingHorizontal: 6, paddingVertical: 2,
               }}>
-                <View style={{
-                  width: `${Math.min((selectedTask.totalTimeOnTask / (selectedTask.estimatedMinutes * 60)) * 100, 100)}%`,
-                  height: '100%',
-                  backgroundColor: Colors.accent,
-                  borderRadius: 3,
-                }} />
+                <Text style={{ color: rankColor, fontSize: 10, fontWeight: '600' }}>{post.authorRank}</Text>
               </View>
-              <Text style={{
-                color: Colors.text,
-                fontSize: 12,
-                fontWeight: '600',
-                width: 38,
-                textAlign: 'right',
-              }}>
-                {Math.min(Math.round((selectedTask.totalTimeOnTask / (selectedTask.estimatedMinutes * 60)) * 100), 100)}%
-              </Text>
             </View>
-          ) : null}
-        </AppPressable>
-
-        {/* STATS SECTION */}
-        <View style={{
-          flexDirection: 'row',
-          marginTop: 12,
-          marginBottom: 6,
-        }}>
-          <View style={{
-            flex: 1,
-            backgroundColor: Colors.darkCard,
-            borderRadius: Radius.lg,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            paddingVertical: Space.lg,
-            paddingHorizontal: Space.md,
-            alignItems: 'center',
-            marginRight: 6,
-          }}>
-            <Text style={{ color: Colors.accent, fontSize: 24, fontWeight: '700' }}>
-              {formatGlobalTime(globalTotalTime)}
-            </Text>
-            <Text style={{
-              color: Colors.text,
-              fontSize: 12,
-              fontWeight: '600',
-              letterSpacing: 0.5,
-              marginTop: Space.xs,
-              textAlign: 'center',
-            }}>
-              Focus Time Today
-
+            <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>
+              {post.groupName ? `${post.groupName} · ` : ''}{timeAgo(post.createdAt)}
             </Text>
           </View>
-
-          <View style={{
-            flex: 1,
-            backgroundColor: Colors.darkCard,
-            borderRadius: Radius.lg,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            paddingVertical: Space.lg,
-            paddingHorizontal: Space.md,
-            alignItems: 'center',
-            marginLeft: 6,
-          }}>
-            <Text style={{ color: Colors.textBright, fontSize: 24, fontWeight: '700' }}>
-              {globalSessions}
-            </Text>
-            <Text style={{
-              color: Colors.text,
-              fontSize: 12,
-              fontWeight: '600',
-              letterSpacing: 0.5,
-              marginTop: Space.xs,
-              textAlign: 'center',
-            }}>
-              Sessions Completed
-            </Text>
-          </View>
-        </View>
-
+        </Pressable>
+        {!isOwnPost && (
+          <Pressable
+            onPress={handleReport}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ padding: 4, marginLeft: 8 }}
+            accessibilityLabel="Report post"
+          >
+            <Ionicons name="flag-outline" size={16} color={Colors.subtext} />
+          </Pressable>
+        )}
       </View>
 
-        {/* TASK PICKER MODAL */}
-        <Modal visible={showTaskPicker} transparent animationType="slide" onRequestClose={() => setShowTaskPicker(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-            <View style={{
-              backgroundColor: Colors.darkCard,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: 24,
-              paddingBottom: 40,
-              maxHeight: '60%',
-            }}>
-              <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 16 }}>
-                Select Task
-              </Text>
+      <PostTypeTag type={post.type} contentTag={post.contentTag} />
 
-              {tasks.filter((t) => !t.isArchived && !t.isCompleted).length === 0 ? (
-                <Text style={{ color: Colors.text, textAlign: 'center', paddingVertical: Space.xxl }}>
-                  No tasks available
-                </Text>
-              ) : (
-                <ScrollView style={{ maxHeight: 300 }}>
-                  {tasks.filter((t) => !t.isArchived && !t.isCompleted).map((task) => {
-                    const isSelected = task.id === selectedTaskId;
+      {post.caption ? (
+        <Text style={{ color: Colors.text, fontSize: 13, marginBottom: 10, lineHeight: 19 }}>
+          {post.caption}
+        </Text>
+      ) : null}
+
+      {post.type === 'session_recap'      && <SessionRecapBlock post={post} />}
+      {post.type === 'achievement_unlock' && <AchievementUnlockBlock post={post} />}
+      {post.type === 'accountability'     && <AccountabilityBlock post={post} />}
+      {post.type === 'streak_milestone'   && <StreakMilestoneBlock post={post} />}
+      {post.type === 'free_post'          && <FreePostBlock post={post} />}
+
+      <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 10 }} />
+
+      <ReactionRow
+        post={post}
+        currentUserId={currentUserId}
+        onToggle={(emoji) => onToggleReaction(post.id, emoji)}
+      />
+    </View>
+  );
+}
+
+// ─── Leaderboard podium ──────────────────────────────────────────────────────
+
+const MEDALS = ['🥇', '🥈', '🥉'];
+const PODIUM_HEIGHTS = [48, 36, 28];
+const PODIUM_ORDER = [1, 0, 2];
+
+function PodiumEntry({ entry, pos }: { entry: FocusLeaderboardEntry; pos: number }) {
+  const Colors = useTheme();
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT, GOLD } = Colors;
+  const isFirst = pos === 0;
+  const borderColor = pos === 0 ? GOLD : pos === 1 ? '#C0C0C080' : '#CD7F3280';
+  return (
+    <View style={{ alignItems: 'center', flex: 1 }}>
+      <Text style={{ fontSize: 12, marginBottom: 4 }}>{MEDALS[pos]}</Text>
+      <View style={{
+        width: 44, height: 44, borderRadius: 13, backgroundColor: RAISED,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: isFirst ? 2 : 1, borderColor,
+        ...(isFirst ? { shadowColor: GOLD, shadowOpacity: 0.5, shadowRadius: 10, elevation: 6 } : {}),
+      }}>
+        <Text style={{ fontSize: 22 }}>{entry.avatarEmoji}</Text>
+      </View>
+      <Text numberOfLines={1} style={{
+        color: Colors.textBright, fontSize: 11, fontWeight: '600',
+        marginTop: 4, width: 64, textAlign: 'center',
+      }}>
+        {entry.displayName}
+      </Text>
+      <Text style={{ color: isFirst ? GOLD : Colors.text, fontSize: 12, fontWeight: '700' }}>
+        {formatFocusMinutes(entry.focusMinutes)}
+      </Text>
+      <View style={{
+        width: '75%', height: PODIUM_HEIGHTS[pos], borderRadius: 6, marginTop: 4,
+        backgroundColor: isFirst ? GOLD + '28' : RAISED,
+        borderWidth: 1, borderColor: isFirst ? GOLD + '50' : BORDER_SOFT,
+      }} />
+    </View>
+  );
+}
+
+function PodiumBlock({ entries }: { entries: FocusLeaderboardEntry[] }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT } = Colors;
+  const top3 = entries.slice(0, 3);
+  const ordered = PODIUM_ORDER.map((i) => top3[i]).filter(Boolean) as FocusLeaderboardEntry[];
+  return (
+    <View style={{
+      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
+      marginHorizontal: 16, marginBottom: 12, padding: 16, paddingTop: 20,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
+        {ordered.map((e, i) => (
+          <PodiumEntry key={e.userId} entry={e} pos={PODIUM_ORDER[i]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── Leaderboard list row ────────────────────────────────────────────────────
+
+function LeaderboardListRow({ entry }: { entry: FocusLeaderboardEntry }) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const RAISED = Colors.raised;
+  const { GOLD, ROSE } = Colors;
+  const posColor = entry.position <= 5 ? Colors.primarySoft : Colors.subtext;
+  const rankColor = isGoldRank(entry.rank) ? GOLD : Colors.primarySoft;
+  const delta = entry.positionDelta;
+  const deltaColor = delta == null ? Colors.subtext : delta > 0 ? Colors.accent : delta < 0 ? ROSE : Colors.subtext;
+  const deltaText = delta == null ? null : delta > 0 ? `↑${delta}` : delta < 0 ? `↓${Math.abs(delta)}` : '–';
+
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center',
+      paddingVertical: 11, paddingHorizontal: 16,
+      backgroundColor: entry.isMe ? RAISED : 'transparent',
+      borderWidth: entry.isMe ? 1 : 0, borderColor: Colors.primary,
+      borderRadius: entry.isMe ? 12 : 0,
+      marginHorizontal: entry.isMe ? 12 : 0,
+      marginVertical: entry.isMe ? 4 : 0,
+    }}>
+      <Text style={{ color: posColor, fontSize: 13, fontWeight: '700', width: 26 }}>
+        #{entry.position}
+      </Text>
+      <View style={{
+        width: 32, height: 32, borderRadius: 9, backgroundColor: SURFACE,
+        alignItems: 'center', justifyContent: 'center', marginRight: 10,
+      }}>
+        <Text style={{ fontSize: 18 }}>{entry.avatarEmoji}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 13 }}>{entry.displayName}</Text>
+          {entry.isMe && (
+            <View style={{ marginLeft: 5, backgroundColor: Colors.primaryDim, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+              <Text style={{ color: Colors.primary, fontSize: 9, fontWeight: '700' }}>YOU</Text>
+            </View>
+          )}
+          <View style={{ marginLeft: 5, backgroundColor: rankColor + '22', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1 }}>
+            <Text style={{ color: rankColor, fontSize: 9, fontWeight: '600' }}>{entry.rank}</Text>
+          </View>
+        </View>
+        <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>{entry.currentStreak}d streak</Text>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '700' }}>
+          {formatFocusMinutes(entry.focusMinutes)}
+        </Text>
+        {deltaText && (
+          <Text style={{ color: deltaColor, fontSize: 11 }}>{deltaText}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ─── Next target card ────────────────────────────────────────────────────────
+
+function NextTargetCard({ me, above }: {
+  me: FocusLeaderboardEntry | null; above: FocusLeaderboardEntry | null;
+}) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT, GOLD, GOLD_DIM } = Colors;
+  if (!me) return null;
+
+  if (me.position === 1) {
+    return (
+      <View style={{
+        marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
+        borderWidth: 1, borderColor: GOLD + '60', backgroundColor: GOLD_DIM,
+      }}>
+        <Text style={{ color: GOLD, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>
+          👑 You're at the top. Keep going.
+        </Text>
+      </View>
+    );
+  }
+
+  if (me.focusMinutes === 0) {
+    return (
+      <View style={{
+        marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
+        backgroundColor: SURFACE, borderWidth: 1, borderColor: BORDER_SOFT,
+      }}>
+        <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
+          Start studying to appear on the leaderboard
+        </Text>
+      </View>
+    );
+  }
+
+  if (!above || above.focusMinutes === 0) return null;
+  const gap = Math.max(0, above.focusMinutes - me.focusMinutes);
+  const pct = Math.min(99, Math.round((me.focusMinutes / above.focusMinutes) * 100));
+
+  return (
+    <View style={{
+      marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
+      backgroundColor: SURFACE, borderWidth: 1, borderColor: BORDER_SOFT,
+    }}>
+      <Text style={{ color: Colors.subtext, fontSize: 11, marginBottom: 4 }}>🎯 Next target</Text>
+      <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 10 }}>
+        {'You need '}
+        <Text style={{ color: Colors.primarySoft, fontWeight: '700' }}>{formatFocusMinutes(gap)}</Text>
+        {' more to pass '}
+        <Text style={{ fontWeight: '700' }}>{above.displayName}</Text>
+        {` (#${above.position})`}
+      </Text>
+      <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 8 }}>
+        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.primary }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ color: Colors.subtext, fontSize: 11 }}>You · {formatFocusMinutes(me.focusMinutes)}</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 11 }}>{above.displayName} · {formatFocusMinutes(above.focusMinutes)}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Create post sheet ───────────────────────────────────────────────────────
+
+const POST_TYPE_CARDS: { type: PostType; icon: string; label: string; desc: string; comingSoon?: boolean }[] = [
+  { type: 'free_post',          icon: '✏️', label: 'Share something',                 desc: 'Write a free post with optional stats' },
+  { type: 'session_recap',      icon: '⚡', label: 'Share a session recap',           desc: 'Show off your recent focus block' },
+  { type: 'achievement_unlock', icon: '🏅', label: 'Share an achievement',            desc: 'Celebrate a milestone you unlocked' },
+  { type: 'streak_milestone',   icon: '🔥', label: 'Share a streak milestone',        desc: 'Brag about your consistency' },
+];
+
+const FREE_TAGS = Object.entries(FREE_TAG_META) as [FreePostTag, { emoji: string; label: string }][];
+
+function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId, studyGroups }: {
+  visibility: 'public' | 'group';
+  setVisibility: (v: 'public' | 'group') => void;
+  targetGroupId: string | null;
+  setTargetGroupId: (id: string | null) => void;
+  studyGroups: StudyGroup[];
+}) {
+  const Colors = useTheme();
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT } = Colors;
+  return (
+    <>
+      <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Share to</Text>
+      <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+        {(['public', 'group'] as const).map((v) => (
+          <Pressable
+            key={v}
+            onPress={() => setVisibility(v)}
+            style={{
+              paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginRight: 8,
+              backgroundColor: visibility === v ? Colors.primary : RAISED,
+              borderWidth: 1, borderColor: visibility === v ? Colors.primary : BORDER_SOFT,
+            }}
+          >
+            <Text style={{ color: visibility === v ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>
+              {v === 'public' ? 'Public' : 'Focus Group'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {visibility === 'group' && studyGroups.length === 0 && (
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>
+          You are not in any focus groups yet. Join one to post there.
+        </Text>
+      )}
+      {visibility === 'group' && studyGroups.length > 0 && !targetGroupId && (
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 8 }}>
+          Pick a group to post in.
+        </Text>
+      )}
+      {visibility === 'group' && studyGroups.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          {studyGroups.map((g) => (
+            <Pressable
+              key={g.id}
+              onPress={() => setTargetGroupId(g.id)}
+              style={{
+                flexDirection: 'row', alignItems: 'center', marginRight: 8,
+                backgroundColor: targetGroupId === g.id ? Colors.primaryDim : RAISED,
+                borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+                borderWidth: 1, borderColor: targetGroupId === g.id ? Colors.primary : BORDER_SOFT,
+              }}
+            >
+              <Text style={{ fontSize: 16, marginRight: 6 }}>{g.emoji}</Text>
+              <Text style={{ color: Colors.text, fontSize: 12 }}>{g.name}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+    </>
+  );
+}
+
+function CreatePostSheet({ visible, onClose, onPost, studyGroups, defaultGroupId }: {
+  visible: boolean;
+  onClose: () => void;
+  onPost: (draft: Partial<SocialPost>) => void;
+  studyGroups: StudyGroup[];
+  /** The group being read right now, if any. Becomes the default destination. */
+  defaultGroupId: string | null;
+}) {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const RAISED = Colors.raised;
+  const { BORDER_SOFT, ROSE, ROSE_DIM, GOLD, GOLD_DIM } = Colors;
+  const gamification = useGamification();
+  const timer = useTimerStore();
+
+  const [step,          setStep]          = useState<1 | 2>(1);
+  const [selectedType,  setSelectedType]  = useState<PostType | null>(null);
+  const [caption,       setCaption]       = useState('');
+  const [visibility,    setVisibility]    = useState<'public' | 'group'>('public');
+  const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
+
+  // Opening the composer while reading a group means you almost certainly want
+  // to post there. Preselect it, but leave both destinations switchable.
+  useEffect(() => {
+    if (!visible) return;
+    setVisibility(defaultGroupId ? 'group' : 'public');
+    setTargetGroupId(defaultGroupId);
+  }, [visible, defaultGroupId]);
+
+  // Free post state
+  const [freeText,             setFreeText]             = useState('');
+  const [selectedTag,          setSelectedTag]          = useState<FreePostTag | null>(null);
+  const [photoUri,             setPhotoUri]             = useState<string | null>(null);
+  const [showStats,            setShowStats]            = useState(false);
+  const [checkedStats,         setCheckedStats]         = useState<string[]>([]);
+  const [textError,            setTextError]            = useState(false);
+  const [statsError,           setStatsError]           = useState(false);
+  const [todayCount,           setTodayCount]           = useState(0);
+  const [todayMinutes,         setTodayMinutes]         = useState(0);
+  const [selectedAchievementId, setSelectedAchievementId] = useState<string | null>(null);
+  const freeTextRef = useRef<TextInput>(null);
+
+  const unlockedAchievements = gamification.achievements.filter((a) => a.isUnlocked);
+  const hasUnlockedAchievements = unlockedAchievements.length > 0;
+
+  const availableStats = [
+    { key: 'sessions_today', label: 'Sessions today',    value: String(todayCount) },
+    { key: 'focus_today',    label: 'Focus time today',  value: formatFocusMinutes(todayMinutes) },
+    { key: 'streak',         label: 'Current streak',    value: `${gamification.currentStreak} days` },
+    { key: 'total_sessions', label: 'Total sessions',    value: String(gamification.totalSessions) },
+    { key: 'total_focus',    label: 'Total focus',       value: `${Math.floor((gamification.totalFocusMinutes ?? 0) / 60)}h` },
+  ];
+
+  useEffect(() => {
+    if (visible && selectedType === 'free_post') {
+      getSessionHistory().then((sessions) => {
+        const today = new Date().toDateString();
+        const ts = sessions.filter((s) => new Date(s.completedAt).toDateString() === today && s.type === 'focus');
+        setTodayCount(ts.length);
+        setTodayMinutes(Math.round(ts.reduce((sum, s) => sum + s.durationSeconds / 60, 0)));
+      }).catch(() => {});
+    }
+  }, [visible, selectedType]);
+
+  // Choosing "Focus Group" without picking one sent groupId:null and the server
+  // answered 400. Block it in the composer instead of surfacing a raw failure.
+  const destinationMissing = visibility === 'group' && !targetGroupId;
+
+  const reset = () => {
+    setStep(1); setSelectedType(null); setCaption('');
+    setVisibility(defaultGroupId ? 'group' : 'public'); setTargetGroupId(defaultGroupId);
+    setFreeText(''); setSelectedTag(null); setPhotoUri(null);
+    setShowStats(false); setCheckedStats([]);
+    setTextError(false); setStatsError(false);
+    setSelectedAchievementId(null);
+  };
+
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleSelectType = (type: PostType) => {
+    setSelectedType(type);
+    setStep(2);
+    if (type === 'free_post') setTimeout(() => freeTextRef.current?.focus(), 300);
+  };
+
+  const toggleStat = (key: string) => {
+    setCheckedStats((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+    setStatsError(false);
+  };
+
+  const handlePost = () => {
+    if (destinationMissing) return;
+    if (selectedType === 'free_post') {
+      if (!freeText.trim()) { setTextError(true); return; }
+      if (showStats && checkedStats.length === 0) { setStatsError(true); return; }
+      const attachedStats: AttachedStat[] | null = showStats && checkedStats.length > 0
+        ? availableStats.filter((s) => checkedStats.includes(s.key)).map((s) => ({ label: s.label, value: s.value }))
+        : null;
+      onPost({ type: 'free_post', caption: freeText.trim(), contentTag: selectedTag, photoUrl: photoUri, attachedStats, visibility, groupId: visibility === 'group' ? targetGroupId : null, reactions: {} });
+      handleClose();
+    } else {
+      if (!selectedType) return;
+      if (selectedType === 'achievement_unlock' && !selectedAchievementId) return;
+      const draft: Record<string, unknown> = {
+        type: selectedType,
+        caption: caption.trim() || null,
+        visibility,
+        groupId: visibility === 'group' ? targetGroupId : null,
+        reactions: {},
+      };
+      if (selectedType === 'session_recap') draft.sessionId = timer.lastCompletedSessionId;
+      if (selectedType === 'achievement_unlock') draft.achievementId = selectedAchievementId;
+      if (selectedType === 'streak_milestone') draft.streakAtPost = gamification.currentStreak;
+      onPost(draft as Partial<SocialPost>);
+      handleClose();
+    }
+  };
+
+  const canPost = !destinationMissing && (selectedType === 'free_post'
+    ? freeText.trim().length > 0 && (!showStats || checkedStats.length > 0)
+    : selectedType === 'achievement_unlock'
+    ? !!selectedAchievementId
+    : true);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <Pressable style={{ flex: 1, backgroundColor: '#00000088' }} onPress={handleClose} />
+        <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '78%' }}>
+          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
+            {step === 2 && (
+              <Pressable onPress={() => setStep(1)} style={{ marginRight: 10 }}>
+                <Ionicons name="chevron-back" size={22} color={Colors.text} />
+              </Pressable>
+            )}
+            <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', flex: 1 }}>
+              {step === 1 ? 'What do you want to share?' : 'Compose post'}
+            </Text>
+            <Pressable onPress={handleClose}>
+              <Ionicons name="close" size={22} color={Colors.subtext} />
+            </Pressable>
+          </View>
+
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
+            {/* ── Step 1: type selection ── */}
+            {step === 1 && POST_TYPE_CARDS.map(({ type, icon, label, desc, comingSoon }) => {
+              const isAchievementDisabled = type === 'achievement_unlock' && !hasUnlockedAchievements;
+              const isDisabled = isAchievementDisabled || !!comingSoon;
+              return (
+                <Pressable
+                  key={type}
+                  onPress={() => !isDisabled && handleSelectType(type)}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', backgroundColor: RAISED,
+                    borderRadius: 14, borderWidth: 1, borderColor: BORDER_SOFT,
+                    padding: 14, marginBottom: 10,
+                    opacity: isDisabled ? 0.45 : 1,
+                  }}
+                >
+                  <Text style={{ fontSize: 28, marginRight: 14 }}>{icon}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 14 }}>{label}</Text>
+                    <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>
+                      {isAchievementDisabled ? 'Complete an achievement to share it' : comingSoon ? 'Coming soon' : desc}
+                    </Text>
+                  </View>
+                  {!isDisabled && <Ionicons name="chevron-forward" size={18} color={Colors.subtext} />}
+                </Pressable>
+              );
+            })}
+
+            {/* ── Step 2: Free Post compose ── */}
+            {step === 2 && selectedType === 'free_post' && (
+              <>
+                <TextInput
+                  ref={freeTextRef}
+                  multiline maxLength={280}
+                  placeholder="What's on your mind?"
+                  placeholderTextColor={Colors.subtext}
+                  value={freeText}
+                  onChangeText={(t) => { setFreeText(t); setTextError(false); }}
+                  style={{
+                    backgroundColor: RAISED, borderRadius: 12,
+                    borderWidth: 1, borderColor: textError ? ROSE : BORDER_SOFT,
+                    padding: 12, color: Colors.textBright, fontSize: 14, minHeight: 100,
+                    textAlignVertical: 'top', marginBottom: 4,
+                  }}
+                />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 }}>
+                  {textError
+                    ? <Text style={{ color: ROSE, fontSize: 11 }}>Write something to post</Text>
+                    : <View />}
+                  <Text style={{ color: Colors.subtext, fontSize: 11 }}>{freeText.length}/280</Text>
+                </View>
+
+                {/* Content tag selector */}
+                <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Add a tag (optional)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+                  {FREE_TAGS.map(([key, meta]) => {
+                    const active = selectedTag === key;
                     return (
-                      <AppPressable
-                        key={task.id}
-                        onPress={() => {
-                          selectTask(task.id);
-                          setShowTaskPicker(false);
-                        }}
+                      <Pressable
+                        key={key}
+                        onPress={() => setSelectedTag(active ? null : key)}
                         style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          paddingVertical: 14,
-                          paddingHorizontal: 4,
-                          borderBottomWidth: 1,
-                          borderBottomColor: Colors.border,
-                          opacity: isSelected ? 1 : 0.8,
+                          flexDirection: 'row', alignItems: 'center', marginRight: 8,
+                          backgroundColor: active ? ROSE_DIM : RAISED,
+                          borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+                          borderWidth: 1, borderColor: active ? ROSE : BORDER_SOFT,
                         }}
                       >
-                        <Ionicons
-                          name={isSelected ? 'checkbox' : 'square-outline'}
-                          size={20}
-                          color={isSelected ? Colors.accent : Colors.text}
-                          style={{ marginRight: 12 }}
-                        />
-                        <Text style={{
-                          color: isSelected ? Colors.textBright : Colors.text,
-                          fontSize: 15,
-                          fontWeight: isSelected ? '600' : '400',
-                          flex: 1,
-                        }} numberOfLines={1}>
-                          {task.title}
+                        <Text style={{ fontSize: 14, marginRight: 5 }}>{meta.emoji}</Text>
+                        <Text style={{ color: active ? ROSE : Colors.subtext, fontSize: 12, fontWeight: active ? '600' : '400' }}>
+                          {meta.label}
                         </Text>
-                        {task.estimatedMinutes ? (
-                          <Text style={{ color: Colors.text, fontSize: 12, marginLeft: Space.sm }}>
-                            {task.estimatedMinutes}m
-                          </Text>
-                        ) : null}
-                      </AppPressable>
+                      </Pressable>
                     );
                   })}
                 </ScrollView>
-              )}
 
-              <View style={{ flexDirection: 'row', marginTop: 16 }}>
-                {selectedTaskId ? (
-                  <AppPressable
-                    onPress={() => {
-                      selectTask(null);
-                      setShowTaskPicker(false);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: 14,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: Colors.border,
-                      marginRight: 8,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ color: Colors.text, fontWeight: '600' }}>Deselect</Text>
-                  </AppPressable>
-                ) : null}
-                <AppPressable
-                  onPress={() => setShowTaskPicker(false)}
+                {/* Attach stats */}
+                <Pressable
+                  onPress={() => { setShowStats((v) => !v); setCheckedStats([]); setStatsError(false); }}
                   style={{
-                    flex: selectedTaskId ? 1 : undefined,
-                    paddingHorizontal: selectedTaskId ? 14 : 24,
-                    padding: 14,
-                    borderRadius: 12,
-                    backgroundColor: Colors.darkBg,
-                    alignItems: 'center',
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1, borderColor: BORDER_SOFT,
+                    padding: 12, marginBottom: showStats ? 0 : 14,
                   }}
                 >
-                  <Text style={{ color: Colors.text, fontWeight: '600' }}>Cancel</Text>
-                </AppPressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="stats-chart-outline" size={18} color={Colors.text} />
+                    <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600', marginLeft: 10 }}>Attach my stats</Text>
+                  </View>
+                  <View style={{
+                    width: 40, height: 22, borderRadius: 11,
+                    backgroundColor: showStats ? Colors.primary : Colors.inactive,
+                    justifyContent: 'center', paddingHorizontal: 2,
+                  }}>
+                    <View style={{
+                      width: 18, height: 18, borderRadius: 9, backgroundColor: '#fff',
+                      alignSelf: showStats ? 'flex-end' : 'flex-start',
+                    }} />
+                  </View>
+                </Pressable>
 
-        {/* DURATION MODAL */}
-        <Modal visible={showDurationModal} transparent animationType="slide" onRequestClose={() => setShowDurationModal(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-            <View style={{
-              backgroundColor: Colors.darkCard,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: 24,
-              paddingBottom: 40,
-            }}>
-              <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 20 }}>
-                Timer Duration
-              </Text>
+                {showStats && (
+                  <View style={{
+                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
+                    borderColor: BORDER_SOFT, borderTopWidth: 0,
+                    borderTopLeftRadius: 0, borderTopRightRadius: 0,
+                    padding: 12, marginBottom: 14,
+                  }}>
+                    {availableStats.map((s) => (
+                      <Pressable
+                        key={s.key}
+                        onPress={() => toggleStat(s.key)}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                      >
+                        <View style={{
+                          width: 20, height: 20, borderRadius: 5, borderWidth: 1.5,
+                          borderColor: checkedStats.includes(s.key) ? Colors.primary : Colors.border,
+                          backgroundColor: checkedStats.includes(s.key) ? Colors.primary : 'transparent',
+                          alignItems: 'center', justifyContent: 'center', marginRight: 12,
+                        }}>
+                          {checkedStats.includes(s.key) && <Ionicons name="checkmark" size={12} color="#fff" />}
+                        </View>
+                        <Text style={{ color: Colors.text, fontSize: 13, flex: 1 }}>{s.label}</Text>
+                        <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600' }}>{s.value}</Text>
+                      </Pressable>
+                    ))}
+                    {statsError && (
+                      <Text style={{ color: ROSE, fontSize: 11, marginTop: 4 }}>Select at least one stat to attach</Text>
+                    )}
+                  </View>
+                )}
 
-              <StepperRow
-                label="Focus"
-                value={draftFocus}
-                min={1}
-                max={480}
-                step={1}
-                onChange={setDraftFocus}
-              />
-              <StepperRow
-                label="Short Break"
-                value={draftShort}
-                min={1}
-                max={480}
-                step={1}
-                onChange={setDraftShort}
-              />
-              <StepperRow
-                label="Long Break"
-                value={draftLong}
-                min={1}
-                max={480}
-                step={1}
-                onChange={setDraftLong}
-              />
+                <ShareToRow
+                  visibility={visibility} setVisibility={setVisibility}
+                  targetGroupId={targetGroupId} setTargetGroupId={setTargetGroupId}
+                  studyGroups={studyGroups}
+                />
 
-              {/* Mode toggle — switch between the countdown timer and the count-up stopwatch */}
-              <AppPressable
-                onPress={() => {
-                  setMode(isStopwatch ? 'pomodoro' : 'stopwatch');
-                  setShowDurationModal(false);
-                }}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginTop: 8,
-                  paddingVertical: 14,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: Colors.primary,
-                  backgroundColor: Colors.primaryDim,
-                }}
-              >
-                <Ionicons name={isStopwatch ? 'timer-outline' : 'stopwatch-outline'} size={18} color={Colors.primarySoft} style={{ marginRight: 8 }} />
-                <Text style={{ color: Colors.primarySoft, fontWeight: '700' }}>
-                  {isStopwatch ? 'Switch to Timer' : 'Switch to Stopwatch'}
+                <Pressable
+                  onPress={handlePost}
+                  disabled={!canPost}
+                  style={{
+                    backgroundColor: canPost ? Colors.primary : Colors.inactive,
+                    borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: canPost ? '#fff' : Colors.subtext, fontWeight: '700', fontSize: 15 }}>Post</Text>
+                </Pressable>
+              </>
+            )}
+
+            {/* ── Step 2: Other post types ── */}
+            {step === 2 && selectedType && selectedType !== 'free_post' && (
+              <>
+                <View style={{
+                  backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
+                  borderColor: BORDER_SOFT, padding: 12, marginBottom: 12,
+                }}>
+                  <PostTypeTag type={selectedType} />
+                  <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+                    {selectedType === 'session_recap'
+                      ? 'Your most recent session stats will be shared automatically.'
+                      : selectedType === 'achievement_unlock'
+                      ? 'Select an achievement to feature below.'
+                      : selectedType === 'streak_milestone'
+                      ? 'Your current streak stats will be shared.'
+                      : 'Invite your group to a shared challenge.'}
+                  </Text>
+                </View>
+
+                {selectedType === 'achievement_unlock' && (
+                  <View style={{ marginBottom: 12 }}>
+                    {unlockedAchievements.map((a) => (
+                      <Pressable
+                        key={a.id}
+                        onPress={() => setSelectedAchievementId(a.id)}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center',
+                          backgroundColor: selectedAchievementId === a.id ? GOLD_DIM : RAISED,
+                          borderRadius: 12, borderWidth: 1,
+                          borderColor: selectedAchievementId === a.id ? GOLD : BORDER_SOFT,
+                          padding: 12, marginBottom: 8,
+                        }}
+                      >
+                        <Text style={{ fontSize: 26, marginRight: 12 }}>{a.icon}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 13 }}>{a.title}</Text>
+                          <Text style={{ color: Colors.subtext, fontSize: 11 }} numberOfLines={1}>{a.description}</Text>
+                        </View>
+                        {selectedAchievementId === a.id && (
+                          <Ionicons name="checkmark-circle" size={20} color={GOLD} />
+                        )}
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+
+                <TextInput
+                  multiline maxLength={280}
+                  placeholder="Add a caption... (optional)"
+                  placeholderTextColor={Colors.subtext}
+                  value={caption}
+                  onChangeText={setCaption}
+                  style={{
+                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1, borderColor: BORDER_SOFT,
+                    padding: 12, color: Colors.textBright, fontSize: 14, minHeight: 80,
+                    textAlignVertical: 'top', marginBottom: 4,
+                  }}
+                />
+                <Text style={{ color: Colors.subtext, fontSize: 11, textAlign: 'right', marginBottom: 14 }}>
+                  {caption.length}/280
                 </Text>
-              </AppPressable>
 
-              <View style={{ flexDirection: 'row', marginTop: 16 }}>
-                <AppPressable
-                  onPress={() => setShowDurationModal(false)}
+                <ShareToRow
+                  visibility={visibility} setVisibility={setVisibility}
+                  targetGroupId={targetGroupId} setTargetGroupId={setTargetGroupId}
+                  studyGroups={studyGroups}
+                />
+
+                <Pressable
+                  onPress={handlePost}
+                  disabled={destinationMissing}
                   style={{
-                    flex: 1,
-                    padding: 14,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: Colors.border,
-                    marginRight: 8,
-                    alignItems: 'center',
+                    backgroundColor: destinationMissing ? Colors.inactive : Colors.primary,
+                    borderRadius: 14, paddingVertical: 14, alignItems: 'center',
                   }}
                 >
-                  <Text style={{ color: Colors.text, fontWeight: '600' }}>Cancel</Text>
-                </AppPressable>
-                <AppPressable
-                  onPress={() => {
-                    setWorkDuration(draftFocus);
-                    setShortBreakDuration(draftShort);
-                    setLongBreakDuration(draftLong);
-                    // New durations make any pending notification stale. Cancel it
-                    // when not mid-session; a running timer keeps its original alarm.
-                    if (useTimerStore.getState().status !== 'running') {
-                      cancelAllTimerNotifications();
-                    }
-                    setShowDurationModal(false);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: 14,
-                    borderRadius: 12,
-                    backgroundColor: Colors.primary,
-                    marginLeft: 8,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>Confirm</Text>
-                </AppPressable>
-              </View>
+                  <Text style={{
+                    color: destinationMissing ? Colors.subtext : '#fff', fontWeight: '700', fontSize: 15,
+                  }}>Post</Text>
+                </Pressable>
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
+const SCOPES = [
+  { key: 'friends', label: 'Friends' },
+  { key: 'global',  label: 'Global' },
+] as const;
+
+type Scope = typeof SCOPES[number]['key'];
+
+// The board is all-time only. The month/all-time toggle was removed, so this is
+// the single value sent to the server; the endpoint still takes the parameter.
+const LEADERBOARD_PERIOD = 'all_time';
+
+export default function TraceScreen() {
+  const Colors = useTheme();
+  const SURFACE = Colors.surface;
+  const { BORDER_SOFT, ROSE } = Colors;
+  const social      = useSocialStore();
+  const auth        = useAuthStore();
+  const router      = useRouter();
+  const currentUserId = auth.user?.id ?? '';
+
+  const [activeTab,          setActiveTab]          = useState<'feed' | 'leaderboard'>('feed');
+  const [showCreatePost,     setShowCreatePost]     = useState(false);
+  const [showNotifications,  setShowNotifications]  = useState(false);
+  const [refreshing,         setRefreshing]         = useState(false);
+  const [scope,              setScope]              = useState<Scope>('global');
+
+  useEffect(() => {
+    social.fetchPosts(social.selectedGroupId ?? undefined);
+    social.fetchStudyGroups();
+    social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
+    social.fetchNotifications();
+  }, []);
+
+  useEffect(() => {
+    social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
+  }, [scope]);
+
+  const handleRefreshFeed = useCallback(async () => {
+    setRefreshing(true);
+    await social.fetchPosts(social.selectedGroupId ?? undefined);
+    setRefreshing(false);
+  }, [social.selectedGroupId]);
+
+  const handleGroupSelect = (groupId: string | null) => {
+    social.setSelectedGroup(groupId);
+    social.fetchPosts(groupId ?? undefined);
+  };
+
+  // Drives the context bar under the destination strip.
+  const selectedGroup = social.selectedGroupId
+    ? social.studyGroups.find((g) => g.id === social.selectedGroupId) ?? null
+    : null;
+
+  const handleToggleReaction = useCallback((postId: string, emoji: string) => {
+    social.toggleReaction(postId, emoji, currentUserId);
+  }, [currentUserId]);
+
+  const handleAuthorPress = useCallback((authorId: string) => {
+    router.push(`/user/${authorId}` as never);
+  }, []);
+
+  const handleCreatePost = useCallback(async (draft: Partial<SocialPost>) => {
+    const ok = await social.createPost(draft);
+    if (!ok) {
+      Alert.alert('Post failed', 'Something went wrong. Please try again.');
+    }
+  }, []);
+
+  const { focusLeaderboard, myFocusEntry } = social;
+  const aboveMe = myFocusEntry && myFocusEntry.position > 1
+    ? focusLeaderboard.find((e) => e.position === myFocusEntry.position - 1) ?? null
+    : null;
+  // The friends list always includes you, so "no friends to compare" means
+  // there's nobody besides yourself — not length === 0.
+  const friendsEmpty = focusLeaderboard.filter((e) => !e.isMe).length === 0;
+  // The podium only renders with ≥3 entries and covers ranks 1–3. When there's
+  // no podium (1–2 entries), the list must show every rank, otherwise ranks 1–3
+  // would never be drawn and the board looks empty. In the friends scope, the
+  // lone "you" row is suppressed in favour of the empty-state below.
+  const hasPodium = focusLeaderboard.length >= 3;
+  const listEntries = (scope === 'friends' && friendsEmpty)
+    ? []
+    : focusLeaderboard.filter((e) => (hasPodium ? e.position > 3 : true));
+
+  // ── Feed tab ──────────────────────────────────────────────────────────────
+
+  const renderFeed = () => (
+    <View style={{ flex: 1 }}>
+      {/* Destination strip: where you read is the same set of places you post to.
+          The heading is gone because the row is no longer only groups. */}
+      <View style={{ paddingTop: 12, paddingBottom: 4 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+          <PublicFeedChip
+            selected={social.selectedGroupId === null}
+            onPress={() => handleGroupSelect(null)}
+          />
+          {social.studyGroups.map((g) => (
+            <GroupChip
+              key={g.id} group={g}
+              selected={social.selectedGroupId === g.id}
+              onPress={() => handleGroupSelect(g.id)}
+            />
+          ))}
+          <JoinChip onPress={() => router.push('/groups' as never)} />
+        </ScrollView>
+      </View>
+
+      {/* With a group selected, name it and offer the way into its details.
+          Tapping the chip filters; this is how you reach members and settings. */}
+      {selectedGroup && (
+        <Pressable
+          onPress={() => router.push(`/group/${selectedGroup.id}` as never)}
+          accessibilityRole="button"
+          accessibilityLabel={`Open details for ${selectedGroup.name}`}
+          style={{
+            flexDirection: 'row', alignItems: 'center',
+            marginHorizontal: 16, marginTop: 10, marginBottom: 2,
+            backgroundColor: SURFACE, borderRadius: 12,
+            borderWidth: 1, borderColor: BORDER_SOFT,
+            paddingHorizontal: 12, paddingVertical: 9,
+          }}
+        >
+          <Text style={{ fontSize: 15, marginRight: 8 }}>{selectedGroup.emoji}</Text>
+          <Text numberOfLines={1} style={{ flex: 1, color: Colors.textBright, fontSize: 13, fontWeight: '600' }}>
+            {selectedGroup.name}
+          </Text>
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginRight: 6 }}>
+            {selectedGroup.memberCount ?? selectedGroup.memberIds.length} members
+          </Text>
+          <Ionicons name="chevron-forward" size={15} color={Colors.subtext} />
+        </Pressable>
+      )}
+
+      <FlatList
+        data={social.posts}
+        keyExtractor={(item) => item.id}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefreshFeed} tintColor={Colors.primary} />}
+        onEndReached={() => { if (social.postsCursor) social.fetchMorePosts(); }}
+        onEndReachedThreshold={0.3}
+        ListHeaderComponent={<View style={{ height: 8 }} />}
+        ListFooterComponent={
+          social.postsCursor
+            ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
+            : <View style={{ height: 80 }} />
+        }
+        ListEmptyComponent={
+          social.isLoading ? (
+            <View style={{ paddingTop: 8 }}>
+              {[0, 1, 2].map((i) => (
+                <View key={i} style={{ backgroundColor: SURFACE, borderRadius: 16, marginHorizontal: 16, marginBottom: 12, height: 130 }} />
+              ))}
             </View>
-          </View>
-        </Modal>
+          ) : (
+            <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 32 }}>
+              <Ionicons name="newspaper-outline" size={48} color={Colors.subtext} />
+              <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
+                {social.selectedGroupId
+                  ? 'No posts in this group yet — be the first to share'
+                  : 'Follow people to see their public posts here'}
+              </Text>
+              {!social.selectedGroupId && (
+                <Pressable
+                  onPress={() => router.push('/search' as never)}
+                  style={{
+                    marginTop: 16, paddingHorizontal: 24, paddingVertical: 10,
+                    backgroundColor: Colors.primary, borderRadius: 20,
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Find People</Text>
+                </Pressable>
+              )}
+            </View>
+          )
+        }
+        renderItem={({ item }) => (
+          <PostCard post={item} currentUserId={currentUserId} onToggleReaction={handleToggleReaction} onAuthorPress={handleAuthorPress} />
+        )}
+      />
+    </View>
+  );
 
+  // ── Leaderboard tab ───────────────────────────────────────────────────────
+
+  const renderLeaderboard = () => (
+    <ScrollView
+      refreshControl={
+        <RefreshControl
+          refreshing={social.isLoading}
+          onRefresh={() => social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD)}
+          tintColor={Colors.primary}
+        />
+      }
+    >
+      {/* Scope selector */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 14 }}>
+        {SCOPES.map(({ key, label }, i) => (
+          <Pressable
+            key={key}
+            onPress={() => setScope(key)}
+            style={{
+              flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20,
+              backgroundColor: scope === key ? Colors.primary : SURFACE,
+              borderWidth: 1, borderColor: scope === key ? Colors.primary : BORDER_SOFT,
+              marginRight: i < SCOPES.length - 1 ? 8 : 0,
+              ...(scope === key ? { shadowColor: Colors.primary, shadowOpacity: 0.4, shadowRadius: 6, elevation: 3 } : {}),
+            }}
+          >
+            <Text style={{ color: scope === key ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* Empty states */}
+      {scope === 'friends' && friendsEmpty && !social.isLoading && (
+        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
+          <Ionicons name="people-outline" size={48} color={Colors.subtext} />
+          <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
+            Follow people to see how you compare
+          </Text>
+        </View>
+      )}
+
+      {scope === 'global' && focusLeaderboard.length === 0 && !social.isLoading && (
+        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
+          <Ionicons name="trophy-outline" size={48} color={Colors.subtext} />
+          <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
+            No one's on the leaderboard yet — finish a focus session to claim a spot
+          </Text>
+        </View>
+      )}
+
+      {social.isLoading && <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 32 }} />}
+
+      {/* Podium */}
+      {focusLeaderboard.length >= 3 && !social.isLoading && (
+        <PodiumBlock entries={focusLeaderboard} />
+      )}
+
+      {/* Ranked list */}
+      {listEntries.length > 0 && !social.isLoading && (
+        <View style={{
+          backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1,
+          borderColor: BORDER_SOFT, marginHorizontal: 16, marginBottom: 12, overflow: 'hidden',
+        }}>
+          {listEntries.map((entry, idx) => (
+            <View key={entry.userId}>
+              {idx > 0 && <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginHorizontal: 16 }} />}
+              <LeaderboardListRow entry={entry} />
+            </View>
+          ))}
+          {myFocusEntry && myFocusEntry.position > 10 && (
+            <>
+              <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+                <Text style={{ color: Colors.subtext, letterSpacing: 4 }}>· · ·</Text>
+              </View>
+              <LeaderboardListRow entry={{ ...myFocusEntry, isMe: true }} />
+            </>
+          )}
+        </View>
+      )}
+
+      <NextTargetCard me={myFocusEntry} above={aboveMe} />
+      <View style={{ height: 80 }} />
+    </ScrollView>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
+        <Text style={{ color: Colors.textBright, fontSize: 26, fontWeight: '800', flex: 1 }}>Trace</Text>
+        <Pressable style={{ marginRight: 14 }} onPress={() => router.push('/search' as never)}>
+          <Ionicons name="search" size={22} color={Colors.text} />
+        </Pressable>
+        <Pressable style={{ marginRight: 14 }} onPress={() => {
+          social.markNotificationsRead();
+          setShowNotifications(true);
+        }}>
+          <Ionicons name="notifications-outline" size={24} color={Colors.text} />
+          {social.unreadCount > 0 && (
+            <View style={{
+              position: 'absolute', top: -2, right: -2,
+              width: 8, height: 8, borderRadius: 4, backgroundColor: ROSE,
+            }} />
+          )}
+        </Pressable>
+      </View>
+
+      {/* Tab switcher */}
+      <View style={{ flexDirection: 'row', marginHorizontal: 16, marginBottom: 4, backgroundColor: SURFACE, borderRadius: 24, padding: 4 }}>
+        {([
+          ['feed', 'Feed', 'newspaper-outline'],
+          ['leaderboard', 'Leaderboard', 'podium-outline'],
+        ] as const).map(([tab, label, icon]) => {
+          const isActive = activeTab === tab;
+          const tint = isActive ? '#fff' : Colors.subtext;
+          return (
+            <Pressable
+              key={tab}
+              onPress={() => setActiveTab(tab)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: isActive }}
+              style={{
+                flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                gap: 6, paddingVertical: 8, borderRadius: 20,
+                backgroundColor: isActive ? Colors.primary : 'transparent',
+              }}
+            >
+              <Ionicons name={icon} size={14} color={tint} />
+              <Text style={{ color: tint, fontSize: 13, fontWeight: '600' }}>
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, display: activeTab === 'feed' ? 'flex' : 'none' }}>
+          {renderFeed()}
+        </View>
+        <View style={{ flex: 1, display: activeTab === 'leaderboard' ? 'flex' : 'none' }}>
+          {renderLeaderboard()}
+        </View>
+      </View>
+
+      {/* FAB — Feed tab only */}
+      {activeTab === 'feed' && (
+        <Pressable
+          onPress={() => setShowCreatePost(true)}
+          style={{
+            position: 'absolute', bottom: 24, right: 20,
+            width: 52, height: 52, borderRadius: 26,
+            backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+            shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 14, elevation: 8,
+          }}
+        >
+          <Ionicons name="add" size={26} color="#fff" />
+        </Pressable>
+      )}
+
+      {/* Notifications modal */}
+      <Modal visible={showNotifications} transparent animationType="slide" onRequestClose={() => setShowNotifications(false)}>
+        <View style={{ flex: 1, backgroundColor: '#00000080', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%' }}>
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
+              <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>Notifications</Text>
+              <Pressable onPress={() => setShowNotifications(false)}>
+                <Ionicons name="close" size={22} color={Colors.subtext} />
+              </Pressable>
+            </View>
+            {social.notifications.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <Text style={{ color: Colors.subtext, fontSize: 13 }}>No notifications yet</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={social.notifications}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: 32 }}
+                renderItem={({ item }) => (
+                  <View style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: BORDER_SOFT }}>
+                    <Text style={{ color: item.isRead ? Colors.subtext : Colors.textBright, fontSize: 14 }}>
+                      {item.text}
+                    </Text>
+                    <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 4 }}>{timeAgo(item.createdAt)}</Text>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <CreatePostSheet
+        visible={showCreatePost}
+        onClose={() => setShowCreatePost(false)}
+        onPost={handleCreatePost}
+        studyGroups={social.studyGroups}
+        defaultGroupId={social.selectedGroupId}
+      />
     </SafeAreaView>
   );
 }

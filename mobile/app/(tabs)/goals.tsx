@@ -371,13 +371,13 @@ function PostsPane({ posts, isLoading, hasMore, onLoadMore, onPostPress }: {
     return (
       <View style={{ padding: 32, alignItems: 'center' }}>
         <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
-          {"You haven't posted anything yet. Share your progress from the Social tab."}
+          {"You haven't posted anything yet. Share your progress from the Trace tab."}
         </Text>
         <Pressable
-          onPress={() => router.push('/(tabs)/social')}
+          onPress={() => router.push('/(tabs)')}
           style={{ marginTop: 14, backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 }}
         >
-          <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Go to Social</Text>
+          <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Go to Trace</Text>
         </Pressable>
       </View>
     );

@@ -20,13 +20,14 @@ export function useNotificationListener(): void {
       const type = getNotificationType(response);
 
       if (type === 'focus_complete' || type === 'break_complete' || type === 'daily_reminder') {
-        // Route to the timer tab. On a cold launch the router may not be ready
-        // yet — retry once after a tick.
+        // Route to the timer tab explicitly: /(tabs) now lands on Trace, so a
+        // bare group push would drop the user on the feed after their session
+        // ends. On a cold launch the router may not be ready yet — retry once.
         try {
-          router.replace('/(tabs)');
+          router.replace('/(tabs)/focus');
         } catch {
           setTimeout(() => {
-            router.replace('/(tabs)');
+            router.replace('/(tabs)/focus');
           }, 100);
         }
       }

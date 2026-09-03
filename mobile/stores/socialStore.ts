@@ -503,7 +503,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       );
       if (response.success && response.data) {
         const next = response.data.description;
-        // Keep the cached list in step so the Circle tab does not show the old
+        // Keep the cached list in step so the Trace tab does not show the old
         // text until its next fetch.
         set((state) => ({
           studyGroups: state.studyGroups.map((g) =>

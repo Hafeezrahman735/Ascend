@@ -167,7 +167,7 @@ function CalendarSyncRows() {
       } else {
         Alert.alert(
           'Permission needed',
-          'Ascend needs calendar access to show your events. Turn it on in Settings › Ascend › Calendars.',
+          'Trace needs calendar access to show your events. Turn it on in Settings › Trace › Calendars.',
         );
       }
       return;

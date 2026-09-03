@@ -2,6 +2,12 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 
+// Trace is the landing tab, so it owns the group's index route — that is what
+// makes a cold launch (and every bare `router.replace('/(tabs)')`) open on the
+// feed rather than the timer. Focus keeps its own named route at /(tabs)/focus;
+// anything that means "take me to the timer" must say so explicitly.
+export const unstable_settings = { initialRouteName: 'index' };
+
 export default function TabLayout() {
   const Colors = useTheme();
   return (
@@ -30,8 +36,20 @@ export default function TabLayout() {
         },
       }}
     >
+      {/* Order is deliberate: Trace · Focus · Tasks · Calendar · Profile. Focus
+          sits at position two — one tap from the landing screen — because this
+          is a demotion in landing priority, not in reachability. */}
       <Tabs.Screen
         name="index"
+        options={{
+          title: 'Trace',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'people' : 'people-outline'} size={22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="focus"
         options={{
           title: 'Focus',
           tabBarIcon: ({ color, focused }) => (
@@ -48,25 +66,12 @@ export default function TabLayout() {
           ),
         }}
       />
-      {/* Appended after Tasks — existing tab order and titles are unchanged. */}
       <Tabs.Screen
         name="calendar"
         options={{
           title: 'Calendar',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="social"
-        options={{
-          // "Social" reads as a distraction to someone working alone; "Circle"
-          // frames it as accountability. The route stays `social` — renaming the
-          // file would break every router.push('/social') for no user benefit.
-          title: 'Circle',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'people' : 'people-outline'} size={22} color={color} />
           ),
         }}
       />
