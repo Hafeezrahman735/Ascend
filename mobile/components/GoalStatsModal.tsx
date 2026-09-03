@@ -81,7 +81,7 @@ export default function GoalStatsModal({
   const pct = Math.round(goal.overallProgress * 100);
   const daysLeft = daysUntil(goal.deadline, ctx.now);
   const overdue = daysLeft !== null && daysLeft < 0 && !goal.isCompleted;
-  const barColor = goal.isCompleted || pct >= 100 ? Colors.accent : Colors.primary;
+  const barColor = goal.isCompleted || pct >= 100 ? Colors.trace : Colors.primary;
 
   const actionLabel: Record<GoalStatusAction, string> = {
     'link-task': 'Link a task',

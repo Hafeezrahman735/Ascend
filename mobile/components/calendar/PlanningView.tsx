@@ -326,7 +326,7 @@ export default function PlanningView({
                   <Ionicons
                     name={note.isTodo ? (note.isCompleted ? 'checkbox' : 'square-outline') : 'document-text-outline'}
                     size={15}
-                    color={note.isCompleted ? Colors.accent : Colors.subtext}
+                    color={note.isCompleted ? Colors.trace : Colors.subtext}
                   />
                   <Text
                     style={{

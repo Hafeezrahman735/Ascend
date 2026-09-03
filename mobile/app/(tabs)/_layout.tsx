@@ -1,6 +1,8 @@
 import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
+import {
+  TraceTabIcon, FocusTabIcon, TasksTabIcon, CalendarTabIcon, ProfileTabIcon,
+} from '../../components/TabIcons';
 
 // Trace is the landing tab, so it owns the group's index route — that is what
 // makes a cold launch (and every bare `router.replace('/(tabs)')`) open on the
@@ -44,7 +46,7 @@ export default function TabLayout() {
         options={{
           title: 'Trace',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'people' : 'people-outline'} size={22} color={color} />
+            <TraceTabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -53,7 +55,7 @@ export default function TabLayout() {
         options={{
           title: 'Focus',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'timer' : 'timer-outline'} size={22} color={color} />
+            <FocusTabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -62,7 +64,7 @@ export default function TabLayout() {
         options={{
           title: 'Tasks',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'checkbox' : 'checkbox-outline'} size={22} color={color} />
+            <TasksTabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -71,7 +73,7 @@ export default function TabLayout() {
         options={{
           title: 'Calendar',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />
+            <CalendarTabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -80,7 +82,7 @@ export default function TabLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color} />
+            <ProfileTabIcon color={color} focused={focused} />
           ),
         }}
       />

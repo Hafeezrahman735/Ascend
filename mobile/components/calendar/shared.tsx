@@ -47,7 +47,7 @@ export const VIEW_MODES: { key: CalendarViewMode; label: string }[] = [
 
 export function typeColor(type: CalendarItemType, Colors: ThemeColors): string {
   switch (type) {
-    case 'habit_instance': return Colors.accent;
+    case 'habit_instance': return Colors.trace;
     case 'task':           return Colors.primary;
     case 'goal_deadline':  return Colors.ROSE;
     // Google, Apple and events authored here share a colour on purpose — a

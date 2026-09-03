@@ -24,6 +24,7 @@ import { useTimerStore } from '../../stores/timerStore';
 import { getSessionHistory } from '../../store/sync';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
+import { TraceWordmark } from '../../components/TraceMark';
 import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -33,10 +34,10 @@ const REACTIONS = ['🔥','🫡','❤️','💪'] as const;
 
 // Theme-aware group chip palettes, derived from the active Colors object.
 function groupBg(c: ThemeColors): Record<string, string> {
-  return { purple: c.primaryDim, teal: c.tealDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
+  return { purple: c.primaryDim, teal: c.traceDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
 }
 function groupBorderColor(c: ThemeColors): Record<string, string> {
-  return { purple: c.primary, teal: c.accent, amber: c.AMBER, rose: c.ROSE };
+  return { purple: c.primary, teal: c.trace, amber: c.AMBER, rose: c.ROSE };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ function GroupChip({ group, selected, onPress }: {
           <View style={{
             position: 'absolute', bottom: -2, right: -2,
             width: 10, height: 10, borderRadius: 5,
-            backgroundColor: Colors.accent, borderWidth: 1.5, borderColor: Colors.bg,
+            backgroundColor: Colors.trace, borderWidth: 1.5, borderColor: Colors.bg,
           }} />
         )}
       </View>
@@ -240,15 +241,15 @@ function AccountabilityBlock({ post }: { post: SocialPost }) {
   const dl = Math.ceil((new Date(ch.deadline).getTime() - Date.now()) / 86400000);
   return (
     <View style={{
-      backgroundColor: Colors.tealDim, borderRadius: 12, borderWidth: 1,
-      borderColor: Colors.accent + '40', padding: 12, marginBottom: 10,
+      backgroundColor: Colors.traceDim, borderRadius: 12, borderWidth: 1,
+      borderColor: Colors.trace + '40', padding: 12, marginBottom: 10,
     }}>
-      <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13, marginBottom: 6 }}>
+      <Text style={{ color: Colors.trace, fontWeight: '700', fontSize: 13, marginBottom: 6 }}>
         🎯 Group Challenge
       </Text>
       <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 8 }}>{ch.title}</Text>
       <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 6 }}>
-        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.accent }} />
+        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.trace }} />
       </View>
       <Text style={{ color: Colors.subtext, fontSize: 11 }}>
         {ch.metric === 'focus_hours'
@@ -536,7 +537,7 @@ function LeaderboardListRow({ entry }: { entry: FocusLeaderboardEntry }) {
   const posColor = entry.position <= 5 ? Colors.primarySoft : Colors.subtext;
   const rankColor = isGoldRank(entry.rank) ? GOLD : Colors.primarySoft;
   const delta = entry.positionDelta;
-  const deltaColor = delta == null ? Colors.subtext : delta > 0 ? Colors.accent : delta < 0 ? ROSE : Colors.subtext;
+  const deltaColor = delta == null ? Colors.subtext : delta > 0 ? Colors.trace : delta < 0 ? ROSE : Colors.subtext;
   const deltaText = delta == null ? null : delta > 0 ? `↑${delta}` : delta < 0 ? `↓${Math.abs(delta)}` : '–';
 
   return (
@@ -1384,7 +1385,9 @@ export default function TraceScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
       {/* Header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
-        <Text style={{ color: Colors.textBright, fontSize: 26, fontWeight: '800', flex: 1 }}>Trace</Text>
+        <View style={{ flex: 1 }}>
+          <TraceWordmark size={26} />
+        </View>
         <Pressable style={{ marginRight: 14 }} onPress={() => router.push('/search' as never)}>
           <Ionicons name="search" size={22} color={Colors.text} />
         </Pressable>

@@ -21,7 +21,7 @@ import { useGamificationStore } from '../../stores/gamificationStore';
  */
 export default function UnlockOverlay() {
   const Colors = useTheme();
-  const { GOLD, TEAL } = Colors;
+  const { GOLD, TRACE } = Colors;
 
   const queue = useGamificationStore((s) => s.unlockQueue);
   const dismissUnlock = useGamificationStore((s) => s.dismissUnlock);
@@ -102,9 +102,9 @@ export default function UnlockOverlay() {
 
           <View style={{
             marginTop: 16, paddingHorizontal: 14, paddingVertical: 6,
-            borderRadius: 20, backgroundColor: Colors.tealDim,
+            borderRadius: 20, backgroundColor: Colors.traceDim,
           }}>
-            <Text style={{ color: TEAL, fontSize: 13, fontWeight: '700' }}>
+            <Text style={{ color: TRACE, fontSize: 13, fontWeight: '700' }}>
               +{current.xpReward} XP
             </Text>
           </View>

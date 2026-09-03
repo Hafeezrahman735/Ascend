@@ -18,7 +18,7 @@ const EVENT_META: Record<
   { icon: keyof typeof Ionicons.glyphMap; tint: (c: ThemeColors) => string }
 > = {
   session_completed:    { icon: 'timer',        tint: (c) => c.primary },
-  task_completed:       { icon: 'checkmark-circle', tint: (c) => c.accent },
+  task_completed:       { icon: 'checkmark-circle', tint: (c) => c.trace },
   goal_completed:       { icon: 'flag',         tint: (c) => c.ROSE },
   achievement_unlocked: { icon: 'trophy',       tint: (c) => c.AMBER },
   streak_milestone:     { icon: 'flame',        tint: (c) => c.AMBER },

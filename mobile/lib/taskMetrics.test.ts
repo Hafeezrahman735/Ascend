@@ -221,7 +221,7 @@ describe('formatConsistency', () => {
  * was chosen.
  */
 const C = {
-  tealDim: 'tealDim', accent: 'accent',
+  traceDim: 'traceDim', trace: 'trace',
   ROSE_DIM: 'ROSE_DIM', ROSE: 'ROSE',
   warning: 'warning', inactive: 'inactive', subtext: 'subtext',
 } as unknown as ThemeColors;

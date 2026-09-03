@@ -66,7 +66,7 @@ import { Font } from '../../constants/typography';
 // ─── Local constants ──────────────────────────────────────────────────────────
 
 function groupAvatarBg(c: ThemeColors): Record<string, string> {
-  return { purple: c.primaryDim, teal: c.tealDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
+  return { purple: c.primaryDim, teal: c.traceDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -709,7 +709,7 @@ function StreakSection({
   reduceMotion: boolean;
 }) {
   const Colors = useTheme();
-  const { AMBER, TEAL } = Colors;
+  const { AMBER, TRACE } = Colors;
   const { currentStreak, longestStreak, studiedToday, thisWeekDays, streakAtRisk } = streakState;
   const isMilestone = STREAK_MILESTONES.has(currentStreak);
   const isPersonalBest = currentStreak > 0 && currentStreak >= longestStreak;
@@ -793,7 +793,7 @@ function StreakSection({
             borderWidth: 1, borderColor: Colors.border,
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <Text style={{ color: TEAL, fontSize: 22, fontWeight: '700', fontFamily: Font.mono }}>
+            <Text style={{ color: TRACE, fontSize: 22, fontWeight: '700', fontFamily: Font.mono }}>
               {longestStreak}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 3, textAlign: 'center' }}>

@@ -120,7 +120,7 @@ export default function TimeReportSummary({
                       {Math.round(report.intent.goalLinkedShare * 100)}%
                     </Text>
                   </View>
-                  <ShareBar share={report.intent.goalLinkedShare} color={Colors.accent} />
+                  <ShareBar share={report.intent.goalLinkedShare} color={Colors.trace} />
                 </View>
               )}
 

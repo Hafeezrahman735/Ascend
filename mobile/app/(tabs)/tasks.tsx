@@ -184,7 +184,7 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
                 centerLabel={`${Math.round(progressFrac * 100)}%`}
                 caption={formatSeconds(task.totalTimeOnTask)}
                 sub={`of ${formatSeconds((task.estimatedMinutes ?? 0) * 60)} estimated`}
-                tint={task.isCompleted ? Colors.accent : Colors.primary}
+                tint={task.isCompleted ? Colors.trace : Colors.primary}
                 Colors={Colors}
               />
             ) : (
@@ -992,7 +992,7 @@ function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = f
 }) {
   const Colors = useTheme();
   const isCompleted = task.isCompleted;
-  const barColor = dormant ? Colors.border : isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
+  const barColor = dormant ? Colors.border : isActive ? Colors.primary : isCompleted ? Colors.trace : Colors.border;
   // A template has no due date and no sessions, so these stay inert rather than
   // rendering something untrue.
   const chip = dormant ? null : getDueChip(task, Colors);
@@ -1015,7 +1015,7 @@ function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = f
               <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>{'\u21BA'}</Text>
             </View>
           ) : (
-            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isCompleted ? Colors.accent : 'transparent', borderWidth: isCompleted ? 0 : 1.5, borderColor: isCompleted ? Colors.accent : isActive ? Colors.primary : Colors.subtext }}>
+            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isCompleted ? Colors.trace : 'transparent', borderWidth: isCompleted ? 0 : 1.5, borderColor: isCompleted ? Colors.trace : isActive ? Colors.primary : Colors.subtext }}>
               {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
             </View>
           )}
@@ -1062,7 +1062,7 @@ function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = f
         )}
         {progressFrac !== null && (
           <View style={{ height: 3, backgroundColor: Colors.inactive, borderRadius: 2, marginTop: 10, overflow: 'hidden' }}>
-            <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 2, backgroundColor: isCompleted ? Colors.accent : Colors.primary }} />
+            <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 2, backgroundColor: isCompleted ? Colors.trace : Colors.primary }} />
           </View>
         )}
       </View>
@@ -1081,9 +1081,9 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
   const handleSwipeOpen = useCallback((direction: 'left' | 'right') => { swipeRef.current?.close(); if (direction === 'left') onComplete(); else onEdit(); }, [onComplete, onEdit]);
 
   const renderLeftActions = () => (
-    <View style={{ width: 72, marginRight: 6, marginBottom: 8, borderRadius: 14, backgroundColor: isCompleted ? ROSE_DIM : Colors.tealDim, justifyContent: 'center', alignItems: 'center' }}>
-      <Ionicons name={isCompleted ? 'arrow-undo' : 'checkmark-circle'} size={22} color={isCompleted ? ROSE : Colors.accent} />
-      <Text style={{ color: isCompleted ? ROSE : Colors.accent, fontSize: 9, fontWeight: '700', marginTop: 3 }}>{isCompleted ? 'Undo' : 'Done'}</Text>
+    <View style={{ width: 72, marginRight: 6, marginBottom: 8, borderRadius: 14, backgroundColor: isCompleted ? ROSE_DIM : Colors.traceDim, justifyContent: 'center', alignItems: 'center' }}>
+      <Ionicons name={isCompleted ? 'arrow-undo' : 'checkmark-circle'} size={22} color={isCompleted ? ROSE : Colors.trace} />
+      <Text style={{ color: isCompleted ? ROSE : Colors.trace, fontSize: 9, fontWeight: '700', marginTop: 3 }}>{isCompleted ? 'Undo' : 'Done'}</Text>
     </View>
   );
   const renderRightActions = () => (
@@ -1136,8 +1136,8 @@ function Toast({ message }: { message: string | null }) {
   }, [message]);
   if (!message) return null;
   return (
-    <Animated.View style={{ position: 'absolute', bottom: 96, alignSelf: 'center', backgroundColor: Colors.tealDim, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20, borderWidth: 0.5, borderColor: Colors.accent, opacity }}>
-      <Text style={{ color: Colors.accent, fontSize: 13, fontWeight: '700' }}>{message}</Text>
+    <Animated.View style={{ position: 'absolute', bottom: 96, alignSelf: 'center', backgroundColor: Colors.traceDim, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20, borderWidth: 0.5, borderColor: Colors.trace, opacity }}>
+      <Text style={{ color: Colors.trace, fontSize: 13, fontWeight: '700' }}>{message}</Text>
     </Animated.View>
   );
 }
@@ -1167,9 +1167,9 @@ function BarColumn({ dayLabel, seconds, maxSeconds, isToday, isFuture }: { dayLa
   const Colors = useTheme();
   const BAR_MAX_H = 56;
   const barHeight = isFuture ? 3 : Math.max(seconds > 0 ? (seconds / maxSeconds) * BAR_MAX_H : 3, 3);
-  const barColor = isToday ? Colors.accent : Colors.primary;
+  const barColor = isToday ? Colors.trace : Colors.primary;
   const countLabel = isFuture ? '—' : compactDuration(seconds);
-  const labelColor = isToday ? Colors.accent : Colors.subtext;
+  const labelColor = isToday ? Colors.trace : Colors.subtext;
   return (
     <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 2 }}>
       <View style={{ height: BAR_MAX_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' }}>
@@ -1274,18 +1274,18 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
   const { ROSE } = Colors;
   const AMBER = Colors.warning;
   const taskDelta = completedToday - yesterdayCompleted;
-  const taskDeltaColor = taskDelta > 0 ? Colors.accent : taskDelta < 0 ? ROSE : Colors.subtext;
+  const taskDeltaColor = taskDelta > 0 ? Colors.trace : taskDelta < 0 ? ROSE : Colors.subtext;
   const taskDeltaLabel = taskDelta > 0 ? '↑ vs yesterday' : taskDelta < 0 ? '↓ vs yesterday' : 'Same as yesterday';
 
   const rateDiff = weeklyRate !== null && lastWeekRate !== null ? weeklyRate - lastWeekRate : null;
-  const rateColor = rateDiff !== null && rateDiff > 2 ? Colors.accent : rateDiff !== null && rateDiff < -2 ? ROSE : Colors.subtext;
+  const rateColor = rateDiff !== null && rateDiff > 2 ? Colors.trace : rateDiff !== null && rateDiff < -2 ? ROSE : Colors.subtext;
   const rateLabel = rateDiff !== null && rateDiff > 2 ? `+${rateDiff}% this week` : rateDiff !== null && rateDiff < -2 ? `${rateDiff}% this week` : 'Steady this week';
 
   const noTarget = dailyFocusTargetSeconds <= 0;
   const remaining = dailyFocusTargetSeconds - focusSecondsToday;
   const focusValue = focusSecondsToday > 0 ? formatDuration(focusSecondsToday) : '—';
   const focusSubLabel = noTarget ? 'Set a goal →' : focusSecondsToday === 0 ? 'Start your first session' : remaining > 0 ? `${formatDuration(remaining)} to goal` : 'Goal reached ✓';
-  const focusSubColor = noTarget || focusSecondsToday === 0 ? Colors.subtext : remaining > 0 ? AMBER : Colors.accent;
+  const focusSubColor = noTarget || focusSecondsToday === 0 ? Colors.subtext : remaining > 0 ? AMBER : Colors.trace;
 
   const pillStyle = { flex: 1, backgroundColor: Colors.surface, borderRadius: 14, padding: 12, borderWidth: 0.5, borderColor: Colors.border };
 
@@ -1344,7 +1344,7 @@ function GoalZoneRow({ goal }: { goal: TaskGoal }) {
   const ts = useTagStyle(goal.tag ?? '');
   const deadlineDays = daysUntilLocalDate(goal.deadline);
   const deadlineLabel = formatDeadlineLabel(goal.deadline);
-  const barColor = pct >= 100 ? Colors.accent : Colors.primary;
+  const barColor = pct >= 100 ? Colors.trace : Colors.primary;
 
   return (
     <View>
@@ -1357,7 +1357,7 @@ function GoalZoneRow({ goal }: { goal: TaskGoal }) {
         <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>
           {goal.title}
         </Text>
-        <Text style={{ color: pct >= 100 ? Colors.accent : Colors.textBright, fontSize: 14, fontWeight: '800', marginLeft: 10 }}>
+        <Text style={{ color: pct >= 100 ? Colors.trace : Colors.textBright, fontSize: 14, fontWeight: '800', marginLeft: 10 }}>
           {pct}%
         </Text>
       </View>
@@ -1405,7 +1405,7 @@ function GoalCard({ goal, onLongPressTag }: { goal: TaskGoal; onLongPressTag?: (
         <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800' }}>{pct}%</Text>
       </View>
       <View style={{ height: 6, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
-        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: goal.isCompleted ? Colors.accent : Colors.primary }} />
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: goal.isCompleted ? Colors.trace : Colors.primary }} />
       </View>
       <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goalSubMetrics(goal)}</Text>
     </View>
@@ -1505,12 +1505,12 @@ function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPre
       <HeroLabel text="🎯 Goal progress" />
       <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 12 }} numberOfLines={2}>{goal.title}</Text>
       <View style={{ height: 7, backgroundColor: Colors.inactive, borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
-        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 4, backgroundColor: pct >= 100 ? Colors.accent : Colors.primary }} />
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 4, backgroundColor: pct >= 100 ? Colors.trace : Colors.primary }} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
         {milestones.map((m) => (
           <View key={m} style={{ alignItems: 'center', gap: 3 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: pct >= m ? Colors.accent : Colors.inactive }} />
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: pct >= m ? Colors.trace : Colors.inactive }} />
             <Text style={{ color: Colors.subtext, fontSize: 9 }}>{m}%</Text>
           </View>
         ))}
@@ -1537,8 +1537,8 @@ function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number
     .map(({ h, isPeak }) => ({ pct: ((counts[h] ?? 0) / maxCount) * 100, isPeak }));
 
   return (
-    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.accent }]}>
-      <HeroLabel text={`⚡ Peak time — ${hourLabel}`} color={Colors.accent} />
+    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.trace }]}>
+      <HeroLabel text={`⚡ Peak time — ${hourLabel}`} color={Colors.trace} />
       <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700', marginBottom: 4 }}>
         You focus best around {peakLabel}
       </Text>
@@ -1547,11 +1547,11 @@ function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number
       </Text>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 36, gap: 2, marginBottom: 12 }}>
         {bars.map(({ pct, isPeak }, i) => (
-          <View key={i} style={{ flex: 1, height: Math.max(3, pct / 100 * 36), borderRadius: 2, backgroundColor: isPeak ? Colors.accent : pct >= 60 ? Colors.primarySoft : pct >= 25 ? Colors.primary + '60' : Colors.inactive }} />
+          <View key={i} style={{ flex: 1, height: Math.max(3, pct / 100 * 36), borderRadius: 2, backgroundColor: isPeak ? Colors.trace : pct >= 60 ? Colors.primarySoft : pct >= 25 ? Colors.primary + '60' : Colors.inactive }} />
         ))}
       </View>
-      <TouchableOpacity onPress={onFocus} style={{ backgroundColor: Colors.accent + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: Colors.accent + '40' }}>
-        <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13 }}>Start a session now →</Text>
+      <TouchableOpacity onPress={onFocus} style={{ backgroundColor: Colors.trace + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: Colors.trace + '40' }}>
+        <Text style={{ color: Colors.trace, fontWeight: '700', fontSize: 13 }}>Start a session now →</Text>
       </TouchableOpacity>
     </View>
   );
@@ -1594,13 +1594,13 @@ function MomentumCard({ currentStreak, longestStreak, sessionHistory }: { curren
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
         {weekDots.map((active, i) => (
           <View key={i} style={{ alignItems: 'center', gap: 4 }}>
-            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: active ? Colors.accent : Colors.inactive }} />
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: active ? Colors.trace : Colors.inactive }} />
             <Text style={{ color: Colors.subtext, fontSize: 9 }}>{dayLabels[i]}</Text>
           </View>
         ))}
       </View>
-      <View style={{ backgroundColor: isAhead ? Colors.accent + '15' : AMBER + '15', borderRadius: 10, padding: 10 }}>
-        <Text style={{ color: isAhead ? Colors.accent : AMBER, fontSize: 12, fontWeight: '600' }}>
+      <View style={{ backgroundColor: isAhead ? Colors.trace + '15' : AMBER + '15', borderRadius: 10, padding: 10 }}>
+        <Text style={{ color: isAhead ? Colors.trace : AMBER, fontSize: 12, fontWeight: '600' }}>
           {isAhead
             ? `Best week this month ↑ +${(thisWeekHours - last4Avg).toFixed(1)}h vs avg`
             : `${(last4Avg - thisWeekHours).toFixed(1)}h behind your average — keep going`}
@@ -1653,8 +1653,8 @@ function SelfComparisonCard({ sessionHistory, onFocus }: { sessionHistory: Sessi
           <Text style={{ color: Colors.subtext, fontSize: 12 }}>last week</Text>
         </View>
       </View>
-      <View style={{ backgroundColor: isAhead ? Colors.accent + '15' : AMBER + '15', borderRadius: 10, padding: 10 }}>
-        <Text style={{ color: isAhead ? Colors.accent : AMBER, fontSize: 12, fontWeight: '600' }}>
+      <View style={{ backgroundColor: isAhead ? Colors.trace + '15' : AMBER + '15', borderRadius: 10, padding: 10 }}>
+        <Text style={{ color: isAhead ? Colors.trace : AMBER, fontSize: 12, fontWeight: '600' }}>
           {isAhead ? `↑ ${delta.toFixed(1)}h ahead of last week` : `${Math.abs(delta).toFixed(1)}h behind last week — you can catch up`}
         </Text>
       </View>
@@ -2217,7 +2217,7 @@ export default function TasksScreen() {
                   <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>WEEKLY COMPLETION RATE</Text>
                   <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginTop: 4 }}>{weeklyCompletionRate}%</Text>
                 </View>
-                <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.accent : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700' }}>
+                <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.trace : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700' }}>
                   {weeklyCompletionRate >= 80 ? '🎯 Great planning' : weeklyCompletionRate < 50 ? 'Plan fewer tasks' : 'tasks done / planned'}
                 </Text>
               </View>
@@ -2440,7 +2440,7 @@ export default function TasksScreen() {
               );
             })()}
             {doneTasks.slice(0, 2).length > 0 && <View>
-              <GroupHeader dotColor={Colors.accent} label="Done" count={doneTasks.length} />
+              <GroupHeader dotColor={Colors.trace} label="Done" count={doneTasks.length} />
               {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />)}
             </View>}
           </>)}

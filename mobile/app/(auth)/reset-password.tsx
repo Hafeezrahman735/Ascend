@@ -93,7 +93,7 @@ export default function ResetPasswordScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 14 }}>
-          <Ionicons name="checkmark-circle-outline" size={44} color={Colors.accent} />
+          <Ionicons name="checkmark-circle-outline" size={44} color={Colors.trace} />
           <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '700', textAlign: 'center' }}>
             Password updated
           </Text>

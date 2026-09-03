@@ -132,7 +132,7 @@ export default function Onboarding1Screen() {
                   maxLength={20}
                 />
                 {handle.length >= 3 && (
-                  <Text style={{ color: Colors.accent, fontSize: 14, fontWeight: '700' }}>✓</Text>
+                  <Text style={{ color: Colors.trace, fontSize: 14, fontWeight: '700' }}>✓</Text>
                 )}
               </View>
               <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 6 }}>

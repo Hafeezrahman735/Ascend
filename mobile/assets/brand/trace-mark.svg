@@ -1,0 +1,32 @@
+<!--
+  Trace — the orbit-tail mark. Master artwork.
+
+  This is the source the app icon, adaptive icon and favicon rasters are
+  exported from. It is the same geometry as components/TraceMark.tsx, drawn on
+  a 1024 canvas: a track ring, a tail fading up the top-left quadrant, and the
+  solid leading dot.
+
+  Colours are the dark palette's literals on purpose — an app icon has no theme
+  to read. bg #08081A matches app.json's splash/adaptive-icon backgroundColor,
+  the ring track is `inactive` #2E2C50 and the mark is `trace` #00E5C3.
+
+  The mark is the 72-unit drawing scaled and centred so its outer edge spans
+  about 75% of the canvas — Apple's icon grid, and far enough inside Android's
+  circular mask to survive it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tail" x1="0.1" y1="0.95" x2="0.5" y2="0.05">
+      <stop offset="0" stop-color="#00E5C3" stop-opacity="0"/>
+      <stop offset="1" stop-color="#00E5C3" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#08081A"/>
+
+  <g transform="translate(512 512) scale(13) translate(-36 -36)">
+    <circle cx="36" cy="36" r="26" fill="none" stroke="#2E2C50" stroke-width="7"/>
+    <path d="M10 36 A26 26 0 0 1 36 10" fill="none" stroke="url(#tail)" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="36" cy="10" r="7" fill="#00E5C3"/>
+  </g>
+</svg>

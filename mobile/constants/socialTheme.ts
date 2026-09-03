@@ -13,7 +13,7 @@ export const darkSocialTheme = {
   ROSE_DIM:    '#3A0F20',
   GOLD:        '#FFD700',
   GOLD_DIM:    '#3A3000',
-  TEAL:        '#00E5C3',
+  TRACE:        '#00E5C3',
 };
 
 export const lightSocialTheme: typeof darkSocialTheme = {
@@ -24,12 +24,12 @@ export const lightSocialTheme: typeof darkSocialTheme = {
   ROSE_DIM:    '#FEE8EF',
   GOLD:        '#B07010',
   GOLD_DIM:    '#FEF6D8',
-  TEAL:        '#2D8A6A',
+  TRACE:        '#2D8A6A',
 };
 
 // Standalone exports retained for any module-level/static use (default dark).
 export const {
-  BORDER_SOFT, AMBER, AMBER_DIM, ROSE, ROSE_DIM, GOLD, GOLD_DIM, TEAL,
+  BORDER_SOFT, AMBER, AMBER_DIM, ROSE, ROSE_DIM, GOLD, GOLD_DIM, TRACE,
 } = darkSocialTheme;
 
 // ─── Post type badge metadata ─────────────────────────────────────────────────
@@ -40,7 +40,7 @@ export function makePostTypeMeta(
   return {
     session_recap:      { label: '⚡ Session Recap',        bg: c.primaryDim, color: c.primarySoft },
     achievement_unlock: { label: '🏅 Achievement Unlocked', bg: c.GOLD_DIM,   color: c.GOLD },
-    accountability:     { label: '🤝 Accountability',        bg: c.tealDim,    color: c.accent },
+    accountability:     { label: '🤝 Accountability',        bg: c.traceDim,    color: c.trace },
     streak_milestone:   { label: '🔥 Streak Milestone',      bg: c.AMBER_DIM,  color: c.AMBER },
     free_post:          { label: '✏️ Free Post',             bg: c.ROSE_DIM,   color: c.ROSE },
   };

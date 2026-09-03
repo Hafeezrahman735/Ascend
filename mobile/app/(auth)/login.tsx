@@ -9,6 +9,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTheme } from '../../hooks/useTheme';
 import PasswordField from '../../components/PasswordField';
+import { TraceMark } from '../../components/TraceMark';
+import { Font } from '../../constants/typography';
 import { validateNewPassword } from '../../lib/passwordRules';
 
 type Mode = 'login' | 'register';
@@ -74,8 +76,13 @@ export default function AuthScreen() {
         >
           {/* Logo */}
           <View style={{ alignItems: 'center', marginBottom: 40 }}>
-            <Text style={{ fontSize: 56, marginBottom: 10 }}>🧠</Text>
-            <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', letterSpacing: 0.5 }}>
+            {/* The mark carries the identity here, so the emoji that used to
+                stand in for it is gone rather than sitting beside it. */}
+            <TraceMark size={64} />
+            <Text style={{
+              color: Colors.textBright, fontFamily: Font.display, fontSize: 30,
+              letterSpacing: -0.8, marginTop: 14,
+            }}>
               Trace
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 14, marginTop: 6 }}>

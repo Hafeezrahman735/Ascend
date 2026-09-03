@@ -436,13 +436,13 @@ export default function TimerScreen() {
                   it sits beneath. */}
               <AnimatedCircle
                 r={DOT_RADIUS + 3}
-                fill={Colors.accent}
+                fill={Colors.trace}
                 opacity={0.15}
                 animatedProps={dotProps}
               />
               <AnimatedCircle
                 r={DOT_RADIUS}
-                fill={Colors.accent}
+                fill={Colors.trace}
                 animatedProps={dotProps}
               />
             </Svg>
@@ -501,7 +501,7 @@ export default function TimerScreen() {
                       width: Math.max(12, Math.round((minutes / total) * 180)),
                       height: 6,
                       borderRadius: 3,
-                      backgroundColor: isCurrent ? Colors.accent : Colors.inactive,
+                      backgroundColor: isCurrent ? Colors.trace : Colors.inactive,
                       marginHorizontal: 3,
                     }}
                   />
@@ -514,7 +514,7 @@ export default function TimerScreen() {
                     width: i < completedDots ? 28 : 20,
                     height: 6,
                     borderRadius: 3,
-                    backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
+                    backgroundColor: i < completedDots ? Colors.trace : Colors.inactive,
                     marginHorizontal: 3,
                   }}
                 />
@@ -612,7 +612,7 @@ export default function TimerScreen() {
               <View style={{
                 position: 'absolute', top: 8, right: 8,
                 width: 8, height: 8, borderRadius: 4,
-                backgroundColor: Colors.accent,
+                backgroundColor: Colors.trace,
               }} />
             )}
           </AppPressable>
@@ -680,7 +680,7 @@ export default function TimerScreen() {
                 <View style={{
                   width: `${Math.min((selectedTask.totalTimeOnTask / (selectedTask.estimatedMinutes * 60)) * 100, 100)}%`,
                   height: '100%',
-                  backgroundColor: Colors.accent,
+                  backgroundColor: Colors.trace,
                   borderRadius: 3,
                 }} />
               </View>
@@ -714,7 +714,7 @@ export default function TimerScreen() {
             alignItems: 'center',
             marginRight: 6,
           }}>
-            <Text style={{ color: Colors.accent, fontSize: 24, fontWeight: '700' }}>
+            <Text style={{ color: Colors.trace, fontSize: 24, fontWeight: '700' }}>
               {formatGlobalTime(globalTotalTime)}
             </Text>
             <Text style={{
@@ -802,7 +802,7 @@ export default function TimerScreen() {
                         <Ionicons
                           name={isSelected ? 'checkbox' : 'square-outline'}
                           size={20}
-                          color={isSelected ? Colors.accent : Colors.text}
+                          color={isSelected ? Colors.trace : Colors.text}
                           style={{ marginRight: 12 }}
                         />
                         <Text style={{
