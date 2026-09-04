@@ -11,6 +11,7 @@ import { elapsedInPhase, remainingInPhase, type TimerPhase } from '../lib/phaseD
 import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
 import { creditableSessionSeconds, MAX_SESSION_SECONDS } from '../lib/sessionCredit';
 import { log } from '../lib/log';
+import { migrateDailyGoal, clampGoalMinutes } from '../lib/dailyTarget';
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
 export type { TimerPhase };
@@ -20,7 +21,8 @@ interface Settings {
   shortBreakDuration: number;
   longBreakDuration: number;
   sessionsUntilLong: number;
-  dailySessionTarget: number;
+  /** Minutes of focus the user is aiming for each day. Set directly, never derived. */
+  dailyFocusMinutes: number;
 }
 
 // Device-level key — shared across all accounts (settings only)
@@ -109,7 +111,7 @@ interface TimerState {
   setWorkDuration: (minutes: number) => void;
   setShortBreakDuration: (minutes: number) => void;
   setLongBreakDuration: (minutes: number) => void;
-  setDailySessionTarget: (sessions: number) => void;
+  setDailyFocusMinutes: (minutes: number) => void;
   setMode: (mode: TimerMode) => void;
   startStopwatch: () => void;
   /** Commits the run and returns the seconds actually credited to focus time. */
@@ -123,7 +125,7 @@ const DEFAULT_SETTINGS: Settings = {
   shortBreakDuration: 300,
   longBreakDuration: 900,
   sessionsUntilLong: 4,
-  dailySessionTarget: 8,
+  dailyFocusMinutes: 200,
 };
 
 // Single definition of the local-date convention lives in utils/date.ts.
@@ -482,10 +484,10 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     saveSettings();
   },
 
-  setDailySessionTarget: (sessions: number) => {
-    const target = Math.max(1, Math.min(50, sessions));
+  setDailyFocusMinutes: (minutes: number) => {
+    const dailyFocusMinutes = clampGoalMinutes(minutes);
     set((state) => ({
-      settings: { ...state.settings, dailySessionTarget: target },
+      settings: { ...state.settings, dailyFocusMinutes },
     }));
     saveSettings();
   },
@@ -540,9 +542,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       // Still load device-level settings so the timer UI is correct
       try {
         const settingsRaw = await AsyncStorage.getItem(TIMER_SETTINGS_KEY);
-        const settings = settingsRaw
-          ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsRaw) }
-          : { ...DEFAULT_SETTINGS };
+        const settings = await readSettings(settingsRaw);
         const mode = await readSavedMode();
         set({
           settings,
@@ -617,9 +617,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         ]);
       }
 
-      const settings = settingsRaw
-        ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsRaw) }
-        : { ...DEFAULT_SETTINGS };
+      const settings = await readSettings(settingsRaw);
 
       // Restore an in-progress session so a closed/killed app resumes from the correct
       // remaining time instead of starting over. Skipped on a new day (a session left
@@ -786,6 +784,38 @@ async function fetchWeekSessionsImpl() {
     console.warn('[timerStore] fetchWeekSessions failed:', err);
     useTimerStore.setState({ isLoadingWeek: false });
   }
+}
+
+/**
+ * Turns the stored settings blob into a Settings object, migrating the retired
+ * session-based daily goal on the way through.
+ *
+ * This exists as one function rather than three inline lines because the
+ * migration has to happen at BOTH load sites — the no-userId early return and
+ * the main path. Sharing the reader makes that structural instead of something
+ * to remember.
+ */
+async function readSettings(settingsRaw: string | null): Promise<Settings> {
+  if (!settingsRaw) return { ...DEFAULT_SETTINGS };
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(settingsRaw) as Record<string, unknown>;
+  } catch (err) {
+    console.warn('[timer] settings blob unreadable, using defaults:', err);
+    return { ...DEFAULT_SETTINGS };
+  }
+
+  const { settings: migrated, changed } = migrateDailyGoal(parsed, DEFAULT_SETTINGS.workDuration);
+  if (changed) {
+    // Persist immediately: that is what makes the conversion run exactly once,
+    // and stops a later saveSettings() writing the retired key back.
+    await AsyncStorage.setItem(TIMER_SETTINGS_KEY, JSON.stringify(migrated)).catch((err) =>
+      console.warn('[timer] persist migrated settings failed:', err),
+    );
+  }
+
+  return { ...DEFAULT_SETTINGS, ...migrated } as Settings;
 }
 
 function saveSettings() {

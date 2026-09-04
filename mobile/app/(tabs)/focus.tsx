@@ -13,7 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
 import { getPhaseDuration } from '../../lib/phaseDuration';
 import { getSessionPlan } from '../../lib/sessionPlan';
-import { dailyFocusTargetSeconds, targetProgress } from '../../lib/dailyTarget';
+import { targetProgress } from '../../lib/dailyTarget';
 import { cancelAllTimerNotifications } from '../../services/notifications';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -354,16 +354,17 @@ export default function TimerScreen() {
   };
 
   // ── Target left ───────────────────────────────────────────────────────────
-  // Same derivation the Tasks pill strip uses (lib/dailyTarget.ts), so the two
-  // screens can never quote different numbers for the same target.
+  // The goal is the stored number of focus minutes — nothing derived — and the
+  // Tasks pill strip reads the same field through the same lib/dailyTarget.ts
+  // helper, so the two screens cannot quote different numbers for the same day.
   //
   // Colour carries the state: amber while there is work left, `trace` once the
   // target is met — matching how the Tasks strip already tints "to goal" vs
   // "Goal reached". With no target configured there is nothing to be short of,
   // so it reads as a muted dash rather than a zero, which would look achieved.
   const targetLeft = useMemo(
-    () => targetProgress(globalTotalTime, dailyFocusTargetSeconds(settings.dailySessionTarget, settings.workDuration)),
-    [globalTotalTime, settings.dailySessionTarget, settings.workDuration],
+    () => targetProgress(globalTotalTime, settings.dailyFocusMinutes * 60),
+    [globalTotalTime, settings.dailyFocusMinutes],
   );
   const targetLeftValue =
     targetLeft.kind === 'none' ? '—'

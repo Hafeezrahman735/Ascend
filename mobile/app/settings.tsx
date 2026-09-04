@@ -16,6 +16,8 @@ import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { getRank, RANK_META } from '../lib/rank';
 import { useCalendarStore } from '../stores/calendarStore';
 import { useTimerStore } from '../stores/timerStore';
+import { stepGoalMinutes, GOAL_MIN_MINUTES, GOAL_MAX_MINUTES } from '../lib/dailyTarget';
+import { formatSeconds } from '../lib/calendarItems';
 import FocusModeSheet from '../components/FocusModeSheet';
 import {
   requestCalendarPermission,
@@ -50,50 +52,53 @@ function Divider() {
 }
 
 /**
- * How many focus sessions the user wants to complete each day.
+ * How much focus time the user wants to put in each day.
  *
- * Drives the "Sessions to go" and "Focus today" pills on the Tasks tab. Also
+ * Drives the "Today's target" and "Focus today" pills on the Tasks tab. Also
  * changeable by tapping either of those pills — this is the second entry point,
- * since a target you can only reach from one screen is easy to never find.
+ * since a goal you can only reach from one screen is easy to never find.
+ *
+ * Set in time, counted in time. It used to be set in sessions and converted,
+ * which broke as soon as sessions stopped all being the same length.
  *
  * NOTE: this value lives in timerStore and is persisted to AsyncStorage only, so
  * unlike every other preference here it does NOT sync across devices and resets
  * on reinstall. Moving it to the server is a follow-up.
  */
-function DailySessionTargetRow() {
+function DailyFocusGoalRow() {
   const Colors = useTheme();
-  const target = useTimerStore((s) => s.settings.dailySessionTarget);
-  const setTarget = useTimerStore((s) => s.setDailySessionTarget);
-  const sessionMinutes = useTimerStore((s) => Math.round(s.settings.workDuration / 60));
+  const target = useTimerStore((s) => s.settings.dailyFocusMinutes);
+  const setTarget = useTimerStore((s) => s.setDailyFocusMinutes);
 
-  const focusHours = Math.round((target * sessionMinutes) / 6) / 10;
+  const atMin = target <= GOAL_MIN_MINUTES;
+  const atMax = target >= GOAL_MAX_MINUTES;
 
   return (
     <SettingsRow
-      label="Daily session goal"
-      subtitle={`${target} sessions ≈ ${focusHours}h of focus per day`}
+      label="Daily focus goal"
+      subtitle="Time you're aiming to focus each day"
       rightComponent={
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
           <TouchableOpacity
-            onPress={() => setTarget(target - 1)}
-            disabled={target <= 1}
+            onPress={() => setTarget(stepGoalMinutes(target, -1))}
+            disabled={atMin}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Decrease daily session goal"
-            style={{ opacity: target <= 1 ? 0.3 : 1 }}
+            accessibilityLabel="Decrease daily focus goal"
+            style={{ opacity: atMin ? 0.3 : 1 }}
           >
             <Ionicons name="remove-circle-outline" size={24} color={Colors.primarySoft} />
           </TouchableOpacity>
-          <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '700', minWidth: 24, textAlign: 'center' }}>
-            {target}
+          <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '700', minWidth: 64, textAlign: 'center' }}>
+            {formatSeconds(target * 60)}
           </Text>
           <TouchableOpacity
-            onPress={() => setTarget(target + 1)}
-            disabled={target >= 50}
+            onPress={() => setTarget(stepGoalMinutes(target, 1))}
+            disabled={atMax}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Increase daily session goal"
-            style={{ opacity: target >= 50 ? 0.3 : 1 }}
+            accessibilityLabel="Increase daily focus goal"
+            style={{ opacity: atMax ? 0.3 : 1 }}
           >
             <Ionicons name="add-circle-outline" size={24} color={Colors.primarySoft} />
           </TouchableOpacity>
@@ -699,7 +704,7 @@ export default function SettingsScreen() {
         {/* Focus goals */}
         <SectionTitle title="Focus Goals" />
         <SettingsCard>
-          <DailySessionTargetRow />
+          <DailyFocusGoalRow />
         </SettingsCard>
 
         {/* Calendar sync */}

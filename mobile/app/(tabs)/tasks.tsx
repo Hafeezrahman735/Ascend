@@ -55,7 +55,7 @@ import {
   compactDuration,
   formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
-import { dailyFocusTargetSeconds as focusTargetSeconds } from '../../lib/dailyTarget';
+import { stepGoalMinutes, GOAL_MIN_MINUTES, GOAL_MAX_MINUTES } from '../../lib/dailyTarget';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
@@ -1222,28 +1222,30 @@ function DailyTargetModal({ visible, draft, onDraftChange, onCancel, onSave }: {
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <TouchableOpacity activeOpacity={1} onPress={onCancel} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 }}>
-        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Daily Session Goal</Text>
-        <Text style={{ color: Colors.subtext, fontSize: 13, marginBottom: 24 }}>How many focus sessions do you want to complete each day?</Text>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Daily Focus Goal</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 13, marginBottom: 24 }}>How much focus time do you want to put in each day?</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 32 }}>
           <TouchableOpacity
-            onPress={() => onDraftChange(Math.max(1, draft - 1))}
-            disabled={draft <= 1}
+            onPress={() => onDraftChange(stepGoalMinutes(draft, -1))}
+            disabled={draft <= GOAL_MIN_MINUTES}
             accessibilityRole="button"
-            accessibilityLabel="Decrease daily session goal"
-            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft <= 1 ? 0.3 : 1 }]}
+            accessibilityLabel="Decrease daily focus goal"
+            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft <= GOAL_MIN_MINUTES ? 0.3 : 1 }]}
           >
             <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>−</Text>
           </TouchableOpacity>
-          <View style={{ width: 100, alignItems: 'center' }}>
-            <Text style={{ color: Colors.textBright, fontSize: 48, fontWeight: '800' }}>{draft}</Text>
-            <Text style={{ color: Colors.subtext, fontSize: 12 }}>sessions</Text>
+          <View style={{ width: 150, alignItems: 'center' }}>
+            <Text style={{ color: Colors.textBright, fontSize: 38, fontWeight: '800' }} numberOfLines={1} adjustsFontSizeToFit>
+              {formatSeconds(draft * 60)}
+            </Text>
+            <Text style={{ color: Colors.subtext, fontSize: 12 }}>of focus per day</Text>
           </View>
           <TouchableOpacity
-            onPress={() => onDraftChange(Math.min(50, draft + 1))}
-            disabled={draft >= 50}
+            onPress={() => onDraftChange(stepGoalMinutes(draft, 1))}
+            disabled={draft >= GOAL_MAX_MINUTES}
             accessibilityRole="button"
-            accessibilityLabel="Increase daily session goal"
-            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft >= 50 ? 0.3 : 1 }]}
+            accessibilityLabel="Increase daily focus goal"
+            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft >= GOAL_MAX_MINUTES ? 0.3 : 1 }]}
           >
             <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>+</Text>
           </TouchableOpacity>
@@ -1265,10 +1267,10 @@ function DailyTargetModal({ visible, draft, onDraftChange, onCancel, onSave }: {
 }
 
 // ─── PillStrip ────────────────────────────────────────────────────────────────
-function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate, lastWeekRate, focusSecondsToday, dailyFocusTargetSeconds, onSetGoal }: {
+function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate, lastWeekRate, focusSecondsToday, dailyGoalSeconds, onSetGoal }: {
   completedToday: number; yesterdayCompleted: number; totalActive: number;
   weeklyRate: number | null; lastWeekRate: number | null;
-  focusSecondsToday: number; dailyFocusTargetSeconds: number;
+  focusSecondsToday: number; dailyGoalSeconds: number;
   onSetGoal: () => void;
 }) {
   const Colors = useTheme();
@@ -1282,8 +1284,8 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
   const rateColor = rateDiff !== null && rateDiff > 2 ? Colors.trace : rateDiff !== null && rateDiff < -2 ? ROSE : Colors.subtext;
   const rateLabel = rateDiff !== null && rateDiff > 2 ? `+${rateDiff}% this week` : rateDiff !== null && rateDiff < -2 ? `${rateDiff}% this week` : 'Steady this week';
 
-  const noTarget = dailyFocusTargetSeconds <= 0;
-  const remaining = dailyFocusTargetSeconds - focusSecondsToday;
+  const noTarget = dailyGoalSeconds <= 0;
+  const remaining = dailyGoalSeconds - focusSecondsToday;
   const focusValue = focusSecondsToday > 0 ? formatDuration(focusSecondsToday) : '—';
   const focusSubLabel = noTarget ? 'Set a goal →' : focusSecondsToday === 0 ? 'Start your first session' : remaining > 0 ? `${formatDuration(remaining)} to goal` : 'Goal reached ✓';
   const focusSubColor = noTarget || focusSecondsToday === 0 ? Colors.subtext : remaining > 0 ? AMBER : Colors.trace;
@@ -1303,15 +1305,17 @@ function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate
         <Text style={{ color: rateColor, fontSize: 10, fontWeight: '600' }}>{rateLabel}</Text>
       </View>
       {/* Always tappable. This used to be `onPress={noTarget ? onSetGoal : undefined}`,
-          but noTarget is `dailyFocusTargetSeconds <= 0` and the target defaults to 8
-          sessions (clamped to a minimum of 1), so it could never be true — the
-          picker was unreachable and the target could not be changed at all. */}
+          but the goal clamps to a minimum, so noTarget could never be true — the
+          picker was unreachable and the goal could not be changed at all.
+          `noTarget` itself is kept as a guard: the goal is read off disk, where
+          no clamp applies, and "Goal reached ✓" on a zero goal is the one
+          reading that would be actively wrong. */}
       <TouchableOpacity
         onPress={onSetGoal}
         activeOpacity={0.7}
         style={pillStyle}
         accessibilityRole="button"
-        accessibilityLabel="Change daily session goal"
+        accessibilityLabel="Change daily focus goal"
       >
         <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800', marginBottom: 1 }}>{focusValue}</Text>
         <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 3 }}>FOCUS TODAY</Text>
@@ -1864,7 +1868,7 @@ export default function TasksScreen() {
   );
 
   const router = useRouter();
-  const dailySessionTarget = settings.dailySessionTarget;
+  const dailyFocusMinutes = settings.dailyFocusMinutes;
   const streak = useGamificationStore((s) => s.currentStreak ?? 0);
   const longestStreak = useGamificationStore((s) => s.longestStreak ?? 0);
   // Drives whether the recent-activity card appears in the rotation at all. The
@@ -1890,8 +1894,8 @@ export default function TasksScreen() {
   const [formGoal, setFormGoal] = useState<TaskGoal | null>(null);
   const [overrideTag, setOverrideTag] = useState<string | null>(null);
   const [showTargetPicker, setShowTargetPicker] = useState(false);
-  const [draftTarget, setDraftTarget] = useState(dailySessionTarget);
-  const setDailySessionTarget = useTimerStore((s) => s.setDailySessionTarget);
+  const [draftTarget, setDraftTarget] = useState(dailyFocusMinutes);
+  const setDailyFocusMinutes = useTimerStore((s) => s.setDailyFocusMinutes);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1957,7 +1961,6 @@ export default function TasksScreen() {
   const todaySessions = useMemo(() => sessionHistory.filter((s) => s.type === 'focus' && isToday(s.completedAt)), [sessionHistory]);
   const sessionsToday = todaySessions.length;
   const focusSecondsToday = useMemo(() => todaySessions.reduce((sum, s) => sum + s.durationSeconds, 0), [todaySessions]);
-  const sessionsLeft = Math.max(0, dailySessionTarget - sessionsToday);
 
   // Seconds, not session count: a 90-minute session and a 5-minute one are not
   // the same amount of work and must not draw the same bar.
@@ -1991,8 +1994,9 @@ export default function TasksScreen() {
   const yesterdayCompleted = useMemo(() => tasks.filter((t) => t.isCompleted && t.completedAt && isYesterdayLocal(new Date(t.completedAt).getTime())).length, [tasks]);
   const totalActiveTasks = nonArchived.length;
   const lastWeekCompletionRate = useMemo(() => getLastWeekCompletionRate(tasks), [tasks]);
+  // The stored goal, in the unit everything else on this screen counts in.
   // Shared with the Focus tab's "Target left" card — see lib/dailyTarget.ts.
-  const dailyFocusTargetSeconds = focusTargetSeconds(dailySessionTarget, settings.workDuration);
+  const dailyGoalSeconds = dailyFocusMinutes * 60;
 
   // ── Smart hero card ──
   const goalsForHero = goals; // goalStore exists; pass through
@@ -2164,18 +2168,20 @@ export default function TasksScreen() {
           <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TodayPill value={String(sessionsToday)} label="Sessions done" />
-              {/* Tappable: this pill is derived from the daily session target, so
-                  it is the natural place to change it. */}
+              {/* Tappable: this pill IS the daily goal, so it is the natural
+                  place to change it. */}
               <TouchableOpacity
                 style={{ flex: 1 }}
                 activeOpacity={0.7}
-                onPress={() => { setDraftTarget(dailySessionTarget); setShowTargetPicker(true); }}
+                onPress={() => { setDraftTarget(dailyFocusMinutes); setShowTargetPicker(true); }}
                 accessibilityRole="button"
-                accessibilityLabel={`${sessionsLeft} sessions to go. Change daily session goal`}
+                accessibilityLabel={`Daily focus goal ${formatSeconds(dailyGoalSeconds)}. Change it`}
               >
-                {/* "Today's target", not "Sessions to go" — the old label read as
-                    a Goal, which is a different feature entirely. */}
-                <TodayPill value={String(sessionsLeft)} label="Today's target" />
+                {/* Shows the goal itself, not what is left of it — "Focus today"
+                    sits right beside it and already carries the progress.
+                    "Today's target", not "...goal": the old label read as a
+                    Goal, which is a different feature entirely, listed below. */}
+                <TodayPill value={formatSeconds(dailyGoalSeconds)} label="Today's target" />
               </TouchableOpacity>
               <TodayPill value={formatDuration(focusSecondsToday)} label="Focus today" />
               <TodayPill value={`${tasksDoneToday}/${totalActive}`} label="Tasks done" />
@@ -2235,7 +2241,7 @@ export default function TasksScreen() {
           draft={draftTarget}
           onDraftChange={setDraftTarget}
           onCancel={() => setShowTargetPicker(false)}
-          onSave={() => { setDailySessionTarget(draftTarget); setShowTargetPicker(false); }}
+          onSave={() => { setDailyFocusMinutes(draftTarget); setShowTargetPicker(false); }}
         />
       </SafeAreaView>
     );
@@ -2372,8 +2378,8 @@ export default function TasksScreen() {
           weeklyRate={weeklyCompletionRate}
           lastWeekRate={lastWeekCompletionRate}
           focusSecondsToday={focusSecondsToday}
-          dailyFocusTargetSeconds={dailyFocusTargetSeconds}
-          onSetGoal={() => { setDraftTarget(dailySessionTarget); setShowTargetPicker(true); }}
+          dailyGoalSeconds={dailyGoalSeconds}
+          onSetGoal={() => { setDraftTarget(dailyFocusMinutes); setShowTargetPicker(true); }}
         />
 
         {/* Smart hero card */}
@@ -2397,7 +2403,7 @@ export default function TasksScreen() {
           draft={draftTarget}
           onDraftChange={setDraftTarget}
           onCancel={() => setShowTargetPicker(false)}
-          onSave={() => { setDailySessionTarget(draftTarget); setShowTargetPicker(false); }}
+          onSave={() => { setDailyFocusMinutes(draftTarget); setShowTargetPicker(false); }}
         />
 
         {/* Zone 2 — Task List */}
