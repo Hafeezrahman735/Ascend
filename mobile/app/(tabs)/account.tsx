@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect } from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -62,7 +63,15 @@ export default function AccountScreen() {
   const currentStreak = useGamificationStore((s) => s.currentStreak);
   const totalSessions = useGamificationStore((s) => s.totalSessions);
   const totalFocusMinutes = useGamificationStore((s) => s.totalFocusMinutes);
-  const profile = useUserProfileStore();
+  // Selected fields rather than the whole store — see the note in app/(tabs)/index.tsx.
+  const profile = useUserProfileStore(
+    useShallow((s) => ({
+      avatarEmoji: s.avatarEmoji,
+      displayName: s.displayName,
+      handle: s.handle,
+      load: s.load,
+    })),
+  );
 
   const rank = getRank(xp);
   const xpToNext = getXpToNextRank(xp);

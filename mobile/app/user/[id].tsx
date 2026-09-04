@@ -5,6 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useShallow } from 'zustand/react/shallow';
 import { useSocialStore } from '../../stores/socialStore';
 import { api } from '../../services/api';
 import { useTheme } from '../../hooks/useTheme';
@@ -30,7 +31,16 @@ export default function UserProfileScreen() {
   const Colors = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const social = useSocialStore();
+  // Selected fields rather than the whole socialStore: it is one flat object
+  // holding posts, groups, notifications, follows and leaderboards, so
+  // subscribing to all of it re-renders this screen on changes it never shows.
+  const social = useSocialStore(
+    useShallow((s) => ({
+      fetchUserProfile: s.fetchUserProfile,
+      followUser: s.followUser,
+      unfollowUser: s.unfollowUser,
+    })),
+  );
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [followLoading, setFollowLoading] = useState(false);

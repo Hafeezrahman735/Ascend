@@ -32,6 +32,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useGamification } from '../../store/hooks';
 import { useTimerStore } from '../../stores/timerStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useSocialStore } from '../../stores/socialStore';
 import type { SocialPost, UserSocialStats, UserListItem } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
@@ -790,11 +791,30 @@ function StreakSection({
 export default function ProfileScreen() {
   const Colors = useTheme();
   const router = useRouter();
-  const auth = useAuthStore();
+  const authUser = useAuthStore((s) => s.user);
   const profileAvatar = useUserProfileStore((s) => s.avatarEmoji);
   const loadProfile = useUserProfileStore((s) => s.load);
   const gamification = useGamification();
-  const social = useSocialStore();
+  // Selected fields rather than the whole socialStore: it is one flat object
+  // holding posts, groups, notifications, follows and leaderboards, so
+  // subscribing to all of it re-renders this screen on changes it never shows.
+  const social = useSocialStore(
+    useShallow((s) => ({
+      userSocialStats: s.userSocialStats,
+      userPosts: s.userPosts,
+      userPostsCursor: s.userPostsCursor,
+      followers: s.followers,
+      following: s.following,
+      isLoadingFollowers: s.isLoadingFollowers,
+      isLoadingFollowing: s.isLoadingFollowing,
+      isLoadingUserPosts: s.isLoadingUserPosts,
+      fetchUserSocialStats: s.fetchUserSocialStats,
+      fetchUserPosts: s.fetchUserPosts,
+      fetchMoreUserPosts: s.fetchMoreUserPosts,
+      fetchFollowers: s.fetchFollowers,
+      fetchFollowing: s.fetchFollowing,
+    })),
+  );
 
   const weekActiveDates = useTimerStore(s => s.weekActiveDates);
 
@@ -849,8 +869,8 @@ export default function ProfileScreen() {
     social.fetchUserPosts();
     useTimerStore.getState().fetchWeekSessions();
     // Load the saved avatar/profile so the hero card matches settings & social.
-    if (auth.user) loadProfile(auth.user.id, auth.user.username);
-  }, [auth.user?.id]);
+    if (authUser) loadProfile(authUser.id, authUser.username);
+  }, [authUser?.id]);
 
   // Reduced motion
   useEffect(() => {
@@ -895,8 +915,8 @@ export default function ProfileScreen() {
     >
       {/* Hero Card — fixed, does not scroll */}
       <HeroCard
-        username={auth.user?.username ?? 'User'}
-        avatarEmoji={profileAvatar || getAvatarEmoji(auth.user?.username ?? 'User')}
+        username={authUser?.username ?? 'User'}
+        avatarEmoji={profileAvatar || getAvatarEmoji(authUser?.username ?? 'User')}
         xp={xp}
         rank={currentRank}
         totalSessions={gamification.totalSessions}

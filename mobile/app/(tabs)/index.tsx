@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { useShallow } from 'zustand/react/shallow';
 import { useSocialStore } from '../../stores/socialStore';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
@@ -835,7 +836,7 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups, defaultGroupId
   const RAISED = Colors.raised;
   const { BORDER_SOFT, ROSE, ROSE_DIM, GOLD, GOLD_DIM } = Colors;
   const gamification = useGamification();
-  const timer = useTimerStore();
+  const lastCompletedSessionId = useTimerStore((s) => s.lastCompletedSessionId);
 
   const [step,          setStep]          = useState<1 | 2>(1);
   const [selectedType,  setSelectedType]  = useState<PostType | null>(null);
@@ -932,7 +933,7 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups, defaultGroupId
         groupId: visibility === 'group' ? targetGroupId : null,
         reactions: {},
       };
-      if (selectedType === 'session_recap') draft.sessionId = timer.lastCompletedSessionId;
+      if (selectedType === 'session_recap') draft.sessionId = lastCompletedSessionId;
       if (selectedType === 'achievement_unlock') draft.achievementId = selectedAchievementId;
       if (selectedType === 'streak_milestone') draft.streakAtPost = gamification.currentStreak;
       onPost(draft as Partial<SocialPost>);
@@ -1227,10 +1228,43 @@ export default function TraceScreen() {
   const Colors = useTheme();
   const SURFACE = Colors.surface;
   const { BORDER_SOFT, ROSE } = Colors;
-  const social      = useSocialStore();
-  const auth        = useAuthStore();
+  /**
+   * Selected fields, not the whole store.
+   *
+   * This screen is 1600+ lines and it subscribed to ALL of socialStore — posts,
+   * groups, notifications, followers, following, leaderboards and five loading
+   * flags in one flat object. Any change to any of them re-rendered the entire
+   * tab, including the composer modal and the own-trace card, whether or not the
+   * thing that changed was on screen.
+   *
+   * useShallow compares the picked fields one level deep, so a re-render happens
+   * when one of THESE changes and not otherwise. The shape is kept identical so
+   * the body below reads exactly as it did.
+   */
+  const social = useSocialStore(
+    useShallow((s) => ({
+      posts: s.posts,
+      postsCursor: s.postsCursor,
+      studyGroups: s.studyGroups,
+      selectedGroupId: s.selectedGroupId,
+      notifications: s.notifications,
+      unreadCount: s.unreadCount,
+      isLoading: s.isLoading,
+      focusLeaderboard: s.focusLeaderboard,
+      myFocusEntry: s.myFocusEntry,
+      fetchPosts: s.fetchPosts,
+      fetchMorePosts: s.fetchMorePosts,
+      fetchStudyGroups: s.fetchStudyGroups,
+      fetchFocusLeaderboard: s.fetchFocusLeaderboard,
+      fetchNotifications: s.fetchNotifications,
+      markNotificationsRead: s.markNotificationsRead,
+      setSelectedGroup: s.setSelectedGroup,
+      toggleReaction: s.toggleReaction,
+      createPost: s.createPost,
+    })),
+  );
+  const currentUserId = useAuthStore((s) => s.user?.id ?? '');
   const router      = useRouter();
-  const currentUserId = auth.user?.id ?? '';
 
   const [activeTab,          setActiveTab]          = useState<'feed' | 'leaderboard'>('feed');
   const [showCreatePost,     setShowCreatePost]     = useState(false);

@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useShallow } from 'zustand/react/shallow';
 import { useSocialStore } from '../stores/socialStore';
 import { useTheme } from '../hooks/useTheme';
 import type { UserSearchResult } from '../types';
@@ -70,7 +71,20 @@ function UserRow({ user, onFollow, onPress }: {
 export default function SearchScreen() {
   const Colors = useTheme();
   const router = useRouter();
-  const social = useSocialStore();
+  // Selected fields rather than the whole socialStore: it is one flat object
+  // holding posts, groups, notifications, follows and leaderboards, so
+  // subscribing to all of it re-renders this screen on changes it never shows.
+  const social = useSocialStore(
+    useShallow((s) => ({
+      searchQuery: s.searchQuery,
+      searchResults: s.searchResults,
+      isSearching: s.isSearching,
+      searchUsersV2: s.searchUsersV2,
+      clearSearch: s.clearSearch,
+      followUser: s.followUser,
+      unfollowUser: s.unfollowUser,
+    })),
+  );
   const inputRef = useRef<TextInput>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

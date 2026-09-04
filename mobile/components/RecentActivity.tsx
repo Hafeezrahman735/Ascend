@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useGamificationStore } from '../stores/gamificationStore';
 import { useTheme, type ThemeColors } from '../hooks/useTheme';
 import type { ActivityEvent } from '../types';
@@ -73,7 +74,15 @@ function relativeTime(iso: string): string {
 
 export default function RecentActivity({ limit = 8 }: { limit?: number }) {
   const Colors = useTheme();
-  const { activity, isLoadingActivity, fetchActivity } = useGamificationStore();
+  // Destructuring after a bare hook call still subscribes to the WHOLE store —
+  // the pick has to happen inside the selector to have any effect.
+  const { activity, isLoadingActivity, fetchActivity } = useGamificationStore(
+    useShallow((s) => ({
+      activity: s.activity,
+      isLoadingActivity: s.isLoadingActivity,
+      fetchActivity: s.fetchActivity,
+    })),
+  );
 
   // Refresh is the caller's job — the Tasks screen fetches on focus, because a
   // parent that hides this component until the log is non-empty can never let a

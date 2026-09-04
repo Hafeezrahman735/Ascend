@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator, Pressable, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTheme } from '../../hooks/useTheme';
@@ -19,7 +20,15 @@ export default function AuthScreen() {
   const Colors = useTheme();
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('login');
-  const { login, register, isLoading, error, clearError } = useAuthStore();
+  const { login, register, isLoading, error, clearError } = useAuthStore(
+    useShallow((s) => ({
+      login: s.login,
+      register: s.register,
+      isLoading: s.isLoading,
+      error: s.error,
+      clearError: s.clearError,
+    })),
+  );
 
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
