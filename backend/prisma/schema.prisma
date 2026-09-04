@@ -47,7 +47,6 @@ model User {
   passwordResets        PasswordResetToken[]
   sessions              Session[]
   socialPosts           SocialPost[]                 @relation("PostAuthor")
-  streaks               Streak?
   groupMemberships      StudyGroupMember[]
   createdGroups         StudyGroup[]                 @relation("GroupCreator")
   taskGoals             TaskGoal[]
@@ -170,25 +169,6 @@ model Session {
   @@index([userId, localDate])
   @@index([userId, taskGoalId])
   @@map("sessions")
-}
-
-/// DEPRECATED — no longer read or written. Streaks live on
-/// User.currentStreak / longestStreak / lastActiveDate, which is what /auth/me
-/// serves and what /auth/me/streak-check resets. Keeping two copies meant they
-/// drifted apart and the leaderboard contradicted the profile.
-///
-/// Left in place so no data is destroyed on the next `prisma db push`. Once
-/// you've confirmed nothing depends on it, delete this model and the
-/// `streaks Streak?` relation on User, then push to drop the table.
-model Streak {
-  id              String    @id @default(uuid()) @db.Uuid
-  userId          String    @unique @map("user_id") @db.Uuid
-  currentStreak   Int       @default(0) @map("current_streak")
-  longestStreak   Int       @default(0) @map("longest_streak")
-  lastSessionDate DateTime? @map("last_session_date")
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("streaks")
 }
 
 model Friendship {

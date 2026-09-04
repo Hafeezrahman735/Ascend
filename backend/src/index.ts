@@ -15,7 +15,6 @@ import { authRouter } from './modules/auth/routes';
 import { socialRouter } from './modules/social/routes';
 import { achievementsRouter } from './modules/achievements/routes';
 import { notificationsRouter } from './modules/notifications/routes';
-import { analyticsRouter } from './modules/analytics/routes';
 import { setupTaskRoutes } from './modules/tasks/routes';
 import { taskGoalsRouter } from './modules/taskgoals/routes';
 import { timeReportRouter } from './modules/timereport/routes';
@@ -219,7 +218,6 @@ app.use('/', authenticateMiddleware);
 app.use('/', socialRouter);
 app.use('/', achievementsRouter);
 app.use('/', notificationsRouter);
-app.use('/', analyticsRouter);
 
 const taskRouter = Router();
 setupTaskRoutes(taskRouter);

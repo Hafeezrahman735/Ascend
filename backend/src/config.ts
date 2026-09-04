@@ -54,10 +54,3 @@ function loadConfig() {
 }
 
 export const config = loadConfig();
-
-export const TIMER_DEFAULTS = {
-  FOCUS_MINUTES: parseInt(config.DEFAULT_FOCUS_MINUTES, 10),
-  SHORT_BREAK_MINUTES: parseInt(config.DEFAULT_SHORT_BREAK_MINUTES, 10),
-  LONG_BREAK_MINUTES: parseInt(config.DEFAULT_LONG_BREAK_MINUTES, 10),
-  POMODOROS_BEFORE_LONG_BREAK: 4,
-};

@@ -3,7 +3,6 @@ import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
 import { handleAuthError } from '../../lib/errors';
-import { resolveProfileAccess } from '../../services/profileAccess';
 import { achievementProgress, BEHAVIOURAL_KEYS, type AchievementStats } from './handler';
 import { deriveTier } from './tier';
 
@@ -94,45 +93,6 @@ achievementsRouter.get('/achievements', async (req: Request, res: Response) => {
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('Get my achievements error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-achievementsRouter.get('/achievements/:userId', async (req: Request, res: Response) => {
-  try {
-    const authUserId = authenticate(req);
-    const { userId } = req.params;
-
-    // Was checking only `privacySetting === 'private'`, so a friends_only
-    // profile — and any profile with publicProfile off — handed its full
-    // achievement set to any signed-in stranger.
-    const access = await resolveProfileAccess(authUserId, userId);
-    if (!access.ok) {
-      res.status(access.status).json({
-        success: false,
-        error: access.status === 404 ? access.error : "This user's achievements are private",
-      });
-      return;
-    }
-
-    const [allAchievements, userAchievements, stats] = await Promise.all([
-      ensureAchievementCatalogue(),
-      prisma.userAchievement.findMany({ where: { userId } }),
-      loadAchievementStats(userId),
-    ]);
-
-    const unlockedMap = new Map(
-      userAchievements.map((ua) => [ua.achievementId, ua]),
-    );
-
-    const result = allAchievements.map((achievement) =>
-      serializeAchievement(achievement, unlockedMap.get(achievement.id), stats),
-    );
-
-    res.json({ success: true, data: result });
-  } catch (error) {
-    if (handleAuthError(res, error)) return;
-    console.error('Get achievements error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

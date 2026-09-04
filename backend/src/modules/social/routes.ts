@@ -5,7 +5,7 @@ import { authenticate } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { getRankTitle } from '../../lib/rank';
 import { handleAuthError, handleZodError } from '../../lib/errors';
-import { getFriendIds, getFriendSessions } from '../../services/friendshipService';
+import { getFriendIds } from '../../services/friendshipService';
 import { resolveProfileAccess } from '../../services/profileAccess';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
 
@@ -780,119 +780,6 @@ socialRouter.get('/social/leaderboard', async (req: Request, res: Response) => {
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('Leaderboard error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-socialRouter.get('/social/leaderboard/weekly', async (req: Request, res: Response) => {
-  try {
-    const userId = authenticate(req);
-
-    const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    weekStart.setHours(0, 0, 0, 0);
-
-    const rawResults = await prisma.session.groupBy({
-      by: ['userId'],
-      where: {
-        type: 'focus',
-        completedAt: { gte: weekStart },
-      },
-      _count: { id: true },
-      _sum: { durationSeconds: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: 100,
-    });
-
-    const visibleWeekly = await visibleLeaderboardIds(rawResults.map((r) => r.userId), userId);
-    const results = rawResults.filter((r) => visibleWeekly.has(r.userId));
-
-    const userIds = results.map((r) => r.userId);
-    const users = await prisma.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, username: true, avatarUrl: true },
-    });
-
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    const userRank = results.findIndex((r) => r.userId === userId) + 1;
-
-    const leaderboard = results.map((r, index) => ({
-      rank: index + 1,
-      userId: r.userId,
-      username: userMap.get(r.userId)?.username || 'Unknown',
-      avatarUrl: userMap.get(r.userId)?.avatarUrl || null,
-      pomodoros: r._count.id,
-      totalSeconds: r._sum.durationSeconds || 0,
-      isMe: r.userId === userId,
-    }));
-
-    res.json({
-      success: true,
-      data: { leaderboard, myRank: userRank || leaderboard.length + 1 },
-    });
-  } catch (error) {
-    if (handleAuthError(res, error)) return;
-    console.error('Leaderboard error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-socialRouter.get('/social/leaderboard/streak', async (req: Request, res: Response) => {
-  try {
-    const userId = authenticate(req);
-
-    // Ranked from User — the single source of truth for streaks (see the note in
-    // modules/goals/handler.ts). Opt-outs are filtered in the query rather than
-    // after `take`, so hidden users no longer consume leaderboard slots.
-    const streaks = await prisma.user.findMany({
-      where: { OR: [{ showOnLeaderboard: true }, { id: userId }] },
-      orderBy: { currentStreak: 'desc' },
-      take: 100,
-      select: {
-        id: true,
-        username: true,
-        avatarUrl: true,
-        currentStreak: true,
-        longestStreak: true,
-      },
-    });
-
-    const userRank = streaks.findIndex((s) => s.id === userId) + 1;
-
-    const leaderboard = streaks.map((s, index) => ({
-      rank: index + 1,
-      userId: s.id,
-      username: s.username,
-      avatarUrl: s.avatarUrl,
-      currentStreak: s.currentStreak,
-      longestStreak: s.longestStreak,
-      isMe: s.id === userId,
-    }));
-
-    res.json({
-      success: true,
-      data: { leaderboard, myRank: userRank || leaderboard.length + 1 },
-    });
-  } catch (error) {
-    if (handleAuthError(res, error)) return;
-    console.error('Streak leaderboard error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-socialRouter.get('/social/friend/:userId/sessions', async (req: Request, res: Response) => {
-  try {
-    const requestingUserId = authenticate(req);
-    const { userId } = req.params;
-    const sessions = await getFriendSessions(requestingUserId, userId);
-    res.json({ success: true, data: sessions });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'User not found') {
-      res.status(404).json({ success: false, error: 'User not found' });
-      return;
-    }
-    if (handleAuthError(res, error)) return;
-    console.error('Friend sessions error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

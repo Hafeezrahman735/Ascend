@@ -463,37 +463,6 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
     }
   });
 
-  router.get('/timer/active', async (req: Request, res: Response) => {
-    try {
-      const userId = authenticate(req);
-      const state = await prisma.timerState.findUnique({ where: { userId } });
-
-      if (!state) {
-        res.json({ success: true, data: { phase: 'idle' } });
-        return;
-      }
-
-      res.json({
-        success: true,
-        data: {
-          phase: state.phase,
-          phaseType: state.phaseType,
-          totalSeconds: state.totalSeconds,
-          remainingSeconds: state.remainingSeconds,
-          isRunning: state.isRunning,
-          startedAt: state.startedAt?.getTime() ?? null,
-          pausedAt: state.pausedAt?.getTime() ?? null,
-          pomodoroCount: state.pomodoroCount,
-          taskLabel: state.taskLabel,
-        },
-      });
-    } catch (err) {
-      if (handleAuthError(res, err)) return;
-      console.error('Timer active error:', err);
-      res.status(500).json({ success: false, error: 'Internal server error' });
-    }
-  });
-
   router.get('/timer/sessions', async (req: Request, res: Response) => {
     try {
       const userId = authenticate(req);

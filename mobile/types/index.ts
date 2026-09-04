@@ -375,8 +375,6 @@ export interface TaskAnalytics {
 
   /** Share of sessions that ran to (near) their planned length. */
   fullSessionRate: number;
-  /** @deprecated Misnamed alias of `fullSessionRate` — do not add new readers. */
-  completionRate: number;
 
   /** 100 when actual matched the estimate, falling to 0 as it deviates. */
   estimationAccuracy: number | null;

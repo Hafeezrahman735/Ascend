@@ -20,17 +20,6 @@ export const darkColors = {
   inactive: '#2E2C50',
   border: '#2C2C6A',
 
-  // Legacy dark*/light* aliases — kept so existing call sites resolve.
-  // In dark mode they map to the dark equivalents.
-  darkBg: '#08081A',
-  lightBg: '#08081A',
-  darkCard: '#10103A',
-  lightCard: '#10103A',
-  darkText: '#B8AEFF',
-  lightText: '#B8AEFF',
-  darkSubtext: '#6B6899',
-  lightSubtext: '#6B6899',
-
   success: '#00E5C3',
   warning: '#F59E0B',
   error: '#EF4444',
@@ -56,23 +45,8 @@ export const lightColors: typeof darkColors = {
   inactive: '#EAD5C8',   // progress rails, empty track
   border: '#E8DDD5',   // card borders, dividers
 
-  // Legacy aliases map to the light equivalents so call sites theme correctly.
-  darkBg: '#FEFAF7',
-  lightBg: '#FEFAF7',
-  darkCard: '#FFFFFF',
-  lightCard: '#FFFFFF',
-  darkText: '#3A2218',
-  lightText: '#3A2218',
-  darkSubtext: '#9A8070',
-  lightSubtext: '#9A8070',
-
   success: '#2D8A6A',
   warning: '#D4820A',   // amber readable on white
   error: '#D04070',   // rose readable on white
   activeGreen: '#2D8A6A',
 };
-
-// Backward-compatible static export. Defaults to the dark palette so any module
-// that reads Colors at load time (or hasn't been migrated to useTheme) still
-// renders the original Deep Focus Midnight look.
-export const Colors = darkColors;

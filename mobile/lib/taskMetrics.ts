@@ -1,7 +1,6 @@
 import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
-import { calcDaysUntilDue } from '../store/selectors/tasks';
-import { parseLocalDate } from '../utils/date';
+import { daysUntilDue, parseLocalDate } from '../utils/date';
 import type { ThemeColors } from '../hooks/useTheme';
 
 /**
@@ -24,6 +23,20 @@ export function getMonday(date: Date): Date {
   d.setHours(0, 0, 0, 0);
   return d;
 }
+/**
+ * Whole days until a task is due; null when it has no date or a malformed one.
+ *
+ * Delegates rather than computing. The local-midnight subtraction this used to
+ * do returned -0 across a DST boundary, and `-0 < 0` is false, so every overdue
+ * check downstream silently failed on that one day of the year.
+ *
+ * Moved here from store/selectors/tasks.ts, which existed to serve a derived-
+ * hook layer that no longer has any callers. This was its only consumer.
+ */
+export function calcDaysUntilDue(task: Task, now: Date = new Date()): number | null {
+  return daysUntilDue(task.dueDate, now);
+}
+
 export function isToday(ts: number): boolean {
   const d = new Date(ts); const n = new Date();
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();

@@ -57,44 +57,6 @@ notificationsRouter.get('/notifications', async (req: Request, res: Response) =>
   }
 });
 
-notificationsRouter.patch('/notifications/:id/read', async (req: Request, res: Response) => {
-  try {
-    const userId = authenticate(req);
-    const { id } = req.params;
-
-    const notification = await prisma.notification.findFirst({
-      where: { id, userId },
-    });
-    if (!notification) {
-      res.status(404).json({ success: false, error: 'Notification not found' });
-      return;
-    }
-
-    const updated = await prisma.notification.update({
-      where: { id },
-      data: { isRead: true },
-    });
-
-    res.json({ success: true, data: updated });
-  } catch (error) {
-    if (handleAuthError(res, error)) return;
-    console.error('Mark read error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-notificationsRouter.patch('/notifications/read-all', async (req: Request, res: Response) => {
-  try {
-    const userId = authenticate(req);
-    await prisma.notification.updateMany({ where: { userId, isRead: false }, data: { isRead: true } });
-    res.json({ success: true, data: { message: 'All notifications marked as read' } });
-  } catch (error) {
-    if (handleAuthError(res, error)) return;
-    console.error('Mark all read error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
 notificationsRouter.post('/notifications/read-all', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
@@ -103,22 +65,6 @@ notificationsRouter.post('/notifications/read-all', async (req: Request, res: Re
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('Mark all read error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-notificationsRouter.get('/notifications/unread-count', async (req: Request, res: Response) => {
-  try {
-    const userId = authenticate(req);
-
-    const count = await prisma.notification.count({
-      where: { userId, isRead: false },
-    });
-
-    res.json({ success: true, data: { unreadCount: count } });
-  } catch (error) {
-    if (handleAuthError(res, error)) return;
-    console.error('Unread count error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

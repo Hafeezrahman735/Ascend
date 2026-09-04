@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 import type { ThemeColors } from '../../hooks/useTheme';
-import type { CalendarItem, CalendarItemType } from '../../types';
+import type { CalendarItemType } from '../../types';
 
 /**
  * Presentation shared by every calendar view.
@@ -89,7 +89,6 @@ export function blockStyle(type: CalendarItemType, Colors: ThemeColors) {
   };
 }
 
-export const EMPTY_ITEMS: CalendarItem[] = [];
 
 export function getCalendarStyles(Colors: ThemeColors) {
   return StyleSheet.create({

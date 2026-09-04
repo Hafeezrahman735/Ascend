@@ -452,13 +452,6 @@ async function seedDemoUsers() {
       },
     });
 
-    // Streak row.
-    await prisma.streak.upsert({
-      where: { userId: user.id },
-      update: { currentStreak: u.currentStreak, longestStreak: u.longestStreak, lastSessionDate: day(0) },
-      create: { userId: user.id, currentStreak: u.currentStreak, longestStreak: u.longestStreak, lastSessionDate: day(0) },
-    });
-
     // Wipe previously-seeded generated content for this user so re-runs don't duplicate.
     await prisma.session.deleteMany({ where: { userId: user.id } });
     await prisma.task.deleteMany({ where: { userId: user.id } });

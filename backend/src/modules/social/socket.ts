@@ -14,10 +14,6 @@ declare module 'socket.io' {
 
 const activeUserSockets = new Map<string, Set<string>>();
 
-export function getActiveSocketUserIds(): Set<string> {
-  return new Set(activeUserSockets.keys());
-}
-
 export function setupSocialSocket(namespace: Namespace): void {
   namespace.use((socket, next) => {
     const token = socket.handshake.auth.token || socket.handshake.query.token;

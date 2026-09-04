@@ -25,6 +25,18 @@ async function befriend(a: TestUser, b: TestUser) {
   });
 }
 
+/**
+ * NOTE on cases that used to live here. They guarded three endpoints:
+ * `GET /analytics/summary/:userId`, `GET /social/friend/:userId/sessions` and
+ * `GET /achievements/:userId` — asserting each returned 403 rather than leaking
+ * when a privacy flag was off. All three have since been DELETED as dead code;
+ * not one had a caller anywhere in the app.
+ *
+ * The protection is now structural rather than conditional. An endpoint that
+ * does not exist cannot leak, which is strictly stronger than one that has to
+ * remember to check a flag — and remembering is exactly what the rest of this
+ * file exists to verify for the endpoints that DO remain.
+ */
 describe('publicProfile', () => {
   it('hides a profile from a stranger when it is off', async () => {
     const owner = await createUser();
@@ -106,38 +118,6 @@ describe('shareFocusStats', () => {
     expect(res.body.data.totalFocusTime ?? 0).toBe(0);
   });
 
-  it('blocks the analytics summary when it is off', async () => {
-    const owner = await createUser();
-    const friend = await createUser();
-    await setPrivacy(owner, { shareFocusStats: false });
-    await befriend(owner, friend);
-
-    const res = await authed(friend).get(`/analytics/summary/${owner.id}`);
-    expect(res.status).toBe(403);
-  });
-
-  it('returns no session rows when it is off', async () => {
-    // These rows carry taskLabel, so what leaked was not just how long someone
-    // focused but what they called the work.
-    const owner = await createUser();
-    const friend = await createUser();
-    await befriend(owner, friend);
-    await prisma.session.create({
-      data: {
-        userId: owner.id, type: 'focus', durationSeconds: 1500,
-        taskLabel: 'Divorce paperwork', completedAt: new Date(),
-      },
-    });
-
-    const before = await authed(friend).get(`/social/friend/${owner.id}/sessions`);
-    expect(before.status).toBe(200);
-    expect(before.body.data).toHaveLength(1);
-
-    await setPrivacy(owner, { shareFocusStats: false });
-    const after = await authed(friend).get(`/social/friend/${owner.id}/sessions`);
-    expect(after.status).toBe(200);
-    expect(after.body.data).toEqual([]);
-  });
 });
 
 describe('friendsCanSeeActivity', () => {
@@ -169,43 +149,5 @@ describe('friendsCanSeeActivity', () => {
 
     const res = await authed(me).get('/social/feed');
     expect(res.body.data).toHaveLength(1);
-  });
-});
-
-describe('GET /achievements/:userId', () => {
-  it('refuses a friends_only profile to a stranger', async () => {
-    // Was checking only privacySetting === 'private', so friends_only fell
-    // straight through and handed a stranger the full achievement set.
-    const owner = await createUser();
-    const stranger = await createUser();
-    await setPrivacy(owner, { privacySetting: 'friends_only' });
-
-    const res = await authed(stranger).get(`/achievements/${owner.id}`);
-    expect(res.status).toBe(403);
-  });
-
-  it('refuses when publicProfile is off', async () => {
-    const owner = await createUser();
-    const stranger = await createUser();
-    await setPrivacy(owner, { publicProfile: false });
-
-    const res = await authed(stranger).get(`/achievements/${owner.id}`);
-    expect(res.status).toBe(403);
-  });
-
-  it('allows a friend through', async () => {
-    const owner = await createUser();
-    const friend = await createUser();
-    await setPrivacy(owner, { privacySetting: 'friends_only' });
-    await befriend(owner, friend);
-
-    const res = await authed(friend).get(`/achievements/${owner.id}`);
-    expect(res.status).toBe(200);
-  });
-
-  it('404s for a user that does not exist', async () => {
-    const viewer = await createUser();
-    const res = await authed(viewer).get('/achievements/00000000-0000-4000-8000-000000000000');
-    expect(res.status).toBe(404);
   });
 });

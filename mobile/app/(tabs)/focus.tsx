@@ -78,7 +78,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
             width: 44,
             height: 44,
             borderRadius: 22,
-            backgroundColor: Colors.darkBg,
+            backgroundColor: Colors.bg,
             alignItems: 'center',
             justifyContent: 'center',
           }}
@@ -101,7 +101,7 @@ function StepperRow({ label, value, min, max, step, onChange }: {
             width: 44,
             height: 44,
             borderRadius: 22,
-            backgroundColor: Colors.darkBg,
+            backgroundColor: Colors.bg,
             alignItems: 'center',
             justifyContent: 'center',
           }}
@@ -131,7 +131,7 @@ function FocusStatCard({ value, valueColor, label }: {
   return (
     <View style={{
       flex: 1,
-      backgroundColor: Colors.darkCard,
+      backgroundColor: Colors.surface,
       borderRadius: Radius.lg,
       borderWidth: 1,
       borderColor: Colors.border,
@@ -447,7 +447,7 @@ export default function TimerScreen() {
   const [showTaskPicker, setShowTaskPicker] = useState(false);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.darkBg }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
       <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 4 }}>
 
         {/* HEADER */}
@@ -600,7 +600,7 @@ export default function TimerScreen() {
               width: 50,
               height: 50,
               borderRadius: 25,
-              backgroundColor: Colors.darkCard,
+              backgroundColor: Colors.surface,
               alignItems: 'center',
               justifyContent: 'center',
               borderWidth: 1,
@@ -662,7 +662,7 @@ export default function TimerScreen() {
               width: 50,
               height: 50,
               borderRadius: 25,
-              backgroundColor: Colors.darkCard,
+              backgroundColor: Colors.surface,
               alignItems: 'center',
               justifyContent: 'center',
               borderWidth: 1,
@@ -796,7 +796,7 @@ export default function TimerScreen() {
         <Modal visible={showTaskPicker} transparent animationType="slide" onRequestClose={() => setShowTaskPicker(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
             <View style={{
-              backgroundColor: Colors.darkCard,
+              backgroundColor: Colors.surface,
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
               padding: 24,
@@ -884,7 +884,7 @@ export default function TimerScreen() {
                     paddingHorizontal: selectedTaskId ? 14 : 24,
                     padding: 14,
                     borderRadius: 12,
-                    backgroundColor: Colors.darkBg,
+                    backgroundColor: Colors.bg,
                     alignItems: 'center',
                   }}
                 >
@@ -899,7 +899,7 @@ export default function TimerScreen() {
         <Modal visible={showDurationModal} transparent animationType="slide" onRequestClose={() => setShowDurationModal(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
             <View style={{
-              backgroundColor: Colors.darkCard,
+              backgroundColor: Colors.surface,
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
               padding: 24,
