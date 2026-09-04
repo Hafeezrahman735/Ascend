@@ -34,7 +34,7 @@ import { useGamification } from '../../store/hooks';
 import { useTimerStore } from '../../stores/timerStore';
 import { useSocialStore } from '../../stores/socialStore';
 import type { SocialPost, UserSocialStats, UserListItem } from '../../types';
-import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { useTheme } from '../../hooks/useTheme';
 import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
 import {
   getRank, getXpToNextRank, getXpProgressInRank,
@@ -64,10 +64,6 @@ import { Font } from '../../constants/typography';
 // that was duplicated from the backend.
 
 // ─── Local constants ──────────────────────────────────────────────────────────
-
-function groupAvatarBg(c: ThemeColors): Record<string, string> {
-  return { purple: c.primaryDim, teal: c.traceDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
-}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -128,15 +124,13 @@ function formatPostTime(iso: string): string {
 
 // ─── Social stats strip ───────────────────────────────────────────────────────
 
-function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
+function SocialStatsStrip({ stats, onFollowers, onFollowing }: {
   stats: UserSocialStats;
   onFollowers: () => void;
   onFollowing: () => void;
-  onFriends: () => void;
 }) {
   const Colors = useTheme();
   const { BORDER_SOFT } = Colors;
-  const GROUP_AVATAR_BG = groupAvatarBg(Colors);
   return (
     <View style={{
       flexDirection: 'row', marginTop: 14, paddingTop: 12,
@@ -161,41 +155,11 @@ function SocialStatsStrip({ stats, onFollowers, onFollowing, onFriends }: {
           Following
         </Text>
       </Pressable>
-
-      <View style={{ width: 0.5, backgroundColor: BORDER_SOFT }} />
-
-      <Pressable onPress={onFriends} style={{ flex: 1, alignItems: 'center' }}>
-        {stats.friendCount === 0 ? (
-          <Text style={{ color: Colors.primarySoft, fontSize: 11 }}>Find friends →</Text>
-        ) : (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {stats.friendPreviews.slice(0, 4).map((f, i) => (
-              <View key={f.userId} style={{
-                width: 24, height: 24, borderRadius: 8,
-                backgroundColor: GROUP_AVATAR_BG[f.avatarColor] ?? Colors.primaryDim,
-                borderWidth: 2, borderColor: Colors.surface,
-                alignItems: 'center', justifyContent: 'center',
-                marginLeft: i > 0 ? -6 : 0, zIndex: 4 - i,
-              }}>
-                <Text style={{ fontSize: 12 }}>{f.avatarEmoji}</Text>
-              </View>
-            ))}
-            {stats.friendCount > 4 && (
-              <Text style={{ color: Colors.primarySoft, fontSize: 10, marginLeft: 6 }}>
-                +{stats.friendCount - 4}
-              </Text>
-            )}
-          </View>
-        )}
-        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>
-          Friends
-        </Text>
-      </Pressable>
     </View>
   );
 }
 
-// ─── User list modal (followers / following / friends) ────────────────────────
+// ─── User list modal (followers / following) ──────────────────────────────────
 
 function UserListModal({ visible, title, items, isLoading, onClose, renderAction, onItemPress }: {
   visible: boolean;
@@ -512,7 +476,6 @@ interface HeroCardProps {
   socialStats?: UserSocialStats | null;
   onFollowersPress?: () => void;
   onFollowingPress?: () => void;
-  onFriendsPress?: () => void;
 }
 
 function HeroCard({
@@ -520,7 +483,7 @@ function HeroCard({
   totalSessions, totalFocusMinutes, longestStreak,
   xpProgress, xpToNextRank, nextRank,
   reduceMotion, onSettings,
-  socialStats, onFollowersPress, onFollowingPress, onFriendsPress,
+  socialStats, onFollowersPress, onFollowingPress,
 }: HeroCardProps) {
   const Colors = useTheme();
   const { GOLD_DIM, GOLD, BORDER_SOFT } = Colors;
@@ -622,12 +585,11 @@ function HeroCard({
       </View>
 
       {/* Social stats strip */}
-      {socialStats != null && onFollowersPress && onFollowingPress && onFriendsPress && (
+      {socialStats != null && onFollowersPress && onFollowingPress && (
         <SocialStatsStrip
           stats={socialStats}
           onFollowers={onFollowersPress}
           onFollowing={onFollowingPress}
-          onFriends={onFriendsPress}
         />
       )}
 
@@ -856,7 +818,6 @@ export default function ProfileScreen() {
   const [rankUpTier, setRankUpTier] = useState<RankTier | null>(null);
   const [showFollowers, setShowFollowers] = useState(false);
   const [showFollowing, setShowFollowing] = useState(false);
-  const [showFriends, setShowFriends] = useState(false);
 
   const prevRankRef = useRef<RankTier>(currentRank);
 
@@ -887,7 +848,6 @@ export default function ProfileScreen() {
     gamification.fetchAchievements();
     social.fetchUserSocialStats();
     social.fetchUserPosts();
-    social.loadFriends();
     useTimerStore.getState().fetchWeekSessions();
     // Load the saved avatar/profile so the hero card matches settings & social.
     if (auth.user) loadProfile(auth.user.id, auth.user.username);
@@ -949,10 +909,9 @@ export default function ProfileScreen() {
         nextRank={nextRank}
         reduceMotion={reduceMotion}
         onSettings={() => router.push('/settings')}
-        socialStats={social.userSocialStats ? { ...social.userSocialStats, friendCount: social.friends.length } : null}
+        socialStats={social.userSocialStats}
         onFollowersPress={() => { setShowFollowers(true); social.fetchFollowers(); }}
         onFollowingPress={() => { setShowFollowing(true); social.fetchFollowing(); }}
-        onFriendsPress={() => { setShowFriends(true); social.loadFriends(); }}
       />
 
       {/* Scrollable sections */}
@@ -998,22 +957,6 @@ export default function ProfileScreen() {
         isLoading={social.isLoadingFollowing}
         onClose={() => setShowFollowing(false)}
         onItemPress={(item) => { setShowFollowing(false); router.push(`/user/${item.userId}` as never); }}
-      />
-
-      {/* Friends modal */}
-      <UserListModal
-        visible={showFriends}
-        title="Friends"
-        items={social.friends.map(f => ({
-          userId: f.id,
-          displayName: f.username,
-          handle: f.username.toLowerCase().replace(/\s/g, ''),
-          avatarEmoji: f.avatarEmoji,
-          rank: '',
-        }))}
-        isLoading={social.isLoadingFriends}
-        onClose={() => setShowFriends(false)}
-        onItemPress={(item) => { setShowFriends(false); router.push(`/user/${item.userId}` as never); }}
       />
 
       {/* Rank-up overlay */}

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { User } from '../types';
 import { setTokens, clearTokens, api, setOnAuthExpired } from '../services/api';
-import { reconnectTimerSocket, disconnectTimerSocket, disconnectSocialSocket } from '../services/socket';
+import { reconnectTimerSocket, disconnectTimerSocket } from '../services/socket';
 import { clearSessionHistory } from '../store/sync';
 import { useGamificationStore } from './gamificationStore';
 import { useTimerStore } from './timerStore';
@@ -111,7 +111,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
     } finally {
       disconnectTimerSocket();
-      disconnectSocialSocket();
       clearTokens();
       await clearSessionHistory();
       if (userId) {
@@ -159,7 +158,6 @@ setOnAuthExpired(() => {
   if (!useAuthStore.getState().isAuthenticated) return;
   log('[auth] session expired — signing out');
   disconnectTimerSocket();
-  disconnectSocialSocket();
   useGamificationStore.getState().reset();
   useAuthStore.setState({
     user: null,

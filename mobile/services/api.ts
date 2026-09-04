@@ -184,7 +184,7 @@ function refreshAccessToken(): Promise<boolean> {
  */
 export type ApiErrorKind = 'offline' | 'timeout' | 'server' | 'unauthorized' | 'invalid-response';
 
-// A type alias rather than an interface: some endpoints (e.g. /social/feed) put
+// A type alias rather than an interface: some endpoints (e.g. /social/posts) put
 // extra fields like nextCursor alongside `data`, and callers read them via a
 // Record cast. Interfaces have no implicit index signature, so that cast would
 // stop compiling.

@@ -2,7 +2,6 @@ import { Expo, ExpoPushMessage } from 'expo-server-sdk';
 import {
   TaskGoalCompletedEvent,
   AchievementUnlockedEvent,
-  FriendSessionStartedEvent,
   PostCreatedEvent,
 } from '../../middleware/eventBus';
 import { prisma } from '../../lib/prisma';
@@ -183,17 +182,6 @@ export async function handleAllNotifications(
         'Achievement unlocked',
         `You earned "${p.title}"`,
         'achievement.unlocked',
-      );
-      break;
-    }
-    case 'friend.session_started': {
-      const p = payload as FriendSessionStartedEvent;
-      await storeAndNotify(
-        p.userId,
-        'friend_focusing',
-        'Someone just started',
-        'A friend is in a focus session right now',
-        'friend.session_started',
       );
       break;
     }

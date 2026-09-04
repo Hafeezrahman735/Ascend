@@ -578,18 +578,6 @@ export default function SettingsScreen() {
               />
             }
           />
-          <Divider />
-          <SettingsRow
-            label="Friends Can See Activity"
-            rightComponent={
-              <Switch
-                value={settings.friendsCanSeeActivity}
-                onValueChange={(v) => { if (user) settings.update(user.id, { friendsCanSeeActivity: v }); }}
-                trackColor={{ false: Colors.inactive, true: Colors.primary }}
-                thumbColor="white"
-              />
-            }
-          />
         </SettingsCard>
 
         {/* Notifications */}
@@ -631,8 +619,8 @@ export default function SettingsScreen() {
           ) : null}
           <Divider />
           <SettingsRow
-            label="Friend Activity"
-            subtitle="Friends focusing, hitting goals & new posts"
+            label="Posts From People You Follow"
+            subtitle="When someone you follow shares a post"
             rightComponent={
               <Switch
                 value={settings.notifyFriendActivity}

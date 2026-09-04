@@ -325,7 +325,6 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
           publicProfile: user.publicProfile,
           showOnLeaderboard: user.showOnLeaderboard,
           shareFocusStats: user.shareFocusStats,
-          friendsCanSeeActivity: user.friendsCanSeeActivity,
         },
       });
     } catch (error) {
@@ -415,7 +414,6 @@ authRouter.patch('/auth/me/privacy', async (req: Request, res: Response) => {
       publicProfile: z.boolean().optional(),
       showOnLeaderboard: z.boolean().optional(),
       shareFocusStats: z.boolean().optional(),
-      friendsCanSeeActivity: z.boolean().optional(),
     });
     const data = schema.parse(req.body);
 
@@ -436,7 +434,6 @@ authRouter.patch('/auth/me/privacy', async (req: Request, res: Response) => {
         publicProfile: user.publicProfile,
         showOnLeaderboard: user.showOnLeaderboard,
         shareFocusStats: user.shareFocusStats,
-        friendsCanSeeActivity: user.friendsCanSeeActivity,
       },
     });
   } catch (error) {

@@ -6,10 +6,7 @@ export const EventTypes = {
   // belonged to the deleted session-target goal system and never fired.
   TASK_GOAL_COMPLETED: 'task_goal.completed',
   ACHIEVEMENT_UNLOCKED: 'achievement.unlocked',
-  FRIEND_SESSION_STARTED: 'friend.session_started',
   FEED_CREATE: 'feed.create',
-  FRIEND_REQUEST_SENT: 'friend_request.sent',
-  FRIEND_REQUEST_ACCEPTED: 'friend_request.accepted',
   POST_CREATED: 'post.created',
 } as const;
 
@@ -44,13 +41,6 @@ export interface AchievementUnlockedEvent {
   unlockedAt: string;
 }
 
-export interface FriendSessionStartedEvent {
-  userId: string;
-  friendId?: string;
-  taskLabel: string | null;
-  startedAt: string;
-}
-
 /**
  * Personal accomplishment events. `task_completed` and `goal_completed` were
  * added so the Recent Activity log covers finishing work, not only time spent —
@@ -68,22 +58,6 @@ export interface FeedCreateEvent {
   userId: string;
   eventType: FeedEventType;
   payload: Record<string, unknown>;
-}
-
-export interface FriendRequestSentEvent {
-  requestId: string;
-  fromUserId: string;
-  fromUsername: string;
-  fromLevel: number;
-  targetUserId: string;
-}
-
-export interface FriendRequestAcceptedEvent {
-  friendshipId: string;
-  requesterId: string;
-  addresseeId: string;
-  requesterUsername: string;
-  addresseeUsername: string;
 }
 
 export interface PostCreatedEvent {

@@ -5,9 +5,23 @@ import type { SessionRecord } from '../store/sync';
 
 const HOUR = 60 * 60 * 1000;
 
+/**
+ * Midday today, not `Date.now() - 1h`.
+ *
+ * The fixture used to subtract an hour from now, which lands on YESTERDAY for
+ * any run between midnight and 01:00 — so these tests passed all day and failed
+ * in the small hours. Anchoring to noon keeps every "today" session inside the
+ * local day no matter when the suite runs.
+ */
+function middayToday(): number {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  return d.getTime();
+}
+
 function session(over: Partial<SessionRecord> = {}): SessionRecord {
   return {
-    completedAt: Date.now() - HOUR,
+    completedAt: middayToday(),
     durationSeconds: 25 * 60,
     taskLabel: null,
     taskId: null,
@@ -56,7 +70,7 @@ describe('computeTodayTrace', () => {
     // The card says "today". Yesterday's work belongs on yesterday's card.
     const trace = computeTodayTrace({
       ...base,
-      sessionHistory: [session(), session({ completedAt: Date.now() - 48 * HOUR })],
+      sessionHistory: [session(), session({ completedAt: middayToday() - 48 * HOUR })],
     });
     expect(trace.sessionCount).toBe(1);
   });
@@ -65,8 +79,8 @@ describe('computeTodayTrace', () => {
     const trace = computeTodayTrace({
       ...base,
       tasks: [
-        task({ isCompleted: true, completedAt: new Date().toISOString() }),
-        task({ isCompleted: true, completedAt: new Date(Date.now() - 48 * HOUR).toISOString() }),
+        task({ isCompleted: true, completedAt: new Date(middayToday()).toISOString() }),
+        task({ isCompleted: true, completedAt: new Date(middayToday() - 48 * HOUR).toISOString() }),
         task({ isCompleted: false }),
       ],
     });
@@ -105,7 +119,7 @@ describe('isTraceEmpty', () => {
     // Clearing tasks without running the timer is still showing up.
     const trace = computeTodayTrace({
       ...base,
-      tasks: [task({ isCompleted: true, completedAt: new Date().toISOString() })],
+      tasks: [task({ isCompleted: true, completedAt: new Date(middayToday()).toISOString() })],
     });
     expect(isTraceEmpty(trace)).toBe(false);
   });

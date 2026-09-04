@@ -8,7 +8,6 @@ export interface SettingsData {
   publicProfile: boolean;
   showOnLeaderboard: boolean;
   shareFocusStats: boolean;
-  friendsCanSeeActivity: boolean;
   // Notifications — session/friend/achievement sync to backend notificationPrefs.
   notifySessionComplete: boolean;
   notifyDailyReminder: boolean;
@@ -42,7 +41,6 @@ const DEFAULTS: SettingsData = {
   publicProfile: true,
   showOnLeaderboard: true,
   shareFocusStats: true,
-  friendsCanSeeActivity: true,
   notifySessionComplete: true,
   notifyDailyReminder: true,
   notifyFriendActivity: true,
@@ -56,7 +54,7 @@ const DEFAULTS: SettingsData = {
 };
 
 // Which keys belong to each backend surface.
-const PRIVACY_KEYS = ['publicProfile', 'showOnLeaderboard', 'shareFocusStats', 'friendsCanSeeActivity'] as const;
+const PRIVACY_KEYS = ['publicProfile', 'showOnLeaderboard', 'shareFocusStats'] as const;
 const NOTIF_KEYS = ['notifySessionComplete', 'notifyFriendActivity', 'notifyAchievements'] as const;
 const REMINDER_KEYS = ['notifyDailyReminder', 'dailyReminderHour', 'dailyReminderMinute'] as const;
 
@@ -103,7 +101,6 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
           publicProfile?: boolean;
           showOnLeaderboard?: boolean;
           shareFocusStats?: boolean;
-          friendsCanSeeActivity?: boolean;
         }>('/auth/me'),
         api.get<{ sessions?: boolean; friends?: boolean; achievements?: boolean }>('/notifications/preferences'),
       ]);
@@ -113,7 +110,6 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
         if (typeof me.data.publicProfile === 'boolean') merged.publicProfile = me.data.publicProfile;
         if (typeof me.data.showOnLeaderboard === 'boolean') merged.showOnLeaderboard = me.data.showOnLeaderboard;
         if (typeof me.data.shareFocusStats === 'boolean') merged.shareFocusStats = me.data.shareFocusStats;
-        if (typeof me.data.friendsCanSeeActivity === 'boolean') merged.friendsCanSeeActivity = me.data.friendsCanSeeActivity;
       }
       if (prefs.success && prefs.data) {
         if (typeof prefs.data.sessions === 'boolean') merged.notifySessionComplete = prefs.data.sessions;
@@ -139,7 +135,6 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
       publicProfile: state.publicProfile,
       showOnLeaderboard: state.showOnLeaderboard,
       shareFocusStats: state.shareFocusStats,
-      friendsCanSeeActivity: state.friendsCanSeeActivity,
       notifySessionComplete: state.notifySessionComplete,
       notifyDailyReminder: state.notifyDailyReminder,
       notifyFriendActivity: state.notifyFriendActivity,
@@ -162,7 +157,6 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
         publicProfile: data.publicProfile,
         showOnLeaderboard: data.showOnLeaderboard,
         shareFocusStats: data.shareFocusStats,
-        friendsCanSeeActivity: data.friendsCanSeeActivity,
       }).catch((err) => console.warn('[settings] privacy sync failed:', err));
     }
 

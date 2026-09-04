@@ -53,7 +53,6 @@ function requireUrl(name: string, value: string | undefined): string {
 export const Config = {
   API_URL: requireUrl('EXPO_PUBLIC_API_URL', process.env.EXPO_PUBLIC_API_URL),
   WS_URL: requireUrl('EXPO_PUBLIC_WS_URL', process.env.EXPO_PUBLIC_WS_URL),
-  SOCIAL_WS_URL: requireUrl('EXPO_PUBLIC_SOCIAL_WS_URL', process.env.EXPO_PUBLIC_SOCIAL_WS_URL),
 
   // Timer defaults
   DEFAULT_FOCUS_MINUTES: 25,

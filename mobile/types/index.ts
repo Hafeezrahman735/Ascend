@@ -37,24 +37,6 @@ export interface GoalProgressResponse {
   };
 }
 
-export interface Friend {
-  id: string;
-  username: string;
-  avatarUrl: string | null;
-  avatarEmoji: string;
-  privacySetting?: string;
-  friendshipId?: string;
-  createdAt?: string;
-}
-
-export interface FriendRequest {
-  id: string;
-  requesterId: string;
-  addresseeId: string;
-  status: 'pending' | 'accepted';
-  requester: { id: string; username: string; avatarUrl: string | null };
-}
-
 export interface LeaderboardEntry {
   rank: number;
   userId: string;
@@ -455,50 +437,13 @@ export interface TimeReport {
   approxShare: number;
 }
 
-export interface FeedEvent {
-  id: string;
-  userId: string;
-  username: string;
-  displayName?: string;
-  eventType: 'session_completed' | 'achievement_unlocked' | 'streak_milestone' | 'level_up';
-  payload: FeedEventPayload;
-  createdAt: string;
-}
-
-export interface FeedEventPayload {
-  durationMinutes?: number;
-  taskTitle?: string;
-  xpEarned?: number;
-  streak?: number;
-  achievementTitle?: string;
-  achievementIcon?: string;
-  achievementDescription?: string;
-  streakDays?: number;
-  newLevel?: number;
-  levelTitle?: string;
-}
-
 export interface UserSearchResult {
   id: string;
   username: string;
   avatarUrl: string | null;
   avatarEmoji: string;
   level: number;
-  relationshipStatus?: 'none' | 'pending_sent' | 'pending_received' | 'friends';
   isFollowing?: boolean;
-}
-
-export interface FriendProfile {
-  id: string;
-  username: string;
-  avatarUrl: string | null;
-  level: number;
-  currentStreak: number;
-  longestStreak: number;
-  totalSessions: number;
-  totalFocusTime: number;
-  recentAchievements: Achievement[];
-  recentFeedEvents: FeedEvent[];
 }
 
 export type PostType = 'session_recap' | 'achievement_unlock' | 'streak_milestone' | 'accountability' | 'free_post';
@@ -651,19 +596,10 @@ export interface PublicUserProfile {
   recentAchievements: Achievement[];
 }
 
-export interface FriendPreview {
-  userId: string;
-  displayName: string;
-  avatarEmoji: string;
-  avatarColor: GroupColor;
-}
-
 export interface UserSocialStats {
   userId: string;
   followerCount: number;
   followingCount: number;
-  friendCount: number;
-  friendPreviews: FriendPreview[];
 }
 
 export interface UserListItem {

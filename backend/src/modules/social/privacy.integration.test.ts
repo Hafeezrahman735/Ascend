@@ -8,8 +8,9 @@ import { prisma } from '../../lib/prisma';
  * Each of these fails against the code as it was before the security pass:
  * `publicProfile` was consulted in one endpoint out of five, `shareFocusStats`
  * was bypassable by tapping Follow and ignored entirely by two endpoints that
- * return the same class of data, and `friendsCanSeeActivity` had no read path
- * at all on the feed it names.
+ * return the same class of data. (A third flag, `friendsCanSeeActivity`, has
+ * since been removed outright: every route that read it is gone, and a switch
+ * in Settings that controls nothing is worse than no switch.)
  *
  * A stored column nobody reads is not a privacy setting, and the only way to
  * tell the difference is a test that asks the route.
@@ -17,12 +18,6 @@ import { prisma } from '../../lib/prisma';
 
 async function setPrivacy(user: TestUser, patch: Record<string, boolean | string>) {
   await prisma.user.update({ where: { id: user.id }, data: patch });
-}
-
-async function befriend(a: TestUser, b: TestUser) {
-  await prisma.friendship.create({
-    data: { requesterId: a.id, addresseeId: b.id, status: 'accepted' },
-  });
 }
 
 /**
@@ -47,14 +42,19 @@ describe('publicProfile', () => {
     expect(res.status).toBe(403);
   });
 
-  it('still shows it to an accepted friend', async () => {
+  it('is absolute — a follower does not get in either', async () => {
+    // This used to carve out an exception for accepted friends. Friendships are
+    // gone, and following deliberately does NOT inherit that exception: a follow
+    // is unilateral, so honouring it would let anyone switch off someone else's
+    // privacy setting just by tapping Follow.
     const owner = await createUser();
-    const friend = await createUser();
+    const follower = await createUser();
     await setPrivacy(owner, { publicProfile: false });
-    await befriend(owner, friend);
+    const follow = await authed(follower).post(`/social/follow/${owner.id}`);
+    expect(follow.status).toBe(200);
 
-    const res = await authed(friend).get(`/social/users/${owner.id}`);
-    expect(res.status).toBe(200);
+    const res = await authed(follower).get(`/social/users/${owner.id}`);
+    expect(res.status).toBe(403);
   });
 
   it('never hides your own profile from you', async () => {
@@ -120,34 +120,3 @@ describe('shareFocusStats', () => {
 
 });
 
-describe('friendsCanSeeActivity', () => {
-  it('drops a friend from your feed when they turn it off', async () => {
-    const me = await createUser();
-    const friend = await createUser();
-    await befriend(me, friend);
-
-    await prisma.feedEvent.create({
-      data: { userId: friend.id, eventType: 'session_completed', payload: { durationMinutes: 25 } },
-    });
-
-    const before = await authed(me).get('/social/feed');
-    expect(before.status).toBe(200);
-    expect(before.body.data).toHaveLength(1);
-
-    await setPrivacy(friend, { friendsCanSeeActivity: false });
-    const after = await authed(me).get('/social/feed');
-    expect(after.body.data).toEqual([]);
-  });
-
-  it('still shows you your own events when you turn it off', async () => {
-    // The setting governs who else sees you, not whether you can see yourself.
-    const me = await createUser();
-    await setPrivacy(me, { friendsCanSeeActivity: false });
-    await prisma.feedEvent.create({
-      data: { userId: me.id, eventType: 'session_completed', payload: { durationMinutes: 25 } },
-    });
-
-    const res = await authed(me).get('/social/feed');
-    expect(res.body.data).toHaveLength(1);
-  });
-});

@@ -4,7 +4,6 @@ import { getAccessToken, ensureFreshAccessToken } from './api';
 import { log } from '../lib/log';
 
 let timerSocket: Socket | null = null;
-let socialSocket: Socket | null = null;
 
 const defaultOptions = {
   transports: ['websocket'],
@@ -87,32 +86,6 @@ export function reconnectTimerSocket(): void {
   connectTimerSocket();
 }
 
-export function connectSocialSocket(): Socket {
-  // Returns the existing socket whenever one exists — not only when it is
-  // already connected. Checking `.connected` leaked a new socket every time this
-  // was called while the previous one was still connecting or reconnecting.
-  if (socialSocket) return socialSocket;
-
-  socialSocket = io(`${Config.SOCIAL_WS_URL}/social`, {
-    ...defaultOptions,
-    auth: authProvider,
-  });
-
-  socialSocket.on('connect', () => {
-    log('[socket] social CONNECTED — id:', socialSocket?.id);
-  });
-
-  socialSocket.on('disconnect', (reason) => {
-    log('[socket] social disconnected:', reason);
-  });
-
-  socialSocket.on('connect_error', (error) => {
-    handleSocketAuthError('social', error.message);
-  });
-
-  return socialSocket;
-}
-
 export function disconnectTimerSocket(): void {
   if (timerSocket) {
     timerSocket.removeAllListeners();
@@ -121,13 +94,3 @@ export function disconnectTimerSocket(): void {
   }
 }
 
-export function disconnectSocialSocket(): void {
-  if (socialSocket) {
-    socialSocket.disconnect();
-    socialSocket = null;
-  }
-}
-
-export function getSocialSocket(): Socket | null {
-  return socialSocket;
-}

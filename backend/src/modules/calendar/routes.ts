@@ -526,10 +526,10 @@ calendarRouter.delete('/events/:id', async (req: Request, res: Response) => {
 // Personal accomplishment log: sessions, tasks, goals, achievements, streaks and
 // level-ups in one chronological list.
 //
-// Deliberately SELF-ONLY and separate from GET /social/feed, which merges the
-// caller's events with the people they follow for a reactable activity feed.
-// Same table, two different questions: "what have I done" vs "what is everyone
-// doing". Surfaced as a Recent Activity section rather than its own tab.
+// Deliberately SELF-ONLY. There used to be a GET /social/feed beside this that
+// merged your events with other people's; it had no screen and was removed.
+// This one has one — the Tasks tab's Recent Activity card — so it is now the
+// only reader of feed_events, and lib/activityLog.ts is the only writer.
 calendarRouter.get('/activity', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);

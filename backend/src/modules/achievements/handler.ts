@@ -6,7 +6,6 @@ import {
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
-import { getFriendCount } from '../../services/friendshipService';
 
 /**
  * Unlock an achievement, returning null if the user already had it.
@@ -171,7 +170,11 @@ export async function handleSessionCompleted(
   });
   const unlockedIds = new Set(userAchievements.map((ua) => ua.achievementId));
 
-  const friendCount = await getFriendCount(userId);
+  // 'social-butterfly' used to count accepted friendships. Friendships are gone —
+  // no screen could ever create one — so it counts follows instead. Same idea,
+  // same threshold, on the social graph that actually exists. Anyone who already
+  // unlocked it keeps it; this only decides FUTURE unlocks.
+  const followingCount = await prisma.follow.count({ where: { followerId: userId } });
 
   for (const achievement of allAchievements) {
     if (unlockedIds.has(achievement.id)) continue;
@@ -180,7 +183,7 @@ export async function handleSessionCompleted(
 
     switch (achievement.key) {
       case 'social-butterfly':
-        shouldUnlock = friendCount >= 5;
+        shouldUnlock = followingCount >= 5;
         break;
       case 'early-bird':
         {

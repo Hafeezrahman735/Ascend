@@ -67,7 +67,7 @@ const achievements: AchievementSeed[] = [
   // count), not counter thresholds, so `threshold` is an unused placeholder of 1
   // and their keys are listed in BEHAVIOURAL_KEYS so the generic threshold check
   // skips them. Category is cosmetic here — it only groups them in the UI.
-  { key: 'social-butterfly', title: 'Social Butterfly', description: 'Have 5 or more friends', icon: '🦋', xpReward: 150, category: 'SESSIONS', threshold: 1 },
+  { key: 'social-butterfly', title: 'Social Butterfly', description: 'Follow 5 or more people', icon: '🦋', xpReward: 150, category: 'SESSIONS', threshold: 1 },
   { key: 'early-bird', title: 'Early Bird', description: 'Complete a focus session before 8am', icon: '🌅', xpReward: 100, category: 'SESSIONS', threshold: 1 },
   { key: 'night-owl', title: 'Night Owl', description: 'Complete a focus session after 10pm', icon: '🦉', xpReward: 100, category: 'SESSIONS', threshold: 1 },
   { key: 'speed-runner', title: 'Speed Runner', description: 'Complete 8 focus sessions in a single day', icon: '⚡', xpReward: 300, category: 'SESSIONS', threshold: 1 },

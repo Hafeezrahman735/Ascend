@@ -21,11 +21,9 @@ import { timeReportRouter } from './modules/timereport/routes';
 import { calendarRouter, calendarPublicRouter } from './modules/calendar/routes';
 import { setupTimerHandlers } from './modules/timer/handlers';
 import { setupTimerRoutes } from './modules/timer/routes';
-import { setupSocialSocket } from './modules/social/socket';
 import { handleSessionCompleted as handleAchievementsSession } from './modules/achievements/handler';
 import { handleAllNotifications } from './modules/notifications/handler';
-import { handleSocialBroadcast, handleFeedCreate } from './modules/social/handler';
-import { emitFriendRequestReceived, emitFriendRequestAccepted } from './modules/social/socket';
+import { recordActivityEvent } from './lib/activityLog';
 
 // CORS allow-list. Native mobile apps send no Origin header (CORS is a browser
 // rule) so they are unaffected; this gates browser / Expo-web clients.
@@ -227,7 +225,6 @@ app.use('/', timeReportRouter);
 app.use('/', calendarRouter);
 
 const timerNamespace = io.of('/timer');
-const socialNamespace = io.of('/social');
 
 setupTimerHandlers(timerNamespace);
 
@@ -237,12 +234,9 @@ setupTimerRoutes(timerRouter, timerNamespace);
 app.use('/timer/complete', sessionLimiter);
 app.use('/', timerRouter);
 
-setupSocialSocket(socialNamespace);
-
 eventBus.on(EventTypes.SESSION_COMPLETED, (payload) => {
   handleAchievementsSession(payload).catch((err) => console.error('Achievements handler error:', err));
   handleAllNotifications(EventTypes.SESSION_COMPLETED, payload).catch((err) => console.error('Notifications handler error:', err));
-  handleSocialBroadcast(io, EventTypes.SESSION_COMPLETED, payload).catch((err) => console.error('Social broadcast error:', err));
 });
 
 // Replaces the removed GOAL_COMPLETED wiring. Same user-facing outcome — a
@@ -252,25 +246,15 @@ eventBus.on(EventTypes.TASK_GOAL_COMPLETED, (payload) => {
   handleAllNotifications(EventTypes.TASK_GOAL_COMPLETED, payload).catch((err) => console.error('Notifications handler error:', err));
 });
 
+// Persists the personal activity log that GET /activity reads and the Tasks
+// tab's Recent Activity card renders. Same table as before; what went away is
+// the socket fan-out beside it, which had no listener.
+eventBus.on(EventTypes.FEED_CREATE, (payload) => {
+  recordActivityEvent(payload as never).catch((err) => console.error('Activity log error:', err));
+});
+
 eventBus.on(EventTypes.ACHIEVEMENT_UNLOCKED, (payload) => {
   handleAllNotifications(EventTypes.ACHIEVEMENT_UNLOCKED, payload).catch((err) => console.error('Notifications handler error:', err));
-});
-
-eventBus.on(EventTypes.FRIEND_SESSION_STARTED, (payload) => {
-  handleAllNotifications(EventTypes.FRIEND_SESSION_STARTED, payload).catch((err) => console.error('Notifications handler error:', err));
-  handleSocialBroadcast(io, EventTypes.FRIEND_SESSION_STARTED, payload).catch((err) => console.error('Social broadcast error:', err));
-});
-
-eventBus.on(EventTypes.FEED_CREATE, (payload) => {
-  handleFeedCreate(io, payload as never).catch((err) => console.error('Feed create error:', err));
-});
-
-eventBus.on(EventTypes.FRIEND_REQUEST_SENT, (payload) => {
-  emitFriendRequestReceived(io, payload as never);
-});
-
-eventBus.on(EventTypes.FRIEND_REQUEST_ACCEPTED, (payload) => {
-  emitFriendRequestAccepted(io, payload as never);
 });
 
 eventBus.on(EventTypes.POST_CREATED, (payload) => {

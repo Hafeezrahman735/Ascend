@@ -21,14 +21,11 @@ const PRIVACY_SELECT = {
   privacySetting: true,
   publicProfile: true,
   shareFocusStats: true,
-  friendsCanSeeActivity: true,
 } as const;
 
 export interface ProfileAccessGrant {
   ok: true;
   isSelf: boolean;
-  /** True when the viewer is an accepted friend. */
-  isFriend: boolean;
   /**
    * Focus stats — totals, streaks, session rows and their task labels — must be
    * withheld. Note this is NOT relaxed by following: following is unilateral
@@ -37,28 +34,11 @@ export interface ProfileAccessGrant {
    * privacy setting by tapping Follow.
    */
   hideStats: boolean;
-  /** Activity — the feed of what they have been doing — must be withheld. */
-  hideActivity: boolean;
 }
 
 export type ProfileAccess =
   | ProfileAccessGrant
   | { ok: false; status: 403 | 404; error: string };
-
-export async function areFriends(a: string, b: string): Promise<boolean> {
-  if (a === b) return true;
-  const friendship = await prisma.friendship.findFirst({
-    where: {
-      status: 'accepted',
-      OR: [
-        { requesterId: a, addresseeId: b },
-        { requesterId: b, addresseeId: a },
-      ],
-    },
-    select: { id: true },
-  });
-  return !!friendship;
-}
 
 /**
  * `privacySetting` and `publicProfile` are two overlapping mechanisms that both
@@ -77,27 +57,28 @@ export async function resolveProfileAccess(
   if (!target) return { ok: false, status: 404, error: 'User not found' };
 
   if (requesterId === targetId) {
-    return { ok: true, isSelf: true, isFriend: true, hideStats: false, hideActivity: false };
+    return { ok: true, isSelf: true, hideStats: false };
   }
 
-  const isFriend = await areFriends(requesterId, targetId);
-
-  // A fully private profile reveals nothing to a non-friend. 403 rather than
-  // 404 here, unlike private groups: the account's existence is already public
-  // via search and the leaderboards, so hiding it would be a lie the rest of the
-  // API immediately contradicts.
-  if (target.privacySetting === 'private' && !isFriend) {
-    return { ok: false, status: 403, error: 'This profile is private' };
-  }
-  if ((target.privacySetting === 'friends_only' || !target.publicProfile) && !isFriend) {
+  // A private profile reveals nothing. 403 rather than 404, unlike private
+  // groups: the account's existence is already public via search and the
+  // leaderboards, so hiding it would be a lie the rest of the API immediately
+  // contradicts.
+  //
+  // `friends_only` is treated exactly as `private`. It used to mean "unless you
+  // are an accepted friend", and friendships no longer exist — so the exception
+  // it carved out can never apply to anyone. Keeping the enum value means
+  // nobody's stored choice is silently rewritten to something LESS private; it
+  // simply resolves the only way it now can. Following deliberately does not
+  // open this door: a follow is unilateral, so honouring it would let anyone
+  // switch off someone else's privacy setting by tapping Follow.
+  if (target.privacySetting === 'private' || target.privacySetting === 'friends_only' || !target.publicProfile) {
     return { ok: false, status: 403, error: 'This profile is private' };
   }
 
   return {
     ok: true,
     isSelf: false,
-    isFriend,
     hideStats: !target.shareFocusStats,
-    hideActivity: !target.friendsCanSeeActivity,
   };
 }
