@@ -23,11 +23,9 @@ import { Font } from '../../constants/typography';
  */
 function RankSection({
   xp,
-  level,
   currentRank,
 }: {
   xp: number;
-  level: number;
   currentRank: RankTier;
 }) {
   const Colors = useTheme();
@@ -64,7 +62,7 @@ function RankSection({
               {currentRank}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 4, fontFamily: Font.mono }}>
-              Level {level} · {fmtXP(xp)} XP
+              {fmtXP(xp)} XP
             </Text>
           </View>
           <Ionicons name={RANK_META[currentRank].icon} size={44} color={GOLD} />

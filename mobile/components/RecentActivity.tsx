@@ -23,6 +23,7 @@ const EVENT_META: Record<
   achievement_unlocked: { icon: 'trophy',       tint: (c) => c.AMBER },
   streak_milestone:     { icon: 'flame',        tint: (c) => c.AMBER },
   level_up:             { icon: 'trending-up',  tint: (c) => c.primary },
+  rank_up:              { icon: 'trending-up',  tint: (c) => c.trace },
 };
 
 /** Human line for one event, from the payload each emitter writes. */
@@ -47,6 +48,11 @@ function describe(event: ActivityEvent): string {
       return `Unlocked ${str('achievementTitle') ?? 'an achievement'}`;
     case 'streak_milestone':
       return `${num('streakDays') ?? 0}-day streak`;
+    case 'rank_up':
+      return `Reached ${str('rank') ?? 'a new'} rank`;
+    // Historical only — see the note on ActivityEvent. Kept so a log entry
+    // written before Level was retired still reads as something, rather than
+    // falling through to the generic "Activity".
     case 'level_up':
       return `Reached level ${num('newLevel') ?? 0}${str('levelTitle') ? ` · ${str('levelTitle')}` : ''}`;
     default:

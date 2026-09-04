@@ -54,7 +54,6 @@ export function useGamification() {
   return useGamificationStore(
     useShallow((s) => ({
       xp: s.xp,
-      level: s.level,
       currentStreak: s.currentStreak,
       longestStreak: s.longestStreak,
       totalSessions: s.totalSessions,

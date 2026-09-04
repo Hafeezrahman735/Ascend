@@ -41,7 +41,7 @@ function UserRow({ user, onFollow, onPress }: {
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 15 }}>{user.username}</Text>
-        <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 1 }}>Level {user.level}</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 1 }}>{user.rank}</Text>
       </View>
       <Pressable
         onPress={handleToggle}

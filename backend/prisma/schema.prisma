@@ -24,7 +24,6 @@ model User {
   shareFocusStats       Boolean                      @default(true) @map("share_focus_stats")
   currentStreak         Int                          @default(0) @map("current_streak")
   lastActiveDate        DateTime?                    @map("last_active_date")
-  level                 Int                          @default(1)
   longestStreak         Int                          @default(0) @map("longest_streak")
   totalFocusTime        Int                          @default(0) @map("total_focus_time")
   totalSessions         Int                          @default(0) @map("total_sessions")
@@ -481,6 +480,21 @@ enum AchievementCategory {
   STREAK
   SESSIONS
   FOCUS_TIME
-  LEVEL
+  // Thresholds are XP values, because a rank IS a band of XP. Replaces LEVEL,
+  // whose thresholds were level numbers, now that the Level ladder is gone.
+  RANK
   TASKS
+
+  /// RETIRED — nothing in src/ reads or writes this, and no seeded achievement
+  /// carries it any more (see src/lib/achievementSeedData.ts).
+  ///
+  /// It is still listed ON PURPOSE. Deployed databases hold achievement rows
+  /// stamped `LEVEL`, and Postgres will not drop an enum value that existing
+  /// rows still reference — a `prisma db push` that removed it here would fail
+  /// against staging or production, or demand data loss to get through.
+  ///
+  /// The safe order is: push this schema (adds RANK, keeps LEVEL) → run
+  /// `npm run db:seed`, which upserts those rows onto RANK → then delete this
+  /// value and push again. Doing it in one step is what breaks.
+  LEVEL
 }

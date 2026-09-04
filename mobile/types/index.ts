@@ -52,7 +52,6 @@ export interface LeaderboardEntry {
 export interface SessionReward {
   xpEarned: number;
   totalXP: number;
-  level: number;
   leveledUp: boolean;
   newStreak: number;
   longestStreak: number;
@@ -103,7 +102,10 @@ export interface ActivityEvent {
     | 'session_completed'
     | 'achievement_unlocked'
     | 'streak_milestone'
+    // Retired: nothing emits level_up since the Level ladder was removed, but
+    // rows written before that still exist and must keep rendering.
     | 'level_up'
+    | 'rank_up'
     | 'task_completed'
     | 'goal_completed';
   payload: Record<string, unknown>;
@@ -112,7 +114,6 @@ export interface ActivityEvent {
 
 export interface UserGamification {
   xp: number;
-  level: number;
   currentStreak: number;
   longestStreak: number;
   totalSessions: number;
@@ -442,7 +443,7 @@ export interface UserSearchResult {
   username: string;
   avatarUrl: string | null;
   avatarEmoji: string;
-  level: number;
+  rank: string;
   isFollowing?: boolean;
 }
 
@@ -530,9 +531,9 @@ export interface GroupMember {
   username: string;
   avatarEmoji: string;
   avatarUrl: string | null;
-  level: number;
   joinedAt: string;
   isCreator: boolean;
+  rank: string;
 }
 
 /**
@@ -582,7 +583,6 @@ export interface PublicUserProfile {
   username: string;
   avatarUrl: string | null;
   avatarEmoji: string;
-  level: number;
   rank: string;
   currentStreak: number;
   longestStreak: number;

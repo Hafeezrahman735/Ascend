@@ -48,7 +48,8 @@ export interface AchievementStats {
   currentStreak: number;
   totalSessions: number;
   totalFocusTime: number; // seconds
-  level: number;
+  /** Drives the RANK category: rank is a band of XP, so XP is the raw number. */
+  xp: number;
   tasksCompleted: number;
 }
 
@@ -70,7 +71,12 @@ export function achievementProgress(category: string, stats: AchievementStats): 
     // Hours" unlocked after 100 minutes. Already-unlocked rows are left alone:
     // achievements are never revoked in this system.
     case 'FOCUS_TIME': return Math.floor(stats.totalFocusTime / 3600);
-    case 'LEVEL':      return stats.level;
+    // RANK thresholds are XP values (see prisma/seed.ts) because rank IS a band
+    // of XP. This replaced a LEVEL category whose thresholds were level numbers;
+    // Level is gone, and the two achievements that used it were re-pointed at
+    // the equivalent rank thresholds rather than deleted, so nobody loses an
+    // unlock they earned.
+    case 'RANK':       return stats.xp;
     case 'TASKS':      return stats.tasksCompleted;
     default:           return 0;
   }

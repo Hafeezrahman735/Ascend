@@ -52,7 +52,7 @@ function MemberRow({ member, canRemove, onRemove }: {
           {member.username}
         </Text>
         <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>
-          Level {member.level}{member.isCreator ? ' · Creator' : ''}
+          {member.rank}{member.isCreator ? ' · Creator' : ''}
         </Text>
       </View>
       {canRemove && !member.isCreator && (

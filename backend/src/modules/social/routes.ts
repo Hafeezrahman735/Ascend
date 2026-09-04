@@ -168,7 +168,7 @@ socialRouter.get('/social/users/search', async (req: Request, res: Response) => 
           { username: { contains: query, mode: 'insensitive' } },
         ],
       },
-      select: { id: true, username: true, avatarUrl: true, level: true },
+      select: { id: true, username: true, avatarUrl: true, xp: true },
       take: 20,
     });
 
@@ -179,7 +179,7 @@ socialRouter.get('/social/users/search', async (req: Request, res: Response) => 
       id: u.id,
       username: u.username,
       avatarUrl: u.avatarUrl,
-      level: u.level,
+      rank: getRankTitle(u.xp),
     }));
 
     res.json({ success: true, data: results });
@@ -575,7 +575,7 @@ socialRouter.get('/social/search', async (req: Request, res: Response) => {
           { username: { contains: query, mode: 'insensitive' } },
         ],
       },
-      select: { id: true, username: true, avatarUrl: true, level: true, avatarEmoji: true },
+      select: { id: true, username: true, avatarUrl: true, xp: true, avatarEmoji: true },
       take: 20,
     });
 
@@ -590,7 +590,7 @@ socialRouter.get('/social/search', async (req: Request, res: Response) => {
       username: u.username,
       avatarUrl: u.avatarUrl,
       avatarEmoji: resolveAvatar(u.avatarEmoji, u.id),
-      level: u.level,
+      rank: getRankTitle(u.xp),
       isFollowing: followingSet.has(u.id),
     }));
 
@@ -710,7 +710,7 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
     const user = await prisma.user.findUnique({
       where: { id: targetId },
       select: {
-        id: true, username: true, avatarUrl: true, level: true, xp: true,
+        id: true, username: true, avatarUrl: true, xp: true,
         currentStreak: true, longestStreak: true,
         totalSessions: true, totalFocusTime: true,
         avatarEmoji: true,
@@ -763,7 +763,6 @@ socialRouter.get('/social/users/:userId', async (req: Request, res: Response) =>
         username: user.username,
         avatarUrl: user.avatarUrl,
         avatarEmoji: resolveAvatar(user.avatarEmoji, user.id),
-        level: user.level,
         rank: getRankTitle(user.xp),
         currentStreak: user.currentStreak,
         longestStreak: user.longestStreak,
@@ -880,20 +879,20 @@ socialRouter.get('/social/groups/all', async (req: Request, res: Response) => {
 // literal path is not swallowed by the :id parameter.
 
 const GROUP_MEMBER_SELECT = {
-  id: true, username: true, avatarEmoji: true, avatarUrl: true, level: true,
+  id: true, username: true, avatarEmoji: true, avatarUrl: true, xp: true,
 } as const;
 
 /** Shapes a membership row for the client, with the shared avatar fallback. */
 function serializeMember(m: {
   joinedAt: Date;
-  user: { id: string; username: string; avatarEmoji: string | null; avatarUrl: string | null; level: number };
+  user: { id: string; username: string; avatarEmoji: string | null; avatarUrl: string | null; xp: number };
 }, createdBy: string) {
   return {
     id: m.user.id,
     username: m.user.username,
     avatarEmoji: resolveAvatar(m.user.avatarEmoji, m.user.id),
     avatarUrl: m.user.avatarUrl,
-    level: m.user.level,
+    rank: getRankTitle(m.user.xp),
     joinedAt: m.joinedAt.toISOString(),
     isCreator: m.user.id === createdBy,
   };

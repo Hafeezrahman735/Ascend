@@ -59,7 +59,6 @@ export default function AccountScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const xp = useGamificationStore((s) => s.xp);
-  const level = useGamificationStore((s) => s.level);
   const currentStreak = useGamificationStore((s) => s.currentStreak);
   const totalSessions = useGamificationStore((s) => s.totalSessions);
   const totalFocusMinutes = useGamificationStore((s) => s.totalFocusMinutes);
@@ -136,7 +135,7 @@ export default function AccountScreen() {
               }}>
                 <Ionicons name={RANK_META[rank].icon} size={16} color={Colors.text} />
                 <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>
-                  {rank} · Level {level}
+                  {rank}
                 </Text>
               </View>
             </View>

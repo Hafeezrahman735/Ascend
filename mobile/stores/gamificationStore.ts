@@ -7,7 +7,6 @@ import { getLocalDateString } from '../utils/date';
 
 interface GamificationStoreState {
   xp: number;
-  level: number;
   currentStreak: number;
   longestStreak: number;
   totalSessions: number;
@@ -54,7 +53,6 @@ interface GamificationStoreState {
 
 export const useGamificationStore = create<GamificationStoreState>((set, get) => ({
   xp: 0,
-  level: 1,
   currentStreak: 0,
   longestStreak: 0,
   totalSessions: 0,
@@ -74,7 +72,6 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
       if (res.success && res.data) {
         set({
           xp: res.data.xp ?? 0,
-          level: res.data.level ?? 1,
           currentStreak: res.data.currentStreak ?? 0,
           longestStreak: res.data.longestStreak ?? 0,
           totalSessions: res.data.totalSessions ?? 0,
@@ -136,7 +133,6 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
     const state = get();
     set({
       xp: reward.totalXP,
-      level: reward.level,
       currentStreak: reward.newStreak,
       longestStreak: reward.longestStreak,
       totalSessions: state.totalSessions + 1,
@@ -182,7 +178,6 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   reset: () => {
     set({
       xp: 0,
-      level: 1,
       currentStreak: 0,
       longestStreak: 0,
       totalSessions: 0,

@@ -17,7 +17,7 @@ async function loadAchievementStats(userId: string): Promise<AchievementStats | 
       currentStreak: true,
       totalSessions: true,
       totalFocusTime: true,
-      level: true,
+      xp: true,
       tasksCompleted: true,
     },
   });

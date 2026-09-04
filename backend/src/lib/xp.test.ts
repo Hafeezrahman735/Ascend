@@ -4,8 +4,6 @@ import {
   TASK_COMPLETION_XP,
   GOAL_COMPLETION_XP,
   calculateXP,
-  calculateLevel,
-  xpForLevel,
 } from './xp';
 
 describe('taskCompletionXP', () => {
@@ -28,36 +26,6 @@ describe('taskCompletionXP', () => {
 
   it('a goal is worth more than any single task', () => {
     expect(GOAL_COMPLETION_XP).toBeGreaterThan(taskCompletionXP('urgent'));
-  });
-});
-
-describe('calculateLevel — shared by session, task and goal XP paths', () => {
-  it('starts at level 1', () => {
-    expect(calculateLevel(0)).toBe(1);
-    expect(calculateLevel(99)).toBe(1);
-  });
-
-  it('advances at the published thresholds', () => {
-    expect(calculateLevel(100)).toBe(2);
-    expect(calculateLevel(250)).toBe(3);
-    expect(calculateLevel(12000)).toBe(10);
-  });
-
-  it('never decreases as XP grows', () => {
-    let previous = 0;
-    for (let xp = 0; xp <= 60_000; xp += 500) {
-      const level = calculateLevel(xp);
-      expect(level).toBeGreaterThanOrEqual(previous);
-      previous = level;
-    }
-  });
-
-  it('agrees with xpForLevel at each boundary', () => {
-    for (let level = 2; level <= 15; level++) {
-      const threshold = xpForLevel(level);
-      expect(calculateLevel(threshold)).toBe(level);
-      expect(calculateLevel(threshold - 1)).toBe(level - 1);
-    }
   });
 });
 

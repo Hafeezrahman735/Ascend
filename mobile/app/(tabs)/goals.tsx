@@ -463,7 +463,6 @@ interface HeroCardProps {
   username: string;
   avatarEmoji: string;
   xp: number;
-  level: number;
   rank: RankTier;
   totalSessions: number;
   totalFocusMinutes: number;
@@ -479,7 +478,7 @@ interface HeroCardProps {
 }
 
 function HeroCard({
-  username, avatarEmoji, xp, level, rank,
+  username, avatarEmoji, xp, rank,
   totalSessions, totalFocusMinutes, longestStreak,
   xpProgress, xpToNextRank, nextRank,
   reduceMotion, onSettings,
@@ -521,7 +520,7 @@ function HeroCard({
               {username}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 2 }}>
-              @{username.toLowerCase().replace(/\s/g, '')} · Lv. {level}
+              @{username.toLowerCase().replace(/\s/g, '')}
             </Text>
           </View>
         </View>
@@ -899,7 +898,6 @@ export default function ProfileScreen() {
         username={auth.user?.username ?? 'User'}
         avatarEmoji={profileAvatar || getAvatarEmoji(auth.user?.username ?? 'User')}
         xp={xp}
-        level={gamification.level}
         rank={currentRank}
         totalSessions={gamification.totalSessions}
         totalFocusMinutes={gamification.totalFocusMinutes}
@@ -921,7 +919,7 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
       >
         <StreakSection streakState={{ ...streakState, ...serverDerivedStreak }} reduceMotion={reduceMotion} />
-        <RankSection xp={xp} level={gamification.level} currentRank={currentRank} />
+        <RankSection xp={xp} currentRank={currentRank} />
 
         <AchievementsRow />
 

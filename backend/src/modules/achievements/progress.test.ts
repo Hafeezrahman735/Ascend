@@ -5,7 +5,7 @@ const stats: AchievementStats = {
   currentStreak: 5,
   totalSessions: 42,
   totalFocusTime: 7200, // 2 hours, in seconds
-  level: 6,
+  xp: 1500,
   tasksCompleted: 17,
 };
 
@@ -19,8 +19,17 @@ describe('achievementProgress', () => {
   it('maps each category to its counter', () => {
     expect(achievementProgress('STREAK', stats)).toBe(5);
     expect(achievementProgress('SESSIONS', stats)).toBe(42);
-    expect(achievementProgress('LEVEL', stats)).toBe(6);
+    // RANK reports raw XP: rank is a band of XP, so its thresholds are XP values.
+    expect(achievementProgress('RANK', stats)).toBe(1500);
     expect(achievementProgress('TASKS', stats)).toBe(17);
+  });
+
+  it('returns 0 for a category it does not know', () => {
+    // Reachable in one real window: between deploying this code and re-running
+    // the seed, rows still carrying the retired LEVEL category land here. 0 is
+    // the safe answer — it stalls progress rather than unlocking everything,
+    // which is what comparing raw XP against a level-number threshold would do.
+    expect(achievementProgress('LEVEL', stats)).toBe(0);
   });
 
   it('converts focus time to HOURS, matching how thresholds are expressed', () => {

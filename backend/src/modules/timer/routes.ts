@@ -7,7 +7,6 @@ import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
 import { runGamification } from '../../lib/gamification';
-import { getLevelTitle } from '../../lib/xp';
 import { resolveLocalDate } from '../../lib/localDate';
 import { syncGoalCompletion } from '../../lib/goalProgress';
 import { upsertDailyTracePost } from '../social/tracePost';
@@ -357,14 +356,11 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
         },
       });
 
-      if (gamification.leveledUp) {
+      if (gamification.rankedUp) {
         eventBus.emit(EventTypes.FEED_CREATE, {
           userId,
-          eventType: 'level_up',
-          payload: {
-            newLevel: gamification.level,
-            levelTitle: getLevelTitle(gamification.level),
-          },
+          eventType: 'rank_up',
+          payload: { rank: gamification.rank },
         });
       }
 
@@ -435,8 +431,8 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
           creditedSeconds,
           xpEarned: gamification.xpEarned,
           totalXP: gamification.totalXP,
-          level: gamification.level,
-          leveledUp: gamification.leveledUp,
+          rank: gamification.rank,
+          rankedUp: gamification.rankedUp,
           newStreak: gamification.newStreak,
           longestStreak: gamification.longestStreak,
           newlyUnlocked: gamification.newlyUnlocked.map((a) => ({

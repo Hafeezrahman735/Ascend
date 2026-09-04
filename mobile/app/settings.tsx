@@ -366,7 +366,6 @@ export default function SettingsScreen() {
   const isLoading = useAuthStore((s) => s.isLoading);
   const logout = useAuthStore((s) => s.logout);
   const xp = useGamificationStore((s) => s.xp);
-  const level = useGamificationStore((s) => s.level);
   const rank = getRank(xp);
 
   const profile = useUserProfileStore();
@@ -468,7 +467,7 @@ export default function SettingsScreen() {
               {displayName}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 2 }}>
-              @{handle} · Lv. {level}
+              @{handle}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 5 }}>
               <Ionicons name={RANK_META[rank].icon} size={13} color={Colors.text} />

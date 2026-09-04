@@ -133,7 +133,6 @@ interface DemoUser {
   username: string;
   bioRole: string;
   xp: number;
-  level: number;
   currentStreak: number;
   longestStreak: number;
   totalFocusTime: number; // seconds
@@ -153,7 +152,6 @@ const users: DemoUser[] = [
     username: 'leo_kim',
     bioRole: 'High school senior · college apps + calculus',
     xp: 380,
-    level: 3,
     currentStreak: 5,
     longestStreak: 9,
     totalFocusTime: 11 * HOURS,
@@ -196,7 +194,6 @@ const users: DemoUser[] = [
     username: 'maya_chen',
     bioRole: 'High school junior · SAT prep + AP Bio',
     xp: 1450,
-    level: 5,
     currentStreak: 12,
     longestStreak: 15,
     totalFocusTime: 41 * HOURS,
@@ -243,7 +240,6 @@ const users: DemoUser[] = [
     username: 'sam_rivera',
     bioRole: 'Software developer · AWS cert + side project',
     xp: 1850,
-    level: 5,
     currentStreak: 8,
     longestStreak: 19,
     totalFocusTime: 53 * HOURS,
@@ -287,7 +283,6 @@ const users: DemoUser[] = [
     username: 'jordan_blake',
     bioRole: 'College sophomore · CS major',
     xp: 4200,
-    level: 7,
     currentStreak: 23,
     longestStreak: 31,
     totalFocusTime: 96 * HOURS,
@@ -344,7 +339,6 @@ const users: DemoUser[] = [
     username: 'priya_patel',
     bioRole: 'College senior · pre-med, MCAT prep',
     xp: 9100,
-    level: 9,
     currentStreak: 34,
     longestStreak: 41,
     totalFocusTime: 168 * HOURS,
@@ -430,7 +424,6 @@ async function seedDemoUsers() {
         passwordHash,
         privacySetting: 'public',
         xp: u.xp,
-        level: u.level,
         currentStreak: u.currentStreak,
         longestStreak: u.longestStreak,
         totalFocusTime: u.totalFocusTime,
@@ -443,7 +436,6 @@ async function seedDemoUsers() {
         passwordHash,
         privacySetting: 'public',
         xp: u.xp,
-        level: u.level,
         currentStreak: u.currentStreak,
         longestStreak: u.longestStreak,
         totalFocusTime: u.totalFocusTime,
@@ -645,7 +637,7 @@ async function seedDemoUsers() {
     }
 
     created.push({ username: user.username, email: user.email, id: user.id });
-    console.log(`  ✓ ${u.username.padEnd(14)} L${u.level}  ${u.currentStreak}d streak  ${Math.round(u.totalFocusTime / 3600)}h focus  (${u.posts.length} posts, ${u.tasks.length} tasks)`);
+    console.log(`  ✓ ${u.username.padEnd(14)} ${u.xp}xp  ${u.currentStreak}d streak  ${Math.round(u.totalFocusTime / 3600)}h focus  (${u.posts.length} posts, ${u.tasks.length} tasks)`);
   }
 
   // Follow graph: full mesh so everyone's "friends" feed + leaderboard is populated.

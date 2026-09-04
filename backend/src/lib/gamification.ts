@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
-import { calculateXP, calculateLevel, getLevelTitle } from './xp';
+import { calculateXP } from './xp';
+import { getRankTitle } from './rank';
 import { updateStreak } from './streak';
 import { utcDateStr } from './localDate';
 import { eventBus, EventTypes } from '../middleware/eventBus';
@@ -8,8 +9,8 @@ import { checkAchievements } from '../modules/achievements/handler';
 export interface XpAward {
   xpEarned: number;
   totalXP: number;
-  level: number;
-  leveledUp: boolean;
+  rank: string;
+  rankedUp: boolean;
   newlyUnlocked: Awaited<ReturnType<typeof checkAchievements>>;
 }
 
@@ -18,10 +19,13 @@ export interface XpAward {
  * task or a goal — and keep every derived value in step.
  *
  * Sessions go through runGamification below, which also moves streaks. This is
- * the lighter path: XP, level, the level-up feed event, and an achievement
- * sweep. Both funnel through the same calculateLevel/checkAchievements so a
- * level earned by finishing a task is indistinguishable from one earned by
- * focusing.
+ * the lighter path: XP, the rank-up activity event, and an achievement sweep.
+ * Both funnel through the same getRankTitle/checkAchievements so a rank earned
+ * by finishing a task is indistinguishable from one earned by focusing.
+ *
+ * Rank replaced Level here. They were two ladders over the same XP — one shown
+ * on the profile, one on every post — which meant two numbers claiming to
+ * describe the same progress. Rank is the one users actually see.
  *
  * `deltaXp` may be negative: un-checking a task revokes what completing it
  * granted, so the two are a true undo pair and repeated toggling can't farm XP.
@@ -36,20 +40,20 @@ export async function awardXp(
 
   const before = await prisma.user.findUnique({
     where: { id: userId },
-    select: { xp: true, level: true, currentStreak: true, totalSessions: true, totalFocusTime: true },
+    select: { xp: true, currentStreak: true, totalSessions: true, totalFocusTime: true },
   });
   if (!before) return null;
 
   // Clamp so a revoke can never drive either counter negative.
   const nextXp = Math.max(0, before.xp + deltaXp);
-  const nextLevel = calculateLevel(nextXp);
-  const leveledUp = nextLevel > before.level;
+  const previousRank = getRankTitle(before.xp);
+  const nextRank = getRankTitle(nextXp);
+  const rankedUp = nextRank !== previousRank && nextXp > before.xp;
 
   const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       xp: nextXp,
-      level: nextLevel,
       ...(tasksCompletedDelta !== 0
         ? { tasksCompleted: { increment: tasksCompletedDelta } }
         : {}),
@@ -62,11 +66,11 @@ export async function awardXp(
     await prisma.user.update({ where: { id: userId }, data: { tasksCompleted: 0 } });
   }
 
-  if (leveledUp) {
+  if (rankedUp) {
     eventBus.emit(EventTypes.FEED_CREATE, {
       userId,
-      eventType: 'level_up',
-      payload: { newLevel: nextLevel, levelTitle: getLevelTitle(nextLevel) },
+      eventType: 'rank_up',
+      payload: { rank: nextRank },
     });
   }
 
@@ -77,12 +81,12 @@ export async function awardXp(
           currentStreak: before.currentStreak,
           totalSessions: before.totalSessions,
           totalFocusTime: before.totalFocusTime,
-          level: nextLevel,
+          xp: nextXp,
           tasksCompleted: Math.max(0, updated.tasksCompleted),
         })
       : [];
 
-  return { xpEarned: deltaXp, totalXP: nextXp, level: nextLevel, leveledUp, newlyUnlocked };
+  return { xpEarned: deltaXp, totalXP: nextXp, rank: nextRank, rankedUp, newlyUnlocked };
 }
 
 /**
@@ -101,8 +105,8 @@ export async function runGamification(
 ): Promise<{
   xpEarned: number;
   totalXP: number;
-  level: number;
-  leveledUp: boolean;
+  rank: string;
+  rankedUp: boolean;
   newStreak: number;
   longestStreak: number;
   newlyUnlocked: { id: string; key: string; title: string; description: string; icon: string; xpReward: number; category: string; threshold: number; unlockedAt: Date }[];
@@ -123,25 +127,26 @@ export async function runGamification(
 
   const xpEarned = calculateXP(elapsedSeconds, streak);
   let newTotalXP = user.xp + xpEarned;
-  let newLevel = calculateLevel(newTotalXP);
-  const leveledUp = newLevel > user.level;
+  const previousRank = getRankTitle(user.xp);
 
   const newlyUnlocked = await checkAchievements(userId, {
     currentStreak: streak,
     totalSessions: user.totalSessions + 1,
     totalFocusTime: user.totalFocusTime + elapsedSeconds,
-    level: newLevel,
+    xp: newTotalXP,
     tasksCompleted: user.tasksCompleted,
   });
 
+  // Achievement rewards are XP too, so they can carry you over a rank threshold
+  // in the same request that unlocked them. Rank is resolved AFTER they land.
   for (const achievement of newlyUnlocked) {
     newTotalXP += achievement.xpReward;
   }
-  newLevel = calculateLevel(newTotalXP);
+  const newRank = getRankTitle(newTotalXP);
+  const rankedUp = newRank !== previousRank;
 
   const updateData: Record<string, unknown> = {
     xp: newTotalXP,
-    level: newLevel,
     currentStreak: streak,
     longestStreak: newLongest,
     totalSessions: { increment: 1 },
@@ -160,8 +165,8 @@ export async function runGamification(
   return {
     xpEarned,
     totalXP: newTotalXP,
-    level: newLevel,
-    leveledUp,
+    rank: newRank,
+    rankedUp,
     newStreak: streak,
     longestStreak: newLongest,
     newlyUnlocked,

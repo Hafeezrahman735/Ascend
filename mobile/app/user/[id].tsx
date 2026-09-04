@@ -165,7 +165,7 @@ export default function UserProfileScreen() {
             paddingHorizontal: 10, paddingVertical: 3,
           }}>
             <Text style={{ color: rankColor, fontSize: 12, fontWeight: '700' }}>
-              {profile.rank} · Lv {profile.level}
+              {profile.rank}
             </Text>
           </View>
 
@@ -219,9 +219,10 @@ export default function UserProfileScreen() {
           </View>
           <View style={{ height: 1, backgroundColor: Colors.BORDER_SOFT}} />
           <View style={{ flexDirection: 'row' }}>
+            {/* Two-up: the Level box that sat between these is gone with the
+                Level ladder, and raw XP is deliberately not exposed for other
+                users — it would leak activity level past shareFocusStats. */}
             <StatBox label="Total Focus" value={formatFocus(profile.totalFocusTime)} />
-            <View style={{ width: 1, backgroundColor: Colors.BORDER_SOFT}} />
-            <StatBox label="Level" value={String(profile.level)} />
             <View style={{ width: 1, backgroundColor: Colors.BORDER_SOFT}} />
             <StatBox label="Rank" value={profile.rank} />
           </View>

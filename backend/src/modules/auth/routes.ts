@@ -317,7 +317,6 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
           privacySetting: user.privacySetting,
           createdAt: user.createdAt,
           xp: user.xp,
-          level: user.level,
           currentStreak: user.currentStreak,
           longestStreak: user.longestStreak,
           totalSessions: user.totalSessions,

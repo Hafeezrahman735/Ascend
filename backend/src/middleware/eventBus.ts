@@ -50,7 +50,10 @@ export type FeedEventType =
   | 'session_completed'
   | 'achievement_unlocked'
   | 'streak_milestone'
+  // No longer emitted — the Level ladder was removed — but kept in the union
+  // because rows written before that are real history and still render.
   | 'level_up'
+  | 'rank_up'
   | 'task_completed'
   | 'goal_completed';
 
