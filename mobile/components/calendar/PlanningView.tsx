@@ -224,6 +224,11 @@ export default function PlanningView({
   // disagree about what the week holds.
   const todayKey = getLocalDateString();
   const weekTasks = useMemo(() => weekTasksToWorkOn(weekItems, todayKey), [weekItems, todayKey]);
+
+  // Recurring occurrences before today are dropped on purpose, so a week that
+  // has already finished holds no habits at all. Correct, but it renders as an
+  // unexplained empty section unless the copy says why — see the empty state.
+  const isPastWeek = days.length > 0 && days[days.length - 1].key < todayKey;
   const weekTaskMinutes = useMemo(() => estimatedMinutesRemaining(weekTasks), [weekTasks]);
 
   // Read per render rather than memoised: whether an event has passed changes
@@ -261,7 +266,9 @@ export default function PlanningView({
         {weekTasks.length === 0 ? (
           <EmptyBox
             icon="checkmark-done-outline"
-            text="No tasks due this week. Nothing waiting on you."
+            text={isPastWeek
+              ? 'That week is done. Missed habits are not carried forward.'
+              : 'No tasks due this week. Nothing waiting on you.'}
           />
         ) : (
           <Card>

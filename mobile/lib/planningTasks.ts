@@ -11,15 +11,35 @@ import { calendarItemKey, itemIsDone, itemTitle } from './calendarItems';
  * who dates their tasks saw it read 0 forever and had no list of what the week
  * actually holds.
  *
- * Built from the same CalendarItem[] the day strip counts, deliberately. Deriving
- * it a second time from the task store instead would let the list and the counts
- * above it disagree about the same week, which is the failure this codebase has
- * hit before and keeps warning about.
+ * Built from the same CalendarItem[] the day strip counts. Deriving it a second
+ * time from the task store would mean two answers to "what is in this week".
+ *
+ * The list does NOT match those counts one-for-one, and that is deliberate. The
+ * strip counts per-day LOAD, so a daily habit legitimately adds one to every day
+ * it is scheduled. This list answers "what do I still have to do", where that
+ * same habit is ONE commitment. See the recurring rules below.
  *
  * Recurring tasks are included: `habit_instance` is the wire name for a spawned
  * recurring TASK, not a separate "habits" feature (see TYPE_META). Goal
  * deadlines are not — a deadline is a date you are working toward, not a thing
  * you sit down and do.
+ *
+ * ── Why recurring tasks are treated differently ──────────────────────────────
+ *
+ * Two subsystems hold opposite, individually-correct rules. The Tasks tab
+ * archives every instance not due today (spawn-recurring), so a habit exists
+ * only for today and a missed day leaves no row. The calendar PROJECTS the
+ * template across the whole requested range (backend recurringProjection.ts) so
+ * day and week views can draw the habit on every scheduled day.
+ *
+ * Reading those projections as a to-do list produced exactly the thing the
+ * product is designed to avoid: a daily habit rendered seven rows in one week,
+ * three of them labelled "Late". A missed recurrence is not a debt. You cannot
+ * do yesterday's reading today.
+ *
+ * So a habit collapses to ONE row at its next occurrence, and past occurrences
+ * are dropped. One-off tasks keep the opposite rule — overdue means still owed,
+ * and they stay Late until done.
  */
 
 const PRIORITY_RANK: Record<Task['priority'], number> = {
@@ -50,36 +70,88 @@ function isTaskItem(item: CalendarItem): boolean {
 }
 
 /**
- * Incomplete tasks in the given items, ordered the way you would work through
- * them: what is already late, then today, then the rest of the week.
+ * Turns one calendar item into a row.
  *
- * Completed tasks are dropped rather than struck through. This section answers
- * "what still needs doing", and a finished task is not an answer to it — the
- * count in the header is meant to be the size of the remaining pile.
+ * `item.data` is cast, not validated, so a field the server did not send is
+ * `undefined` here and TypeScript cannot see it. That matters: a projected
+ * recurring day carries only id/title/parentTaskId/dueDate/isCompleted, so
+ * reading `priority` and `isRecurring` straight off it silently produced a row
+ * with no repeat icon and `PRIORITY_RANK[undefined] - PRIORITY_RANK[undefined]`
+ * = NaN in the comparator. Both are defaulted here rather than at the call site
+ * so every row is well-formed however it was built.
+ *
+ * `isRecurring` comes from the item TYPE, not the field. The type is the thing
+ * the server guarantees; the field is the thing it sometimes omits.
+ */
+function toWeekTask(item: CalendarItem, todayKey: string): WeekTask {
+  const task = item.data as Task;
+  return {
+    key: calendarItemKey(item),
+    title: itemTitle(item),
+    dateKey: item.date,
+    isOverdue: item.date < todayKey,
+    isToday: item.date === todayKey,
+    startMinutes: task.startMinutes ?? null,
+    estimatedMinutes: task.estimatedMinutes ?? null,
+    priority: task.priority ?? 'medium',
+    isRecurring: item.type === 'habit_instance' || !!task.isRecurring,
+    task,
+  };
+}
+
+/** The template a recurring occurrence belongs to, real or projected. */
+function templateIdOf(item: CalendarItem): string | null {
+  const parent = (item.data as Task).parentTaskId;
+  return parent ?? null;
+}
+
+/**
+ * Incomplete work in the given items, ordered the way you would work through it:
+ * what is already late, then today, then the rest of the week.
+ *
+ * Completed items are dropped rather than struck through, and that ordering is
+ * load-bearing: because the done-filter runs BEFORE a habit is collapsed, a
+ * habit already done today falls through to its next occurrence this week
+ * rather than disappearing. Move the filter and you change that behaviour.
+ *
+ * One-off tasks: one row each, overdue stays overdue.
+ * Recurring tasks: ONE row per template, at its next occurrence. Occurrences
+ * before today are dropped, and a habit with none left this week does not
+ * appear at all.
  */
 export function weekTasksToWorkOn(items: CalendarItem[], todayKey: string): WeekTask[] {
   const out: WeekTask[] = [];
+  // Earliest not-yet-past occurrence per recurring template.
+  const nextByTemplate = new Map<string, WeekTask>();
 
   for (const item of items) {
     if (!isTaskItem(item)) continue;
     if (itemIsDone(item)) continue;
 
-    const task = item.data as Task;
-    out.push({
-      key: calendarItemKey(item),
-      title: itemTitle(item),
-      dateKey: item.date,
-      isOverdue: item.date < todayKey,
-      isToday: item.date === todayKey,
-      startMinutes: task.startMinutes ?? null,
-      estimatedMinutes: task.estimatedMinutes ?? null,
-      priority: task.priority,
-      isRecurring: task.isRecurring,
-      task,
-    });
+    if (item.type === 'habit_instance') {
+      // A missed recurrence is gone, not owed. Dropping it here is what stops
+      // the list becoming a growing pile of days you cannot act on any more.
+      if (item.date < todayKey) continue;
+
+      const templateId = templateIdOf(item);
+      const row = toWeekTask(item, todayKey);
+      if (!templateId) {
+        // No parent to group by — treat it as a standalone row rather than
+        // silently swallowing it.
+        out.push(row);
+        continue;
+      }
+      const existing = nextByTemplate.get(templateId);
+      if (!existing || row.dateKey < existing.dateKey) {
+        nextByTemplate.set(templateId, row);
+      }
+      continue;
+    }
+
+    out.push(toWeekTask(item, todayKey));
   }
 
-  return out.sort(compareWeekTasks);
+  return [...out, ...nextByTemplate.values()].sort(compareWeekTasks);
 }
 
 /**
