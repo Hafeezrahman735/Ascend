@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { User } from '../types';
 import { setTokens, clearTokens, api, setOnAuthExpired } from '../services/api';
+import { fetchMe, invalidateMe } from '../services/me';
 import { reconnectTimerSocket, disconnectTimerSocket } from '../services/socket';
 import { clearSessionHistory } from '../store/sync';
 import { useGamificationStore } from './gamificationStore';
@@ -112,6 +113,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } finally {
       disconnectTimerSocket();
       clearTokens();
+      invalidateMe();
       await clearSessionHistory();
       if (userId) {
         await useTimerStore.getState().clearUserData(userId);
@@ -132,7 +134,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   loadUser: async () => {
-    const response = await api.get<User>('/auth/me');
+    const response = await fetchMe<User>();
 
     if (response.success && response.data) {
       set({ user: response.data, isAuthenticated: true, sessionUnavailable: false });

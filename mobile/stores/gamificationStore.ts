@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api, type ApiErrorKind } from '../services/api';
+import { fetchMe, invalidateMe } from '../services/me';
 import {
   SessionReward, UserGamification, Achievement, ActivityEvent, NewlyUnlockedAchievement,
 } from '../types';
@@ -68,7 +69,7 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
 
   fetchProfile: async () => {
     try {
-      const res = await api.get<UserGamification>('/auth/me');
+      const res = await fetchMe<UserGamification>();
       if (res.success && res.data) {
         set({
           xp: res.data.xp ?? 0,
@@ -87,6 +88,9 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   // on boot/foreground alongside spawnRecurringTasks; never throws.
   checkAndResetDayStreak: async () => {
     try {
+      // Moves currentStreak on the user row, so the shared /auth/me result is
+      // stale the moment this returns.
+      invalidateMe();
       const res = await api.post<{ currentStreak: number }>('/auth/me/streak-check', {
         localDate: getLocalDateString(),
       });

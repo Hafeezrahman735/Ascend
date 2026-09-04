@@ -1,4 +1,5 @@
 import { prisma } from './prisma';
+import { pruneActivityLog } from './retention';
 import type { FeedCreateEvent } from '../middleware/eventBus';
 
 /**
@@ -26,4 +27,9 @@ export async function recordActivityEvent(event: FeedCreateEvent): Promise<void>
       payload: event.payload as never,
     },
   });
+
+  // Opportunistic retention — there is no scheduler to do it anywhere else.
+  // Unawaited on purpose: tidying old rows must never delay or fail the write
+  // that just happened.
+  void pruneActivityLog(event.userId);
 }

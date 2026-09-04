@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { touchKey } from '../lib/lruIndex';
 import { api } from '../services/api';
 import type { CalendarEvent, CalendarItem, CalendarStats, GoogleCalendarStatus, Note } from '../types';
 import { useAuthStore } from './authStore';
@@ -24,6 +25,20 @@ const rangeKey = (userId: string, start: string, end: string) =>
 // Keep the set of cached range keys so logout can clear them all — AsyncStorage
 // has no prefix-delete.
 const INDEX_KEY = (userId: string) => `calendar:cache:index:${userId}`;
+
+/**
+ * How many ranges are kept on disk.
+ *
+ * There was no cap at all: every week or month ever scrolled to left a
+ * permanent key behind, and the index listing them was re-parsed and
+ * re-serialised on every write. Scrubbing through a year of months meant
+ * hundreds of orphaned keys that only a logout would clear.
+ *
+ * Twelve is sized for the way the calendar is actually used — a few weeks
+ * either side of now, plus the odd month view — and the LRU means the range you
+ * keep returning to survives a scroll past a dozen others.
+ */
+const MAX_CACHED_RANGES = 12;
 
 /**
  * Keeps only the items the views can actually render.
@@ -67,12 +82,16 @@ async function writeCache(
   try {
     const key = rangeKey(userId, start, end);
     await AsyncStorage.setItem(key, JSON.stringify(items));
+
     const rawIndex = await AsyncStorage.getItem(INDEX_KEY(userId));
-    const index: string[] = rawIndex ? JSON.parse(rawIndex) : [];
-    if (!index.includes(key)) {
-      index.push(key);
-      await AsyncStorage.setItem(INDEX_KEY(userId), JSON.stringify(index));
-    }
+    const stored: string[] = rawIndex ? JSON.parse(rawIndex) : [];
+    const { index, evicted } = touchKey(stored, key, MAX_CACHED_RANGES);
+
+    // Drop the payloads first: an index that still lists an evicted key is
+    // recoverable on the next write, but a key with no index entry is a leak
+    // nothing will ever clean up.
+    if (evicted.length > 0) await AsyncStorage.multiRemove(evicted);
+    await AsyncStorage.setItem(INDEX_KEY(userId), JSON.stringify(index));
   } catch (err) {
     console.warn('[calendarStore] cache write failed:', err);
   }

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
+import { fetchMe, invalidateMe } from '../services/me';
+
 import { applyDailyReminder } from '../services/notifications';
 
 export interface SettingsData {
@@ -97,11 +99,11 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
     // 2) Reconcile with the backend (authoritative for privacy + notif prefs).
     try {
       const [me, prefs] = await Promise.all([
-        api.get<{
+        fetchMe<{
           publicProfile?: boolean;
           showOnLeaderboard?: boolean;
           shareFocusStats?: boolean;
-        }>('/auth/me'),
+        }>(),
         api.get<{ sessions?: boolean; friends?: boolean; achievements?: boolean }>('/notifications/preferences'),
       ]);
 
@@ -153,6 +155,7 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
 
     // Sync privacy columns to the backend.
     if (hasAny(updates, PRIVACY_KEYS)) {
+      invalidateMe();
       api.patch('/auth/me/privacy', {
         publicProfile: data.publicProfile,
         showOnLeaderboard: data.showOnLeaderboard,

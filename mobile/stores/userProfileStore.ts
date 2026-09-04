@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
+import { fetchMe, invalidateMe } from '../services/me';
+
 
 // Must stay in lockstep with the backend's getAvatarEmoji (same list, same hash,
 // same seed = userId) so an un-picked user shows the SAME default emoji on the
@@ -55,7 +57,7 @@ export const useUserProfileStore = create<UserProfileState>((set, get) => ({
     // 2) Reconcile the avatar with the backend (the source of truth, so it's
     //    consistent across devices and matches what others see).
     try {
-      const me = await api.get<{ avatarEmoji?: string | null }>('/auth/me');
+      const me = await fetchMe<{ avatarEmoji?: string | null }>();
       if (me.success && me.data) {
         const backendEmoji = me.data.avatarEmoji;
         if (backendEmoji && backendEmoji.trim()) {
@@ -67,6 +69,7 @@ export const useUserProfileStore = create<UserProfileState>((set, get) => ({
         } else {
           // Backend has no avatar yet — push our current one up so every
           // backend-driven surface shows the same emoji.
+          invalidateMe();
           api.patch('/auth/me/profile', { avatarEmoji: base.avatarEmoji }).catch(() => {});
         }
       }
@@ -87,6 +90,7 @@ export const useUserProfileStore = create<UserProfileState>((set, get) => ({
 
     // Sync the chosen avatar to the backend so it propagates everywhere.
     if (updates.avatarEmoji) {
+      invalidateMe();
       api.patch('/auth/me/profile', { avatarEmoji: next.avatarEmoji })
         .catch((err) => console.warn('[profile] avatar sync failed:', err));
     }

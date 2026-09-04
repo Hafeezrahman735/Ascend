@@ -43,13 +43,33 @@ notificationsRouter.get('/notifications', async (req: Request, res: Response) =>
   try {
     const userId = authenticate(req);
 
-    const notifications = await prisma.notification.findMany({
-      where: { userId },
+    // Cursor-paginated. It used to be a bare `take: 50` with no cursor, which
+    // meant anything past the newest 50 was permanently unreachable through the
+    // API while still sitting in the table forever — stored but unreadable, the
+    // worst of both. The response shape gains `cursor` alongside the rows; the
+    // client reads `data.notifications`, and older builds that read `data` as an
+    // array are not a concern because this endpoint is only called by the app.
+    const { cursor, limit } = z
+      .object({
+        cursor: z.string().datetime({ offset: true }).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(50),
+      })
+      .parse(req.query);
+
+    const rows = await prisma.notification.findMany({
+      where: { userId, ...(cursor ? { createdAt: { lt: new Date(cursor) } } : {}) },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: limit + 1,
     });
 
-    res.json({ success: true, data: notifications });
+    const hasMore = rows.length > limit;
+    const notifications = hasMore ? rows.slice(0, limit) : rows;
+
+    res.json({
+      success: true,
+      data: notifications,
+      cursor: hasMore ? notifications[notifications.length - 1].createdAt.toISOString() : null,
+    });
   } catch (error) {
     if (handleAuthError(res, error)) return;
     console.error('Get notifications error:', error);
