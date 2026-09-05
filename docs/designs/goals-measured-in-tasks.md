@@ -105,8 +105,8 @@ codebase, and a `@db.Date`-to-local-fire-time conversion. Nothing is cut; the
 order changed.
 
 - **Branch 1 — Steps 1, 2, 2b, 3, 3b.** Everything below.
-- **Branch 2 — Step 4.** Due-date reminders and the overdue state, tracked in
-  `TODOS.md` with its five verified constraints.
+- **Branch 2 — Step 4.** Due-date reminders and the overdue state.
+  SHIPPED 2026-09-05 in `c1f77a1`. See `mobile/lib/goalReminders.ts`.
 
 Steps ordered so nothing depends on work that has not landed. Each ships and is
 verifiable on its own.
