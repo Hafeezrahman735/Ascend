@@ -120,12 +120,20 @@ describe('goalPace', () => {
     expect(goalPace(goal({ deadline: '2026-08-01' }), NOW)).toBeNull();
   });
 
-  it('counts in sessions when the goal measures sessions, tasks otherwise', () => {
-    expect(goalPace(goal({ deadline: '2026-08-31' }), NOW)?.unit).toBe('task');
-    const sessionGoal = goal({
+  it('counts remaining TASKS, whatever a legacy goal claims to measure', () => {
+    // This used to count against `targetSessions` for a goal in 'sessions' or
+    // 'both' mode. Goals are counted in tasks now, and no form can set a session
+    // target any more, so that remainder would be frozen at whatever it last
+    // was. Rows carrying the old fields must still pace on their tasks.
+    const legacy = goal({
       deadline: '2026-08-31', progressMode: 'sessions', targetSessions: 40,
+      linkedTaskCount: 10, completedTaskCount: 2, actualSessions: 3,
     });
-    expect(goalPace(sessionGoal, NOW)?.unit).toBe('session');
+    const plain = goal({
+      deadline: '2026-08-31', linkedTaskCount: 10, completedTaskCount: 2,
+    });
+
+    expect(goalPace(legacy, NOW)?.perWeekNeeded).toBe(goalPace(plain, NOW)?.perWeekNeeded);
   });
 });
 
@@ -238,14 +246,19 @@ describe('goalStatusLine — tone rules', () => {
 
 describe('goalStatCells — progressMode gating', () => {
   /**
-   * A fixed grid regresses this in both directions: a sessions-only goal
-   * renders "0/0 tasks" and a goal with no target renders "4/null sessions".
-   * The gating must mirror goalSubMetrics in tasks.tsx.
+   * A fixed grid regresses this in both directions: a goal with nothing linked
+   * renders "0/0 tasks", and the sessions cell used to render "4/null" for a
+   * goal with no target. The gating must mirror goalSubMetrics in tasks.tsx.
    */
-  it('hides the tasks cell on a sessions-only goal', () => {
+  it('never measures sessions against a target, even on a legacy sessions goal', () => {
+    // `targetSessions` still exists on rows created before goals became
+    // task-counted, and the server still serialises it. No form can change it,
+    // so rendering "14/20" would show a denominator frozen forever at whatever
+    // it happened to be. The count alone is still an honest fact about the work.
     const cells = goalStatCells(goal({ progressMode: 'sessions', targetSessions: 20 }), ctx());
     expect(cells.map((c) => c.key)).not.toContain('tasks');
-    expect(cells.find((c) => c.key === 'sessions')?.value).toBe('14/20');
+    expect(cells.find((c) => c.key === 'sessions')?.value).toBe('14');
+    expect(cells.find((c) => c.key === 'sessions')?.sub).toBeUndefined();
   });
 
   it('shows a bare session count when there is no target to measure against', () => {

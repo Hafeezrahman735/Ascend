@@ -96,10 +96,8 @@ export interface GoalPace {
   daysLeft: number;
   /** True when the current rate finishes before the deadline. */
   onTrack: boolean;
-  /** Units per week needed to land on time, at least 1. */
+  /** Tasks per week needed to land on time, at least 1. */
   perWeekNeeded: number;
-  /** What `perWeekNeeded` counts, so the copy can name it honestly. */
-  unit: 'session' | 'task';
 }
 
 /**
@@ -121,12 +119,10 @@ export function goalPace(goal: TaskGoal, now: Date): GoalPace | null {
   if (progressPerDay <= 0) return null;
   const daysNeeded = (1 - goal.overallProgress) / progressPerDay;
 
-  // Count in whatever this goal actually measures. Converting tasks into
-  // sessions would mean inventing a rate the data does not contain.
-  const useSessions = goal.targetSessions != null && goal.progressMode !== 'tasks';
-  const remaining = useSessions
-    ? Math.max(0, (goal.targetSessions ?? 0) - goal.actualSessions)
-    : Math.max(0, goal.linkedTaskCount - goal.completedTaskCount);
+  // Tasks, always. This used to count against `targetSessions` whenever the
+  // goal claimed a sessions component — a remainder measured against a target
+  // no form can set any more, so it would sit frozen at whatever it last was.
+  const remaining = Math.max(0, goal.linkedTaskCount - goal.completedTaskCount);
 
   const weeksLeft = Math.max(daysLeft / DAYS_PER_WEEK, 1 / DAYS_PER_WEEK);
 
@@ -134,7 +130,6 @@ export function goalPace(goal: TaskGoal, now: Date): GoalPace | null {
     daysLeft,
     onTrack: daysNeeded <= daysLeft,
     perWeekNeeded: Math.max(1, Math.ceil(remaining / weeksLeft)),
-    unit: useSessions ? 'session' : 'task',
   };
 }
 
@@ -231,7 +226,7 @@ export function goalStatusLine(goal: TaskGoal, ctx: GoalStatsContext): GoalStatu
       return { text: `${done} of ${total} done with ${plural(pace.daysLeft, 'day')} left — this pace finishes early.` };
     }
     return {
-      text: `${done} of ${total} done, ${plural(pace.daysLeft, 'day')} left. ${plural(pace.perWeekNeeded, pace.unit)} a week closes it.`,
+      text: `${done} of ${total} done, ${plural(pace.daysLeft, 'day')} left. ${plural(pace.perWeekNeeded, 'task')} a week closes it.`,
       action: goal.overallProgress < STRUGGLING_BELOW_PROGRESS ? 'start-session' : undefined,
     };
   }
@@ -303,15 +298,11 @@ export function goalStatCells(goal: TaskGoal, ctx: GoalStatsContext): GoalStatCe
     });
   }
 
-  if (goal.progressMode !== 'tasks' && goal.targetSessions) {
-    cells.push({
-      key: 'sessions',
-      label: 'SESSIONS',
-      value: `${goal.actualSessions}/${goal.targetSessions}`,
-      sub: 'toward target',
-    });
-  } else if (goal.actualSessions > 0) {
-    // No target to measure against, but the count is still worth showing.
+  // A bare count, never "N of M". A goal used to be able to carry a session
+  // target and this cell measured against it; goals are counted in tasks now,
+  // so that denominator would be frozen at whatever it last was. How many times
+  // you sat down is still an honest fact about the work, so it stays as a stat.
+  if (goal.actualSessions > 0) {
     cells.push({ key: 'sessions', label: 'SESSIONS', value: String(goal.actualSessions) });
   }
 

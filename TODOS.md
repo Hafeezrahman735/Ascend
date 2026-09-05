@@ -198,3 +198,27 @@ unifying them is a separate refactor and was explicitly out of this blast radius
 `stats.integration.test.ts` now asserts the exact key set `serializeGoal`
 returns, which catches a field added on one side and not the other. It does not
 check types. A shared schema (zod on both sides) would, and is the real fix.
+
+## From /plan-eng-review — goals measured in tasks (2026-09-04)
+
+- [ ] **Goal due-date reminders + overdue state (Branch 2 of `docs/designs/goals-measured-in-tasks.md`).**
+      Deferred out of Branch 1 by the eng review because it is a different architectural
+      problem, not a fourth step of the same one. Five constraints, all verified this session:
+      - Per-goal reminders need **dynamic** notification identifiers. Every notification in
+        the app today uses one of three FIXED ids (`services/notifications.ts:25-29`) with a
+        cancel-then-reschedule pattern; N goals need N ids.
+      - Reconciling those ids needs `getAllScheduledNotificationsAsync()`, the expo built-in.
+        It appears **nowhere** in the codebase (verified: zero matches), so "reschedule on
+        hydrate" has no primitive behind it yet.
+      - `TaskGoal.deadline` is a `@db.Date` calendar day, not an instant. Converting it to a
+        local fire time is the bug class recorded in the `ascend-duedate-utc-midnight`
+        learning — goal deadlines deliberately use a different helper from `Task.dueDate`.
+      - **iOS caps pending local notifications at 64**, shared with the daily reminder and
+        the two timer alarms. Schedule only the N soonest (N ~ 10) and reconcile on hydrate.
+        Confirm the cap against current Expo docs before building.
+      - Local notifications only fire on the device that scheduled them, so a goal created
+        on another device does not remind here until this device reschedules.
+      Also in Branch 2: the OVERDUE chip, pinning overdue goals to the top, and the
+      empty-goal "No tasks linked" flag (which Branch 1's create flow no longer depends on,
+      since creation is atomic — see finding 4).
+      Depends on: Branch 1 shipping.

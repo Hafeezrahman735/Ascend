@@ -155,21 +155,14 @@ export async function handleAllNotifications(
     // so a server push — and a stored notification record — would be redundant.
     case 'task_goal.completed': {
       const p = payload as TaskGoalCompletedEvent;
-      // Describe whichever component(s) the goal was actually measured on, so
-      // the copy matches what the user sees on the goal card.
-      const parts: string[] = [];
-      if (p.progressMode !== 'sessions') {
-        parts.push(`${p.completedTaskCount}/${p.linkedTaskCount} tasks`);
-      }
-      if (p.progressMode !== 'tasks' && p.targetSessions) {
-        parts.push(`${p.actualSessions}/${p.targetSessions} sessions`);
-      }
-      const detail = parts.length > 0 ? ` (${parts.join(' · ')})` : '';
+      // Tasks, because that is what a goal is measured on. This used to branch
+      // on progressMode to describe a sessions component too; there is one
+      // component now, so the branch could only ever take one path.
       await storeAndNotify(
         p.userId,
         'goal_completed',
         'Goal done',
-        `${p.title}${detail}`,
+        `${p.title} (${p.completedTaskCount}/${p.linkedTaskCount} tasks)`,
         'task_goal.completed',
       );
       break;

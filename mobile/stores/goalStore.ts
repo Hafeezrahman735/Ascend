@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
-import { TaskGoal, ProgressMode } from '../types';
+import { TaskGoal } from '../types';
 import { useAuthStore } from './authStore';
 
 const GOALS_CACHE_KEY = (userId: string) => `goals:cache:${userId}`;
@@ -71,10 +71,21 @@ function invalidateCalendar(): void {
 interface CreateGoalInput {
   title: string;
   tag?: string | null;
-  targetSessions?: number | null;
   /** Calendar day, 'YYYY-MM-DD'. */
   deadline?: string | null;
-  progressMode?: ProgressMode;
+  /**
+   * Linked in the SAME request that creates the goal. Creation used to be two
+   * calls — create, then attach — which left a third outcome to handle: a goal
+   * that exists without the tasks the user just picked. One request removes
+   * that state rather than handling it.
+   */
+  taskIds?: string[];
+}
+
+/** Add and remove task links on an existing goal. Deltas, never a whole set. */
+export interface GoalLinkDelta {
+  link?: string[];
+  unlink?: string[];
 }
 
 interface GoalStoreState {
@@ -85,6 +96,7 @@ interface GoalStoreState {
   hydrateGoals: (userId: string) => Promise<void>;
   fetchGoals: (silent?: boolean) => Promise<void>;
   createGoal: (data: CreateGoalInput) => Promise<TaskGoal | null>;
+  linkTasks: (id: string, delta: GoalLinkDelta) => Promise<boolean>;
   updateGoal: (id: string, data: Partial<TaskGoal>) => Promise<void>;
   deleteGoal: (id: string) => Promise<void>;
   toggleGoalComplete: (id: string) => Promise<void>;
@@ -127,22 +139,23 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       id: tempId,
       title: data.title,
       tag: data.tag ?? null,
-      targetSessions: data.targetSessions ?? null,
-      progressMode: data.progressMode ?? (data.targetSessions ? 'both' : 'tasks'),
+      targetSessions: null,
+      progressMode: 'tasks',
       deadline: data.deadline ?? null,
       isCompleted: false,
       completedAt: null,
       isArchived: false,
       createdAt: new Date().toISOString(),
-      // Placeholder until the server responds — a brand-new goal has nothing
-      // linked, so these are genuinely zero rather than a guess.
-      linkedTaskCount: 0,
+      // Placeholder until the server responds. linkedTaskCount is the count the
+      // user just chose, not zero — the tasks go in with the create, so showing
+      // 0 would flash a wrong number before the response lands.
+      linkedTaskCount: data.taskIds?.length ?? 0,
       completedTaskCount: 0,
       actualSessions: 0,
       totalFocusSeconds: 0,
       elapsedDays: 0,
       taskProgress: 0,
-      sessionProgress: data.targetSessions ? 0 : null,
+      sessionProgress: null,
       overallProgress: 0,
     };
     const withTemp = [tempGoal, ...get().goals];
@@ -168,6 +181,29 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       return tempGoal;
     } catch {
       return tempGoal;
+    }
+  },
+
+  /**
+   * Add and remove task links on one goal.
+   *
+   * No optimistic write: the counts this moves (linkedTaskCount,
+   * completedTaskCount, overallProgress) are server-computed and the client is
+   * explicitly not allowed to recompute them — see the note on TaskGoal in
+   * types/index.ts. Guessing them here is how the client and server came to
+   * disagree about the same goal before.
+   */
+  linkTasks: async (id, delta) => {
+    const userId = useAuthStore.getState().user?.id;
+    try {
+      const res = await api.post<TaskGoal>(`/task-goals/${id}/tasks`, delta);
+      if (!res.success || !res.data) return false;
+      const goals = get().goals.map((g) => (g.id === id ? { ...g, ...res.data } : g));
+      set({ goals });
+      persistGoals(goals, userId);
+      return true;
+    } catch {
+      return false;
     }
   },
 

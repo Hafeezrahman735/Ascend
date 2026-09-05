@@ -25,12 +25,8 @@ export interface TaskGoalCompletedEvent {
   userId: string;
   goalId: string;
   title: string;
-  /** Which component(s) drove completion, for the notification copy. */
-  progressMode: 'tasks' | 'sessions' | 'both';
   completedTaskCount: number;
   linkedTaskCount: number;
-  actualSessions: number;
-  targetSessions: number | null;
 }
 
 export interface AchievementUnlockedEvent {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeProgress, resolveProgressMode } from './goalProgress';
+import { computeProgress } from './goalProgress';
 
 const counts = (linked: number, done: number, sessions: number, focusSeconds = 0) => ({
   linkedTaskCount: linked,
@@ -8,21 +8,16 @@ const counts = (linked: number, done: number, sessions: number, focusSeconds = 0
   totalFocusSeconds: focusSeconds,
 });
 
-describe('resolveProgressMode', () => {
-  // A goal cannot claim a sessions component with no target to measure against —
-  // it would report progress it has no way to compute.
-  it('degrades to tasks when there is no session target', () => {
-    expect(resolveProgressMode('sessions', null)).toBe('tasks');
-    expect(resolveProgressMode('both', 0)).toBe('tasks');
-  });
+/**
+ * A goal is measured on its completed tasks. One unit.
+ *
+ * The 'sessions' and 'both' modes and `resolveProgressMode` used to live here
+ * with a describe block each. They are gone, not skipped: a goal could be set to
+ * a session target that the app could no longer measure honestly once sessions
+ * stopped being uniformly workDuration long.
+ */
 
-  it('keeps the stored mode when a target exists', () => {
-    expect(resolveProgressMode('both', 12)).toBe('both');
-    expect(resolveProgressMode('sessions', 12)).toBe('sessions');
-  });
-});
-
-describe('computeProgress — tasks mode', () => {
+describe('computeProgress', () => {
   it('is the completed / linked ratio', () => {
     expect(computeProgress('tasks', null, counts(5, 3, 0)).overallProgress).toBe(0.6);
   });
@@ -37,42 +32,42 @@ describe('computeProgress — tasks mode', () => {
   });
 });
 
-describe('computeProgress — sessions mode', () => {
-  it('is the logged / target ratio', () => {
-    expect(computeProgress('sessions', 12, counts(0, 0, 8)).overallProgress).toBe(8 / 12);
-  });
+describe('computeProgress — the retired session inputs are ignored', () => {
+  // These are the rows already in the database. Whatever mode they claim and
+  // whatever target they carry, progress is the task ratio.
 
-  it('clamps overshoot to 1', () => {
-    expect(computeProgress('sessions', 10, counts(0, 0, 25)).overallProgress).toBe(1);
-  });
-
-  it('reports null sessionProgress with no target', () => {
-    expect(computeProgress('sessions', null, counts(2, 1, 5)).sessionProgress).toBeNull();
-  });
-});
-
-describe('computeProgress — both mode', () => {
-  it('blends the two components 50/50', () => {
-    const p = computeProgress('both', 12, counts(5, 3, 8));
-    expect(p.taskProgress).toBe(0.6);
-    expect(p.sessionProgress).toBe(8 / 12);
-    expect(p.overallProgress).toBe((0.6 + 8 / 12) / 2);
-  });
-
-  it('is not complete while either component is short', () => {
-    // All tasks done but sessions only 90% — must not auto-complete.
-    expect(computeProgress('both', 10, counts(2, 2, 9)).overallProgress).toBeLessThan(1);
-  });
-
-  it('completes only when both components are full', () => {
-    expect(computeProgress('both', 10, counts(2, 2, 10)).overallProgress).toBe(1);
-  });
-
-  it('normalises a stored mode that lies about its target', () => {
-    // Stored as 'both' but no targetSessions — sessions must be ignored entirely.
-    const p = computeProgress('both', null, counts(4, 2, 99));
+  it('ignores a stored mode of sessions', () => {
+    const p = computeProgress('sessions', 12, counts(4, 1, 8));
     expect(p.progressMode).toBe('tasks');
-    expect(p.overallProgress).toBe(0.5);
+    expect(p.overallProgress).toBe(0.25);
+  });
+
+  it('ignores a stored mode of both', () => {
+    // Under the old 50/50 blend this was (0.6 + 8/12) / 2 = 0.633.
+    const p = computeProgress('both', 12, counts(5, 3, 8));
+    expect(p.progressMode).toBe('tasks');
+    expect(p.overallProgress).toBe(0.6);
+  });
+
+  it('reports sessionProgress as null, always', () => {
+    expect(computeProgress('both', 12, counts(5, 3, 8)).sessionProgress).toBeNull();
+    expect(computeProgress('sessions', 99, counts(1, 1, 0)).sessionProgress).toBeNull();
+    expect(computeProgress('tasks', null, counts(1, 0, 0)).sessionProgress).toBeNull();
+  });
+
+  it('a session target can no longer hold a finished goal back', () => {
+    // THE migration case. Every task done but only 9 of 10 sessions logged used
+    // to be (1.0 + 0.9) / 2 = 0.95 — short of the auto-completion threshold.
+    // It is now exactly 1, which is why a one-time silent backfill exists:
+    // otherwise this population completes one at a time, each firing XP, a feed
+    // event and a notification for work finished weeks ago.
+    expect(computeProgress('both', 10, counts(2, 2, 9)).overallProgress).toBe(1);
+  });
+
+  it('a session target can no longer complete a goal with unfinished tasks', () => {
+    // The opposite direction: sessions overshot, tasks did not. Used to be
+    // (0.5 + 1.0) / 2 = 0.75; still short, but for an honest reason now.
+    expect(computeProgress('sessions', 10, counts(2, 1, 25)).overallProgress).toBe(0.5);
   });
 });
 
@@ -87,20 +82,28 @@ describe('auto-completion threshold', () => {
   });
 });
 
-describe('computeProgress — the time stat is reporting only', () => {
-  // D3 settled that goal progress is task-denominated. Focus time is a stat
-  // beside it, never a denominator. This guards against the new field quietly
-  // becoming one during a later refactor.
+describe('computeProgress — sessions and time are reporting only', () => {
+  // Goal progress is task-denominated. Session count and focus time are stats
+  // beside it, never denominators. This guards against either quietly becoming
+  // one during a later refactor — which is exactly what happened before.
   it('ignores totalFocusSeconds entirely', () => {
     const withoutTime = computeProgress('tasks', null, counts(4, 2, 6, 0));
     const withTime = computeProgress('tasks', null, counts(4, 2, 6, 99_999));
 
     expect(withTime.overallProgress).toBe(withoutTime.overallProgress);
     expect(withTime.taskProgress).toBe(withoutTime.taskProgress);
-    expect(withTime.sessionProgress).toBe(withoutTime.sessionProgress);
   });
 
-  it('passes the stat through untouched', () => {
-    expect(computeProgress('tasks', null, counts(1, 1, 3, 5_400)).totalFocusSeconds).toBe(5_400);
+  it('ignores actualSessions entirely', () => {
+    const none = computeProgress('tasks', null, counts(4, 2, 0));
+    const many = computeProgress('tasks', null, counts(4, 2, 500));
+
+    expect(many.overallProgress).toBe(none.overallProgress);
+  });
+
+  it('passes both stats through untouched', () => {
+    const p = computeProgress('tasks', null, counts(1, 1, 3, 5_400));
+    expect(p.totalFocusSeconds).toBe(5_400);
+    expect(p.actualSessions).toBe(3);
   });
 });

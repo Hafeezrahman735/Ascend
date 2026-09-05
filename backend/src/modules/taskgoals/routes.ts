@@ -3,11 +3,31 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
-import { computeProgress, loadGoalCounts, resolveProgressMode } from '../../lib/goalProgress';
+import {
+  computeProgress, loadGoalCounts, syncGoalCompletion, userOwnsTasks,
+} from '../../lib/goalProgress';
 
 export const taskGoalsRouter = Router();
 
 const PROGRESS_MODES = ['tasks', 'sessions', 'both'] as const;
+
+/** Nothing is linked yet, or the goal has no rows to count. */
+const NO_COUNTS = {
+  linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0,
+};
+
+/**
+ * A goal is measured on its completed tasks, so the only thing the client sends
+ * about "how much" is which tasks belong to it.
+ *
+ * `targetSessions` and `progressMode` are RETIRED but still accepted, stored and
+ * ignored. They must not be rejected: this is a mobile app that cannot be
+ * force-updated, so an older binary on someone's phone keeps sending them
+ * indefinitely and a 400 would leave that person permanently unable to save a
+ * goal. They can be rejected only once no shipped build sends them, which is the
+ * same conversation as dropping the column.
+ */
+const TASK_IDS = z.array(z.string().min(1)).max(200);
 
 // A deadline is a calendar day, not an instant — accepted and returned as
 // 'YYYY-MM-DD' and stored in a @db.Date column. The old code parsed
@@ -34,9 +54,18 @@ function formatDeadline(value: Date | null): string | null {
 const createSchema = z.object({
   title:          z.string().min(1).max(80),
   tag:            z.string().max(30).optional().nullable(),
-  targetSessions: z.number().int().positive().max(200).optional().nullable(),
   deadline:       deadlineSchema.optional().nullable(),
+  /** Linked in the same transaction as the create — see the handler. */
+  taskIds:        TASK_IDS.optional(),
+  // Retired, accepted, ignored. See TASK_IDS above.
+  targetSessions: z.number().int().positive().max(200).optional().nullable(),
   progressMode:   z.enum(PROGRESS_MODES).optional(),
+});
+
+/** Add and remove links in one call. Deltas, never a replacement set. */
+const linkSchema = z.object({
+  link:   TASK_IDS.optional(),
+  unlink: TASK_IDS.optional(),
 });
 
 const updateSchema = z.object({
@@ -128,27 +157,60 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
     const data = createSchema.parse(req.body);
+    const taskIds = [...new Set(data.taskIds ?? [])];
 
-    const targetSessions = data.targetSessions ?? null;
-    // A goal created with a session target measures both by default; the client
-    // can still pass progressMode explicitly to override.
-    const requestedMode = data.progressMode ?? (targetSessions ? 'both' : 'tasks');
-    const progressMode = resolveProgressMode(requestedMode, targetSessions);
+    // All-or-nothing, checked BEFORE anything is written. The alternative —
+    // create the goal, then attach in a second request — leaves a goal that
+    // silently lacks the tasks the user just picked, and a rollback that can
+    // itself fail. One transaction removes the state instead of handling it.
+    if (taskIds.length > 0 && !(await userOwnsTasks(userId, taskIds))) {
+      res.status(404).json({ success: false, error: 'One or more tasks were not found' });
+      return;
+    }
 
-    const goal = await prisma.taskGoal.create({
-      data: {
-        userId,
-        title:          data.title,
-        tag:            data.tag ?? null,
-        targetSessions,
-        progressMode,
-        deadline:       parseDeadline(data.deadline),
-      },
+    // Task.taskGoalId holds ONE goal, so linking a task moves it off whatever
+    // goal it was on. Capture those goals first: losing an unfinished task can
+    // push the goal it left to 100%.
+    const losing = taskIds.length > 0
+      ? await prisma.task.findMany({
+          where: { id: { in: taskIds }, userId, taskGoalId: { not: null } },
+          select: { taskGoalId: true },
+        })
+      : [];
+
+    const goal = await prisma.$transaction(async (tx) => {
+      const created = await tx.taskGoal.create({
+        data: {
+          userId,
+          title:    data.title,
+          tag:      data.tag ?? null,
+          deadline: parseDeadline(data.deadline),
+          // Stored, never read. Retained rather than dropped so that reverting
+          // this change does not lose what older clients sent.
+          targetSessions: data.targetSessions ?? null,
+          progressMode:   'tasks',
+        },
+      });
+      if (taskIds.length > 0) {
+        await tx.task.updateMany({
+          where: { id: { in: taskIds }, userId },
+          data:  { taskGoalId: created.id },
+        });
+      }
+      return created;
     });
+
+    // Linking an already-completed task can put the new goal at 100% on its
+    // first breath, and a goal that just lost a task can cross it too.
+    const affected = [goal.id, ...losing.map((t) => t.taskGoalId!)];
+    await syncGoalCompletion(userId, affected);
+
+    const counts = await loadGoalCounts(userId, [goal.id]);
+    const fresh = await prisma.taskGoal.findFirst({ where: { id: goal.id, userId } });
 
     res.status(201).json({
       success: true,
-      data: serializeGoal(goal, { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 }),
+      data: serializeGoal(fresh ?? goal, counts.get(goal.id) ?? NO_COUNTS),
     });
   } catch (err) {
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
@@ -200,17 +262,11 @@ taskGoalsRouter.patch('/task-goals/:id', async (req: Request, res: Response) => 
     if (data.isCompleted    !== undefined) update.isCompleted    = data.isCompleted;
     if (data.completedAt    !== undefined) update.completedAt    = data.completedAt ? new Date(data.completedAt) : null;
 
-    // Keep progressMode consistent with whatever targetSessions ends up being,
-    // so a goal can't be left claiming a sessions component it can't measure.
-    const nextTarget =
-      data.targetSessions !== undefined ? data.targetSessions : existing.targetSessions;
-    if (data.progressMode !== undefined) {
-      update.progressMode = resolveProgressMode(data.progressMode, nextTarget);
-    } else if (data.targetSessions !== undefined) {
-      const carried = resolveProgressMode(existing.progressMode, nextTarget);
-      // Adding a target to a tasks-only goal promotes it to 'both', mirroring create.
-      update.progressMode = nextTarget && existing.progressMode === 'tasks' ? 'both' : carried;
-    }
+    // progressMode is deliberately NOT written from the request any more. It used
+    // to be reconciled against targetSessions here so a goal could not claim a
+    // sessions component it had no target to measure; progress is task-denominated
+    // now, so there is one mode and the column is inert. An older client can still
+    // SEND both fields — targetSessions is stored, progressMode is dropped.
 
     const goal = await prisma.taskGoal.update({ where: { id }, data: update });
 
@@ -223,6 +279,104 @@ taskGoalsRouter.patch('/task-goals/:id', async (req: Request, res: Response) => 
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
     if (handleAuthError(res, err)) return;
     console.error('[task-goals] update error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/**
+ * Add and remove task links on one goal.
+ *
+ * DELTAS, not a replacement set. The obvious shape — send the desired set, let
+ * the server make it so — is a data-loss bug here: loadGoalCounts counts
+ * COMPLETED tasks toward a goal, so a goal reading "3 of 6" has three completed
+ * tasks carrying its taskGoalId. They never appear in a picker of open tasks, so
+ * they would be absent from the payload, so replace semantics would clear them
+ * and drop the goal to 0/3 on its first save. Archived recurring instances,
+ * which inherit their template's taskGoalId, go the same way.
+ *
+ * With deltas the server touches only ids it was handed, so a task the client
+ * never showed cannot become collateral damage. The bug is structurally
+ * impossible rather than something every future caller has to remember.
+ *
+ *   link:   [a, b] ──► taskGoalId = this goal   (moves a and b off any other goal)
+ *   unlink: [c]    ──► taskGoalId = null        (only if c is on THIS goal)
+ *   untouched: everything else, including completed and archived rows
+ */
+taskGoalsRouter.post('/task-goals/:id/tasks', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+    const { id } = req.params;
+    const body = linkSchema.parse(req.body);
+
+    const link   = [...new Set(body.link   ?? [])];
+    const unlink = [...new Set(body.unlink ?? [])];
+
+    // Contradictory instructions are a client bug. Picking a winner silently is
+    // how that bug survives to production unnoticed.
+    const contradictory = link.filter((t) => unlink.includes(t));
+    if (contradictory.length > 0) {
+      res.status(400).json({
+        success: false,
+        error: 'A task cannot be both linked and unlinked in one request',
+      });
+      return;
+    }
+
+    const goal = await prisma.taskGoal.findFirst({ where: { id, userId } });
+    if (!goal) { res.status(404).json({ success: false, error: 'Goal not found' }); return; }
+
+    // Every id verified before anything is written: a partial link on a bad id
+    // leaves the client believing it saved something it did not.
+    if (!(await userOwnsTasks(userId, [...link, ...unlink]))) {
+      res.status(404).json({ success: false, error: 'One or more tasks were not found' });
+      return;
+    }
+
+    // Task.taskGoalId holds one goal, so linking MOVES a task. The goals it
+    // moves away from change too, and losing an unfinished task can push one of
+    // them to 100%.
+    const losing = link.length > 0
+      ? await prisma.task.findMany({
+          where: { id: { in: link }, userId, taskGoalId: { not: null } },
+          select: { taskGoalId: true },
+        })
+      : [];
+
+    const writes = [];
+    if (link.length > 0) {
+      writes.push(prisma.task.updateMany({
+        where: { id: { in: link }, userId },
+        data:  { taskGoalId: id },
+      }));
+    }
+    if (unlink.length > 0) {
+      // Scoped to THIS goal: this endpoint can never clear a task's link to a
+      // goal it was not called on.
+      writes.push(prisma.task.updateMany({
+        where: { id: { in: unlink }, userId, taskGoalId: id },
+        data:  { taskGoalId: null },
+      }));
+    }
+    if (writes.length > 0) await prisma.$transaction(writes);
+
+    // A task already on THIS goal is not "moving away" from anything.
+    const affected = [...new Set([
+      id,
+      ...losing.map((t) => t.taskGoalId).filter((g): g is string => !!g && g !== id),
+    ])];
+    await syncGoalCompletion(userId, affected);
+
+    const fresh = await prisma.taskGoal.findFirst({ where: { id, userId } });
+    const counts = await loadGoalCounts(userId, [id]);
+
+    res.json({
+      success: true,
+      data: serializeGoal(fresh ?? goal, counts.get(id) ?? NO_COUNTS),
+    });
+  } catch (err) {
+    if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
+    if (handleAuthError(res, err)) return;
+    console.error('[task-goals] link error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

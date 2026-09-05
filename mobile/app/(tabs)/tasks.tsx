@@ -28,6 +28,7 @@ import FormSheet from '../../components/FormSheet';
 import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
 import AppPressable from '../../components/AppPressable';
 import GoalStatsModal from '../../components/GoalStatsModal';
+import TaskMultiSelect from '../../components/TaskMultiSelect';
 import TimeReportView from '../../components/timeReport/TimeReportView';
 import TimeReportSummary from '../../components/timeReport/TimeReportSummary';
 import type { ReportPeriod } from '../../hooks/useTimeReport';
@@ -843,9 +844,15 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
 }
 
 // ─── GoalFormModal ────────────────────────────────────────────────────────────
-function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSave, onClose, onDelete }: {
-  visible: boolean; goal: TaskGoal | null; existingTags: string[]; sessionLengthMinutes: number;
-  onSave: (data: { title: string; tag?: string | null; targetSessions?: number | null; deadline?: string | null }) => void;
+function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSave, onClose, onDelete }: {
+  visible: boolean; goal: TaskGoal | null; existingTags: string[];
+  /** Unarchived tasks, completed ones included — see TaskMultiSelect. */
+  linkableTasks: Task[];
+  /** Every goal, so the picker can name the one a task moves away from. */
+  goals: TaskGoal[];
+  onSave: (data: {
+    title: string; tag?: string | null; deadline?: string | null; taskIds: string[];
+  }) => void;
   onClose: () => void;
   /** Only passed when editing — creates have nothing to delete. */
   onDelete?: () => void;
@@ -855,8 +862,15 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const [title, setTitle] = useState('');
   const [tag, setTag] = useState<string | null>(null);
-  const [targetSessions, setTargetSessions] = useState(0);
   const [deadline, setDeadline] = useState('');
+  /**
+   * null means "the user has not touched the list yet", so the checkboxes
+   * mirror what is actually linked right now. Once they touch it, their draft
+   * wins. Seeding this from an effect instead would either need `linkableTasks`
+   * as a dependency — wiping the selection under them whenever a background
+   * fetch lands — or would have to ignore it. Deriving has neither problem.
+   */
+  const [draftTaskIds, setDraftTaskIds] = useState<string[] | null>(null);
   // See the task form above: the floor is captured on open and held, because the
   // native picker writes a new date before it relaxes an old floor.
   const [datePickerFloor, setDatePickerFloor] = useState<Date | null>(null);
@@ -865,7 +879,8 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
   useEffect(() => {
     if (visible) {
       setTitle(goal?.title ?? ''); setTag(goal?.tag ?? null);
-      setTargetSessions(goal?.targetSessions ?? 0); setDeadline(goal?.deadline?.substring(0, 10) ?? '');
+      setDeadline(goal?.deadline?.substring(0, 10) ?? '');
+      setDraftTaskIds(null);
       setTitleError(false);
       // This form previously reset nothing about the picker, so a calendar left
       // open on one goal was still mounted when the next goal's deadline was
@@ -873,6 +888,13 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
       setDatePickerFloor(null);
     }
   }, [visible, goal]);
+
+  // What is linked to this goal right now, straight from the task list.
+  const linkedNow = useMemo(
+    () => (goal ? linkableTasks.filter((t) => t.taskGoalId === goal.id).map((t) => t.id) : []),
+    [goal, linkableTasks],
+  );
+  const taskIds = draftTaskIds ?? linkedNow;
 
   const handleSave = () => {
     if (!title.trim()) { setTitleError(true); return; }
@@ -883,10 +905,15 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
     onSave({
       title: title.trim(),
       tag: tag || null,
-      targetSessions: targetSessions > 0 ? targetSessions : null,
       deadline: deadline || null,
+      taskIds,
     });
   };
+  const toggleTask = (id: string) =>
+    setDraftTaskIds((prev) => {
+      const base = prev ?? linkedNow;
+      return base.includes(id) ? base.filter((t) => t !== id) : [...base, id];
+    });
   const datePickerValue = useMemo(
     () => (deadline ? parseLocalDate(deadline) : new Date()),
     [deadline],
@@ -898,7 +925,6 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
     if (Platform.OS === 'android') setDatePickerFloor(null);
     if (date) setDeadline(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
-  const focusHours = targetSessions > 0 ? Math.round(targetSessions * sessionLengthMinutes / 60 * 10) / 10 : null;
 
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
@@ -922,24 +948,11 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
                   </TouchableOpacity>
                 ); })}
               </ScrollView>
-              <Text style={styles.fieldLabel}>Target sessions</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                <TouchableOpacity style={[styles.stepper, { opacity: targetSessions <= 0 ? 0.3 : 1 }]} disabled={targetSessions <= 0} onPress={() => setTargetSessions(Math.max(0, targetSessions - 1))}>
-                  <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
-                </TouchableOpacity>
-                <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700', width: 88, textAlign: 'center' }}>{targetSessions > 0 ? `${targetSessions} sessions` : 'not set'}</Text>
-                <TouchableOpacity style={[styles.stepper, { opacity: targetSessions >= 200 ? 0.3 : 1 }]} disabled={targetSessions >= 200} onPress={() => setTargetSessions(Math.min(200, targetSessions + 1))}>
-                  <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
-                </TouchableOpacity>
-                {focusHours && <Text style={{ color: Colors.subtext, fontSize: 11, marginLeft: 12 }}>≈ {focusHours}h</Text>}
-              </View>
-              {/* Sessions are no longer uniformly workDuration — a task with an
-                  estimate sizes its own blocks — so this figure is an estimate
-                  from the default, not an identity. Saying so keeps it honest. */}
-              <Text style={[styles.fieldLabel, { marginBottom: 16 }]}>
-                Estimated from your {sessionLengthMinutes}m default; sessions sized to a task estimate differ
-              </Text>
-              <Text style={styles.fieldLabel}>Deadline</Text>
+              {/* The session stepper used to sit here, above the deadline, and
+                  it is why nobody could find the deadline. A goal is measured on
+                  its tasks now, so the two things it asks for are WHEN and
+                  WHICH — in that order. */}
+              <Text style={styles.fieldLabel}>Due date</Text>
               {deadline ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: Colors.primaryDim, marginRight: 8 }}>
@@ -955,6 +968,20 @@ function GoalFormModal({ visible, goal, existingTags, sessionLengthMinutes, onSa
                 </TouchableOpacity>
               )}
               {datePickerOpen && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={datePickerFloor!} />}
+
+              {/* What the goal is actually measured on. Previously reachable
+                  only from the other side — open a task, pick its goal — so
+                  linking twelve tasks meant opening twelve tasks. */}
+              <Text style={styles.fieldLabel}>
+                Tasks{taskIds.length > 0 ? ` · ${taskIds.length} selected` : ''}
+              </Text>
+              <TaskMultiSelect
+                tasks={linkableTasks}
+                goals={goals}
+                goalId={goal?.id ?? null}
+                selectedIds={taskIds}
+                onToggle={toggleTask}
+              />
 
               {/* Editing only. Goals previously had no delete affordance anywhere
                   in the app — they could be created but never removed. */}
@@ -1862,6 +1889,7 @@ export default function TasksScreen() {
       fetchGoals: s.fetchGoals,
       createGoal: s.createGoal,
       updateGoal: s.updateGoal,
+      linkTasks: s.linkTasks,
       deleteGoal: s.deleteGoal,
       toggleGoalComplete: s.toggleGoalComplete,
     })),
@@ -2138,12 +2166,35 @@ export default function TasksScreen() {
     );
   }, [formGoal, goalActions]);
 
-  const handleGoalSave = useCallback(async (data: any) => {
+  const handleGoalSave = useCallback(async (data: {
+    title: string; tag?: string | null; deadline?: string | null; taskIds: string[];
+  }) => {
     setShowGoalForm(false);
-    if (formGoal) await goalActions.updateGoal(formGoal.id, data);
-    else await goalActions.createGoal(data);
+    const { taskIds, ...fields } = data;
+
+    if (!formGoal) {
+      // One request: the tasks go in WITH the create, so there is no window in
+      // which a goal exists without the tasks the user just picked.
+      await goalActions.createGoal({ ...fields, taskIds });
+      setFormGoal(null);
+      return;
+    }
+
+    await goalActions.updateGoal(formGoal.id, fields);
+
+    // Deltas against what was linked when the sheet opened. Sending the whole
+    // set would tell the server to unlink everything absent from it — including
+    // completed tasks and archived recurring instances the picker never showed.
+    const before = tasks.filter((t) => t.taskGoalId === formGoal.id).map((t) => t.id);
+    const link = taskIds.filter((id) => !before.includes(id));
+    const unlink = before.filter((id) => !taskIds.includes(id));
+    if (link.length > 0 || unlink.length > 0) {
+      await goalActions.linkTasks(formGoal.id, { link, unlink });
+      // Linking can move a task off another goal, so the task rows are stale.
+      await taskActions.fetchTasks();
+    }
     setFormGoal(null);
-  }, [formGoal, goalActions]);
+  }, [formGoal, goalActions, taskActions, tasks]);
 
   // ── Back from detail view ──
   const goBack = useCallback(() => setActiveView(null), []);
@@ -2232,7 +2283,7 @@ export default function TasksScreen() {
             </View>
           )}
         </ScrollView>
-        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
+        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
         {/* Mounted here as well as in the Tasks tab: this screen owns a control
             that opens it, so it has to be able to render it. */}
@@ -2520,7 +2571,7 @@ export default function TasksScreen() {
         }}
       />
       <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
-      <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
+      <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
       <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
       <Toast message={toast} />
     </SafeAreaView>

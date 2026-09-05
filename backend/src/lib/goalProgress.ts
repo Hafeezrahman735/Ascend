@@ -5,10 +5,24 @@ import { eventBus, EventTypes } from '../middleware/eventBus';
 /**
  * TaskGoal progress + auto-completion.
  *
- * A goal can be measured on completed tasks, on focus sessions logged against
- * its linked tasks, or on both. Everything that needs a goal's progress reads it
- * from here so the server is the single source of truth — the client no longer
- * recomputes it from its own partial task list.
+ * A goal is measured on its COMPLETED TASKS. One unit, nothing derived.
+ * Everything that needs a goal's progress reads it from here so the server is
+ * the single source of truth — the client no longer recomputes it from its own
+ * partial task list.
+ *
+ * It used to be measurable on sessions too ('sessions' / 'both' modes, against a
+ * `targetSessions` number the user set on the goal). That broke once sessions
+ * stopped being uniformly `workDuration` long — lib/sessionPlan.ts sizes blocks
+ * to task estimates and the stopwatch records anything — so "12 of 20 sessions"
+ * described an amount of work nobody could name. `targetSessions` and
+ * `progressMode` still exist on the row and are still accepted on the wire, but
+ * nothing here reads them: see accept-and-ignore in modules/taskgoals/routes.ts.
+ *
+ *   linked tasks ─┐
+ *                 ├─► taskProgress = completed / linked ─► overallProgress
+ *   completed  ───┘                                             │
+ *                                                               ▼
+ *   sessions, focus seconds ──► reporting stats only ──► (never a denominator)
  */
 
 export interface TaskGoalCounts {
@@ -25,51 +39,47 @@ export interface TaskGoalCounts {
 }
 
 export interface TaskGoalProgress extends TaskGoalCounts {
+  /** Always 'tasks'. Kept on the wire; see computeProgress. */
   progressMode: ProgressMode;
   taskProgress: number;
-  /** null when the goal has no session target to measure against. */
+  /**
+   * Always null. Retained on the shape rather than removed because the mobile
+   * TaskGoal interface is hand-maintained against this one with no runtime
+   * validation on either side, and the integration suite asserts the exact key
+   * set the client declares.
+   */
   sessionProgress: number | null;
   overallProgress: number;
 }
 
 /**
- * A goal only claims a sessions component if it actually has a target to measure
- * against. A stored mode of 'sessions'/'both' with no targetSessions would
- * otherwise report progress it cannot compute.
+ * Progress for one goal.
+ *
+ * `stored` and `targetSessions` are accepted so callers can keep passing what
+ * the row holds, and are deliberately UNUSED: a goal's progress is its completed
+ * task ratio whatever the row says its mode is. Dropping the parameters would
+ * mean touching every call site to prove the same thing.
  */
-export function resolveProgressMode(
-  stored: ProgressMode,
-  targetSessions: number | null,
-): ProgressMode {
-  if (!targetSessions || targetSessions <= 0) return 'tasks';
-  return stored;
-}
-
 export function computeProgress(
-  stored: ProgressMode,
-  targetSessions: number | null,
+  _stored: ProgressMode,
+  _targetSessions: number | null,
   counts: TaskGoalCounts,
 ): TaskGoalProgress {
-  const progressMode = resolveProgressMode(stored, targetSessions);
-
+  // 0/0 is 0, never 1 — otherwise an empty goal auto-completes itself.
   const taskProgress =
     counts.linkedTaskCount > 0 ? counts.completedTaskCount / counts.linkedTaskCount : 0;
 
-  const sessionProgress =
-    targetSessions && targetSessions > 0
-      ? Math.min(counts.actualSessions / targetSessions, 1)
-      : null;
-
-  // Flat 50/50 for 'both'. Deliberately not configurable here — weighted rollups
-  // belong to the goal-hierarchy design, not to this.
-  const overallProgress =
-    progressMode === 'tasks'
-      ? taskProgress
-      : progressMode === 'sessions'
-        ? (sessionProgress ?? 0)
-        : (taskProgress + (sessionProgress ?? 0)) / 2;
-
-  return { ...counts, progressMode, taskProgress, sessionProgress, overallProgress };
+  return {
+    ...counts,
+    progressMode: 'tasks',
+    taskProgress,
+    // Kept on the shape, permanently null. The mobile TaskGoal interface is
+    // hand-maintained against this with no runtime validation on either side
+    // (see SerializedGoal in modules/taskgoals/routes.ts), and narrowing the
+    // wire is a worse change than leaving a null the client already handles.
+    sessionProgress: null,
+    overallProgress: taskProgress,
+  };
 }
 
 /**
@@ -188,9 +198,11 @@ export async function syncGoalCompletion(userId: string, goalIds: string[]): Pro
       totalFocusSeconds: 0,
     };
 
-    // A goal with nothing linked and no session target is at 0%, not 100% —
-    // guard so an empty goal can't auto-complete itself.
-    if (c.linkedTaskCount === 0 && !goal.targetSessions) continue;
+    // A goal with nothing linked is at 0%, not 100% — guard so an empty goal
+    // can't auto-complete itself. This used to also spare goals carrying a
+    // session target; with progress task-denominated, having a target changes
+    // nothing, and keeping the clause read as though it might.
+    if (c.linkedTaskCount === 0) continue;
 
     const progress = computeProgress(goal.progressMode, goal.targetSessions, c);
     if (progress.overallProgress < 1) continue;
@@ -220,11 +232,8 @@ export async function syncGoalCompletion(userId: string, goalIds: string[]): Pro
       userId,
       goalId: goal.id,
       title: goal.title,
-      progressMode: progress.progressMode,
       completedTaskCount: progress.completedTaskCount,
       linkedTaskCount: progress.linkedTaskCount,
-      actualSessions: progress.actualSessions,
-      targetSessions: goal.targetSessions,
     });
   }
 }
@@ -243,4 +252,25 @@ export async function userOwnsGoal(
     select: { id: true },
   });
   return !!goal;
+}
+
+/**
+ * Verify EVERY task in the set belongs to this user, before any of them is
+ * written. The mirror image of userOwnsGoal, for the bulk link/unlink endpoint.
+ *
+ * All-or-nothing on purpose: a partial link that silently skipped the ids it did
+ * not like would leave the client believing it saved something it did not. One
+ * count query regardless of set size.
+ *
+ * Duplicate ids in the input are deduped first, so `['a','a']` cannot fail the
+ * count check against a single real row.
+ */
+export async function userOwnsTasks(
+  userId: string,
+  taskIds: string[],
+): Promise<boolean> {
+  const unique = [...new Set(taskIds)];
+  if (unique.length === 0) return true;
+  const found = await prisma.task.count({ where: { id: { in: unique }, userId } });
+  return found === unique.length;
 }
