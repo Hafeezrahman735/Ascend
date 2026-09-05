@@ -19,15 +19,24 @@ export function useNotificationListener(): void {
     const tapSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
       const type = getNotificationType(response);
 
-      if (type === 'focus_complete' || type === 'break_complete' || type === 'daily_reminder') {
-        // Route to the timer tab explicitly: /(tabs) now lands on Trace, so a
-        // bare group push would drop the user on the feed after their session
-        // ends. On a cold launch the router may not be ready yet — retry once.
+      // Each notification type lands where you can act on it: a timer alarm on
+      // the timer, a goal due-date reminder on the tab that owns goals. Routing
+      // is explicit because /(tabs) lands on Trace, so a bare group push would
+      // drop the user on the feed instead of the thing they just tapped.
+      const destination =
+        type === 'focus_complete' || type === 'break_complete' || type === 'daily_reminder'
+          ? '/(tabs)/focus'
+          : type === 'goal_due'
+            ? '/(tabs)/tasks'
+            : null;
+
+      if (destination) {
+        // On a cold launch the router may not be ready yet — retry once.
         try {
-          router.replace('/(tabs)/focus');
+          router.replace(destination);
         } catch {
           setTimeout(() => {
-            router.replace('/(tabs)/focus');
+            router.replace(destination);
           }, 100);
         }
       }

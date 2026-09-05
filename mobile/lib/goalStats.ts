@@ -326,3 +326,31 @@ export function goalStatCells(goal: TaskGoal, ctx: GoalStatsContext): GoalStatCe
 
   return cells;
 }
+
+/**
+ * Days a goal is past its due date. 0 when it is not overdue at all.
+ *
+ * A COMPLETED goal is never overdue, however long its date has been gone.
+ * Finishing late is still finishing, and a done goal wearing a red badge reads
+ * as a reprimand for work already delivered.
+ */
+export function overdueDays(goal: TaskGoal, now: Date): number {
+  if (goal.isCompleted) return 0;
+  const left = daysUntil(goal.deadline, now);
+  return left !== null && left < 0 ? -left : 0;
+}
+
+/**
+ * The goal list, with overdue goals pinned to the top, worst first.
+ *
+ * Everything else keeps the order it arrived in — the sort is STABLE by
+ * original index rather than by any secondary field. A list that also reshuffled
+ * on-time goals would make the pin impossible to notice, because the whole
+ * screen would have moved.
+ */
+export function sortGoalsByUrgency(goals: TaskGoal[], now: Date): TaskGoal[] {
+  return goals
+    .map((goal, index) => ({ goal, index, overdue: overdueDays(goal, now) }))
+    .sort((a, b) => (b.overdue - a.overdue) || (a.index - b.index))
+    .map((entry) => entry.goal);
+}

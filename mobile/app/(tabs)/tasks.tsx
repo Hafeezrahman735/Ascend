@@ -32,7 +32,7 @@ import TaskMultiSelect from '../../components/TaskMultiSelect';
 import TimeReportView from '../../components/timeReport/TimeReportView';
 import TimeReportSummary from '../../components/timeReport/TimeReportSummary';
 import type { ReportPeriod } from '../../hooks/useTimeReport';
-import { lastSessionOnGoal, type GoalStatusAction } from '../../lib/goalStats';
+import { lastSessionOnGoal, sortGoalsByUrgency, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
 import { useTimerStore } from '../../stores/timerStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
@@ -1419,19 +1419,34 @@ function GoalCard({ goal, onLongPressTag }: { goal: TaskGoal; onLongPressTag?: (
   const ts = useTagStyle(goal.tag ?? '');
   const deadlineDays = daysUntilLocalDate(goal.deadline);
   const deadlineLabel = formatDeadlineLabel(goal.deadline);
+  // A finished goal is never late, however long its date has been gone.
+  const isOverdue = !goal.isCompleted && deadlineDays !== null && deadlineDays < 0;
+  // Nothing linked means 0% forever, and the number alone cannot say why.
+  // The most common cause is a goal that predates goals being counted in tasks.
+  const isEmpty = !goal.isCompleted && goal.linkedTaskCount === 0;
+
   return (
-    <View style={[styles.card, { marginBottom: 12 }]}>
+    <View style={[
+      styles.card,
+      { marginBottom: 12 },
+      isOverdue && { borderColor: ROSE, borderWidth: 1 },
+    ]}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
         <View style={{ flex: 1 }}>
           <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{goal.title}</Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+            {isOverdue && (
+              <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, backgroundColor: ROSE }}>
+                <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.6, color: '#fff' }}>OVERDUE</Text>
+              </View>
+            )}
             {goal.tag && (
               <TouchableOpacity onLongPress={() => onLongPressTag?.(goal.tag!)} delayLongPress={400}
                 style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: ts.bg }}>
                 <Text style={{ fontSize: 10, fontWeight: '700', color: ts.text }}>{ts.icon} {goal.tag}</Text>
               </TouchableOpacity>
             )}
-            {deadlineLabel && <Text style={{ color: (deadlineDays ?? 0) < 0 ? ROSE : Colors.subtext, fontSize: 11 }}>{deadlineLabel}</Text>}
+            {deadlineLabel && <Text style={{ color: isOverdue ? ROSE : Colors.subtext, fontSize: 11 }}>{deadlineLabel}</Text>}
           </View>
         </View>
         <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800' }}>{pct}%</Text>
@@ -1439,7 +1454,16 @@ function GoalCard({ goal, onLongPressTag }: { goal: TaskGoal; onLongPressTag?: (
       <View style={{ height: 6, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
         <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: goal.isCompleted ? Colors.trace : Colors.primary }} />
       </View>
-      <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goalSubMetrics(goal)}</Text>
+      {isEmpty ? (
+        // States the fact and stops there: tapping this card opens the stats
+        // modal, whose status line already offers the link-a-task action. Copy
+        // that promises something the gesture does not do is worse than none.
+        <Text style={{ color: Colors.warning, fontSize: 12 }}>
+          No tasks linked yet.
+        </Text>
+      ) : (
+        <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goalSubMetrics(goal)}</Text>
+      )}
     </View>
   );
 }
@@ -1984,6 +2008,12 @@ export default function TasksScreen() {
   const monday = useMemo(() => getMonday(now), [now]);
   const nextMonday = useMemo(() => { const d = new Date(monday); d.setDate(d.getDate() + 7); return d; }, [monday]);
   const todayColIndex = useMemo(() => { const d = now.getDay(); return d === 0 ? 6 : d - 1; }, [now]);
+  // Overdue goals first, worst first; everything else keeps its order. A goal
+  // whose date has passed is the one thing on this screen needing a decision
+  // rather than a glance, so it should not sit somewhere down the list. Lives
+  // here, with the other clock-derived memos, because `now` is a live value —
+  // reading it above its own declaration is a temporal dead zone crash.
+  const goalsByUrgency = useMemo(() => sortGoalsByUrgency(goals, now), [goals, now]);
 
   // ── Session analytics ──
   const todaySessions = useMemo(() => sessionHistory.filter((s) => s.type === 'focus' && isToday(s.completedAt)), [sessionHistory]);
@@ -2076,9 +2106,12 @@ export default function TasksScreen() {
   const handleGoalAction = useCallback((action: GoalStatusAction, goalId: string) => {
     setStatsGoalId(null);
     if (action === 'start-session') { router.push('/(tabs)/focus'); return; }
-    // Linking and rescheduling both happen in a form. A task is linked from the
-    // TASK form (that is where taskGoalId lives), a deadline from the GOAL form.
-    if (action === 'link-task') { setFormTask(null); setShowFormModal(true); return; }
+    // Both linking and rescheduling now happen in the GOAL form: it owns the
+    // due date, and since goals became task-counted it owns the task list too.
+    // `link-task` used to open a blank NEW task form, because taskGoalId could
+    // only be set from the task side — so repairing an empty goal meant
+    // creating a task and remembering to pick the right goal on it. Opening the
+    // goal itself is the same repair in one step, against the goal you tapped.
     const goal = goals.find((g) => g.id === goalId);
     if (goal) { setFormGoal(goal); setShowGoalForm(true); }
   }, [router, goals]);
@@ -2247,7 +2280,7 @@ export default function TasksScreen() {
               <View style={[styles.card, { alignItems: 'center', paddingVertical: 32 }]}>
                 <Text style={{ color: Colors.subtext, fontSize: 13 }}>No goals yet. Group your tasks into something worth finishing.</Text>
               </View>
-            ) : goals.map((g) => (
+            ) : goalsByUrgency.map((g) => (
               // Tap opens stats; editing moved to the modal's footer link, the
               // same split TaskRow/TaskStatsModal already uses. Long-press is
               // NOT available as a second hatch here — `onLongPressTag` on the

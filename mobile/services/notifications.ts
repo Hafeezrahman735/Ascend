@@ -3,6 +3,8 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform, AppState } from 'react-native';
 import { api } from './api';
 import { log } from '../lib/log';
+import type { TaskGoal } from '../types';
+import { goalRemindersToSchedule, isGoalReminderId } from '../lib/goalReminders';
 
 // Expo Go (SDK 53+) no longer supports push notifications and warns on local
 // ones, so we disable all notification behavior there. Dev builds (expo-dev-client)
@@ -266,12 +268,84 @@ export async function cancelAllTimerNotifications(): Promise<void> {
 }
 
 /**
+ * Bring the pending goal reminders in line with the goals as they are now.
+ *
+ * Every other notification in this app uses one of three FIXED identifiers and
+ * a cancel-then-schedule pair. Goal reminders are DYNAMIC — one per goal, an
+ * unknown number of them — so keeping them correct means first asking the OS
+ * what is currently pending. `getAllScheduledNotificationsAsync` is the only
+ * way to know that, and this is its first use in the codebase.
+ *
+ * Reconciles rather than appends: cancel every goal reminder we own, then
+ * schedule the wanted set. Simple and idempotent, which matters because this
+ * runs on every goal change and every hydrate. The cost is bounded by
+ * MAX_GOAL_REMINDERS, and pending notifications are cheap to replace.
+ *
+ * Only identifiers matching the goal prefix are touched. The daily reminder and
+ * the two timer alarms are scheduled by the same OS queue and must survive.
+ *
+ * Reminders are local, so they fire only on the device that scheduled them. A
+ * goal created on another device gets one here the next time this device
+ * hydrates — that is the accepted cost of having no server-side scheduler.
+ */
+export async function syncGoalReminders(goals: TaskGoal[]): Promise<void> {
+  if (isExpoGo) return;
+  try {
+    const wanted = goalRemindersToSchedule(goals, new Date());
+
+    const pending = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.allSettled(
+      pending
+        .filter((n) => isGoalReminderId(n.identifier))
+        .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier)),
+    );
+
+    for (const r of wanted) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: r.identifier,
+        content: {
+          title: r.title,
+          body: r.body,
+          data: { type: 'goal_due', goalId: r.goalId },
+          ...(Platform.OS === 'android' && { channelId: ANDROID_CHANNEL }),
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: r.fireAt,
+        },
+      });
+    }
+
+    log('[notifications] goal reminders synced:', wanted.length);
+  } catch (err) {
+    // Never fatal. A missing reminder is a worse day, not a broken app, and
+    // this runs off the back of every goal write.
+    console.warn('[notifications] goal reminder sync failed:', err);
+  }
+}
+
+/** Drop every goal reminder — on logout, or when goals are cleared. */
+export async function cancelGoalReminders(): Promise<void> {
+  if (isExpoGo) return;
+  try {
+    const pending = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.allSettled(
+      pending
+        .filter((n) => isGoalReminderId(n.identifier))
+        .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier)),
+    );
+  } catch (err) {
+    console.warn('[notifications] goal reminder cancel failed:', err);
+  }
+}
+
+/**
  * Extract the notification type from a tap response, for navigation routing.
  */
 export function getNotificationType(
   response: Notifications.NotificationResponse,
-): 'focus_complete' | 'break_complete' | 'daily_reminder' | null {
+): 'focus_complete' | 'break_complete' | 'daily_reminder' | 'goal_due' | null {
   const data = response.notification.request.content.data;
   if (!data) return null;
-  return (data.type as 'focus_complete' | 'break_complete' | 'daily_reminder') ?? null;
+  return (data.type as 'focus_complete' | 'break_complete' | 'daily_reminder' | 'goal_due') ?? null;
 }

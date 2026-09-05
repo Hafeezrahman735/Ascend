@@ -3,10 +3,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
 import { TaskGoal } from '../types';
 import { useAuthStore } from './authStore';
+import { syncGoalReminders, cancelGoalReminders } from '../services/notifications';
 
 const GOALS_CACHE_KEY = (userId: string) => `goals:cache:${userId}`;
 
+/**
+ * Cache the list AND bring the due-date reminders in line with it.
+ *
+ * The reminder sync hangs off persistGoals deliberately. This function is
+ * called at every point the canonical list changes — fourteen of them — and
+ * hooking each one individually is how one gets missed and a deleted goal keeps
+ * notifying. Fire-and-forget: a reminder that failed to reschedule is a worse
+ * day, not a broken write.
+ */
 async function persistGoals(goals: TaskGoal[], userId: string | null | undefined): Promise<void> {
+  syncGoalReminders(goals).catch(() => {});
   if (!userId) return;
   try {
     await AsyncStorage.setItem(GOALS_CACHE_KEY(userId), JSON.stringify(goals));
@@ -112,7 +123,14 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
     const cached = await readCachedGoals(userId);
     if (!cached || cached.length === 0) return;
     const confirmed = cached.filter((g) => !isTempId(g.id));
-    if (confirmed.length > 0) set({ goals: confirmed });
+    if (confirmed.length === 0) return;
+    set({ goals: confirmed });
+    // Reminders are LOCAL, so they exist only on the device that scheduled
+    // them. Syncing on hydrate is what eventually gives this device reminders
+    // for a goal created on another one, and what clears reminders for a goal
+    // deleted elsewhere. Explicit here because hydrate reads the cache rather
+    // than writing it, so it never reaches persistGoals.
+    syncGoalReminders(confirmed).catch(() => {});
   },
 
   fetchGoals: async (silent = false) => {
@@ -282,6 +300,9 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
   clearGoals: (userId?: string) => {
     const resolvedUserId = userId ?? useAuthStore.getState().user?.id;
     set({ goals: [], isLoading: false, error: null });
+    // Logging out must not leave a reminder pending for someone else's goal on
+    // a shared device.
+    cancelGoalReminders().catch(() => {});
     if (resolvedUserId) {
       AsyncStorage.removeItem(GOALS_CACHE_KEY(resolvedUserId)).catch(() => {});
     }

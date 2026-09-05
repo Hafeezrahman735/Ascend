@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatSeconds, daysUntil, shareOfLifetimeFocus, goalPace,
   goalStatusLine, goalStatCells, STALLED_AFTER_DAYS,
+  overdueDays, sortGoalsByUrgency,
   type GoalStatsContext,
 } from './goalStats';
 import type { TaskGoal } from '../types';
@@ -295,5 +296,81 @@ describe('goalStatCells — progressMode gating', () => {
         }
       }
     }
+  });
+});
+
+describe('overdueDays', () => {
+  const NOW = new Date(2026, 8, 10, 12); // 10 Sep 2026, local noon
+
+  it('counts days past the due date', () => {
+    expect(overdueDays(goal({ deadline: '2026-09-07' }), NOW)).toBe(3);
+  });
+
+  it('is 0 on the due date itself, and before it', () => {
+    expect(overdueDays(goal({ deadline: '2026-09-10' }), NOW)).toBe(0);
+    expect(overdueDays(goal({ deadline: '2026-09-30' }), NOW)).toBe(0);
+  });
+
+  it('is 0 with no deadline to be late against', () => {
+    expect(overdueDays(goal({ deadline: null }), NOW)).toBe(0);
+  });
+
+  it('is 0 for a COMPLETED goal, however long its date has been gone', () => {
+    // Finishing late is still finishing. A done goal wearing a red badge reads
+    // as a reprimand for work already delivered.
+    expect(overdueDays(goal({ deadline: '2026-01-01', isCompleted: true }), NOW)).toBe(0);
+  });
+});
+
+describe('sortGoalsByUrgency', () => {
+  const NOW = new Date(2026, 8, 10, 12);
+
+  it('pins overdue goals to the top, worst first', () => {
+    const out = sortGoalsByUrgency(
+      [
+        goal({ id: 'fine', deadline: '2026-12-01' }),
+        goal({ id: 'late-a-bit', deadline: '2026-09-09' }),
+        goal({ id: 'no-date', deadline: null }),
+        goal({ id: 'very-late', deadline: '2026-08-01' }),
+      ],
+      NOW,
+    );
+    expect(out.map((g) => g.id)).toEqual(['very-late', 'late-a-bit', 'fine', 'no-date']);
+  });
+
+  it('leaves everything else in the order it arrived', () => {
+    // Stable by original index, not by any secondary field. A sort that also
+    // reshuffled on-time goals would hide the pin, because the whole screen
+    // would have moved.
+    const out = sortGoalsByUrgency(
+      [
+        goal({ id: 'c', deadline: '2026-09-30' }),
+        goal({ id: 'a', deadline: null }),
+        goal({ id: 'b', deadline: '2026-12-25' }),
+      ],
+      NOW,
+    );
+    expect(out.map((g) => g.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('does not pin a completed goal whose date has passed', () => {
+    const out = sortGoalsByUrgency(
+      [
+        goal({ id: 'open', deadline: '2026-09-09' }),
+        goal({ id: 'done-late', deadline: '2026-01-01', isCompleted: true }),
+      ],
+      NOW,
+    );
+    expect(out[0].id).toBe('open');
+  });
+
+  it('does not mutate the array it was given', () => {
+    const input = [goal({ id: 'a', deadline: '2026-12-01' }), goal({ id: 'b', deadline: '2026-08-01' })];
+    sortGoalsByUrgency(input, NOW);
+    expect(input.map((g) => g.id)).toEqual(['a', 'b']);
+  });
+
+  it('handles an empty list', () => {
+    expect(sortGoalsByUrgency([], NOW)).toEqual([]);
   });
 });
