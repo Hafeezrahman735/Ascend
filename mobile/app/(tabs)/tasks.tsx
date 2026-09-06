@@ -979,7 +979,7 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
               <TouchableOpacity onPress={handleSave} hitSlop={10}><Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Save</Text></TouchableOpacity>
             </View>
             <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
-              <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE }]} placeholder="e.g. Complete Calculus unit" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={80} />
+              <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE }]} placeholder="e.g. Complete Calculus unit" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus={!goal} maxLength={80} />
               {titleError && <Text style={{ color: ROSE, fontSize: 11, marginTop: -8, marginBottom: 12 }}>Goal title can't be empty</Text>}
               <Text style={styles.fieldLabel}>Category</Text>
               {/* Categories used to be a closed set: whatever tags already
