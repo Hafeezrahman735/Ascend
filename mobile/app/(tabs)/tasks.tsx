@@ -500,9 +500,16 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   // crashes rather than misrenders.
   const datePickerOpen = datePickerFloor !== null
     && pickerAcceptsValue(datePickerFloor, datePickerValue);
-  const handleDateChange = (_event: DateTimePickerEvent, date?: Date) => {
-    if (Platform.OS === 'android') setDatePickerFloor(null);
-    if (date) setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
+  // Closes on selection, on EVERY platform. Android already dismissed itself;
+  // iOS's inline calendar stayed mounted, leaving a 350px picker wedged in the
+  // sheet with no way to put it away. Unmounting is also the safe move: the
+  // picker crashes when a new value is written against a stale minimumDate, and
+  // the recorded fix is to unmount rather than hand it a value beneath its
+  // floor. `dismissed` is Android's cancel, where no date comes back.
+  const handleDateChange = (event: DateTimePickerEvent, date?: Date) => {
+    setDatePickerFloor(null);
+    if (event.type === 'dismissed' || !date) return;
+    setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
 
   // Both ends or neither, and the block must move forwards — the same rules the
@@ -593,75 +600,6 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
         ); })}
       </View>
 
-      {/* recurring toggle */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, marginBottom: isRecurring ? 4 : 18 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring</Text>
-          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Repeats automatically each day</Text>
-        </View>
-        <Switch
-          value={isRecurring}
-          onValueChange={(val) => { setIsRecurring(val); setDatePickerFloor(null); if (val) setDueDate(''); else setRecurringDays([]); }}
-          trackColor={{ false: Colors.inactive, true: Colors.primary }}
-          thumbColor="#FFFFFF"
-        />
-      </View>
-
-      {/* day selector — only when recurring is on */}
-      {isRecurring && (
-        <View style={{ marginBottom: 18 }}>
-          <Text style={[monoLabel, { marginTop: 8 }]}>REPEAT ON</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {ALL_DAYS.map((day) => {
-              const isSelected = recurringDays.length === 0 || recurringDays.includes(day);
-              return (
-                <TouchableOpacity
-                  key={day}
-                  onPress={() => {
-                    if (recurringDays.length === 0) {
-                      // Currently "every day" — deselect this one.
-                      setRecurringDays(ALL_DAYS.filter((d) => d !== day));
-                    } else if (recurringDays.includes(day)) {
-                      const next = recurringDays.filter((d) => d !== day);
-                      setRecurringDays(next.length === 0 ? [] : next);
-                    } else {
-                      const next = [...recurringDays, day];
-                      setRecurringDays(next.length === 7 ? [] : next);
-                    }
-                  }}
-                  style={{ flex: 1, aspectRatio: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: isSelected ? Colors.primary : Colors.border }}
-                >
-                  <Text style={{ color: isSelected ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{DOW_LABELS[day]}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 8 }}>
-            {recurringDays.length === 0 ? 'Every day' : recurringDays.map((d) => DAY_FULL_LABELS[d]).join(', ')}
-          </Text>
-        </View>
-      )}
-
-      {/* estimated focus time */}
-      <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-        <TouchableOpacity disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes <= 0 ? 0.4 : 1 }}>
-          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
-        </TouchableOpacity>
-        <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '600', minWidth: 84, textAlign: 'center', fontFamily: MONO }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
-        <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
-          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
-        </TouchableOpacity>
-        {estPlanLabel && (
-          <Text
-            style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}
-            accessibilityLabel={`Splits into ${estPlan && estPlan.length > 1 ? `${estPlan.length} sessions of ${estPlan.join(', ')} minutes` : `one session of ${estPlan?.[0]} minutes`}`}
-          >
-            ≈ {estPlanLabel}
-          </Text>
-        )}
-      </View>
-
       {/* due date + category */}
       <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
         <View style={{ flex: 1 }}>
@@ -695,6 +633,68 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
             </TouchableOpacity>
           </View>
         </View>
+      </View>
+
+      {/* The calendar and the category editor belong DIRECTLY under the
+          row that opens them. Both used to render after the TIME block,
+          so tapping "Set date" or "+ Add" pushed a panel out below the
+          hour selector — nowhere near the control that summoned it, and
+          often off the bottom of the sheet entirely. Due date is the left
+          column and subject the right, so the two reveals stack here in
+          reading order. */}
+      {datePickerOpen && (
+        <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
+          <DateTimePicker
+            value={datePickerValue}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            onChange={handleDateChange}
+            minimumDate={datePickerFloor!}
+            themeVariant={isDark ? 'dark' : 'light'}
+            accentColor={Colors.primary}
+          />
+        </View>
+      )}
+
+      {/* category editor (revealed by "+ Add") */}
+      {tagEditorOpen && (
+        <View style={{ marginBottom: 18 }}>
+          {allTagChips.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
+                <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
+                  <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
+                </TouchableOpacity>
+              ); })}
+            </View>
+          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New category…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
+            <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="add" size={18} color={Colors.primarySoft} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* estimated focus time */}
+      <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+        <TouchableOpacity disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes <= 0 ? 0.4 : 1 }}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
+        </TouchableOpacity>
+        <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '600', minWidth: 84, textAlign: 'center', fontFamily: MONO }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
+        <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
+        </TouchableOpacity>
+        {estPlanLabel && (
+          <Text
+            style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}
+            accessibilityLabel={`Splits into ${estPlan && estPlan.length > 1 ? `${estPlan.length} sessions of ${estPlan.join(', ')} minutes` : `one session of ${estPlan?.[0]} minutes`}`}
+          >
+            ≈ {estPlanLabel}
+          </Text>
+        )}
       </View>
 
       {/* scheduled time — drives the Day timeline in the calendar */}
@@ -778,40 +778,6 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
           </>
         )}
       </View>
-      {/* category editor (revealed by "+ Add") */}
-      {tagEditorOpen && (
-        <View style={{ marginBottom: 18 }}>
-          {allTagChips.length > 0 && (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-              {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
-                <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
-                  <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
-                </TouchableOpacity>
-              ); })}
-            </View>
-          )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New category…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
-            <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="add" size={18} color={Colors.primarySoft} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {datePickerOpen && (
-        <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
-          <DateTimePicker
-            value={datePickerValue}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'inline' : 'default'}
-            onChange={handleDateChange}
-            minimumDate={datePickerFloor!}
-            themeVariant={isDark ? 'dark' : 'light'}
-            accentColor={Colors.primary}
-          />
-        </View>
-      )}
 
       {/* link to goal — no slot in the design; kept here when goals exist */}
       {goals.length > 0 && (
@@ -822,6 +788,61 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
             <Text style={{ flex: 1, color: selectedGoal ? Colors.primarySoft : Colors.subtext, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{selectedGoal ? selectedGoal.title : 'Link to a goal (optional)'}</Text>
             <Ionicons name="chevron-forward" size={14} color={Colors.subtext} />
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Recurring sits last, above the notes. It is the one field that
+          changes what the task IS rather than describing it, and every
+          answer above stays true either way — so it reads as the closing
+          question, not a fork you hit three fields in. Turning it on also
+          reveals a seven-day selector, which used to shove everything
+          below it down the sheet mid-form. */}
+      {/* recurring toggle */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, marginBottom: isRecurring ? 4 : 18 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring</Text>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Repeats automatically each day</Text>
+        </View>
+        <Switch
+          value={isRecurring}
+          onValueChange={(val) => { setIsRecurring(val); setDatePickerFloor(null); if (val) setDueDate(''); else setRecurringDays([]); }}
+          trackColor={{ false: Colors.inactive, true: Colors.primary }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+
+      {/* day selector — only when recurring is on */}
+      {isRecurring && (
+        <View style={{ marginBottom: 18 }}>
+          <Text style={[monoLabel, { marginTop: 8 }]}>REPEAT ON</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {ALL_DAYS.map((day) => {
+              const isSelected = recurringDays.length === 0 || recurringDays.includes(day);
+              return (
+                <TouchableOpacity
+                  key={day}
+                  onPress={() => {
+                    if (recurringDays.length === 0) {
+                      // Currently "every day" — deselect this one.
+                      setRecurringDays(ALL_DAYS.filter((d) => d !== day));
+                    } else if (recurringDays.includes(day)) {
+                      const next = recurringDays.filter((d) => d !== day);
+                      setRecurringDays(next.length === 0 ? [] : next);
+                    } else {
+                      const next = [...recurringDays, day];
+                      setRecurringDays(next.length === 7 ? [] : next);
+                    }
+                  }}
+                  style={{ flex: 1, aspectRatio: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: isSelected ? Colors.primary : Colors.border }}
+                >
+                  <Text style={{ color: isSelected ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{DOW_LABELS[day]}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 8 }}>
+            {recurringDays.length === 0 ? 'Every day' : recurringDays.map((d) => DAY_FULL_LABELS[d]).join(', ')}
+          </Text>
         </View>
       )}
 
