@@ -925,9 +925,21 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
   const openDatePicker = () => setDatePickerFloor(pickerMinimumDate(datePickerValue));
   const datePickerOpen = datePickerFloor !== null
     && pickerAcceptsValue(datePickerFloor, datePickerValue);
-  const handleDateChange = (_e: DateTimePickerEvent, date?: Date) => {
-    if (Platform.OS === 'android') setDatePickerFloor(null);
-    if (date) setDeadline(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
+  /**
+   * Close on selection, on EVERY platform.
+   *
+   * Android already dismissed itself; iOS's inline calendar stayed mounted, so
+   * a 350px picker sat between the fields and the bottom of the sheet with no
+   * way to put it away. Unmounting is also the safe move rather than a risky
+   * one: the picker crashes when a new value is written against a stale
+   * minimumDate, and the fix recorded for that is to unmount rather than hand
+   * it a value beneath its floor. `dismissed` is Android's cancel event, where
+   * no date comes back and the deadline must not change.
+   */
+  const handleDateChange = (event: DateTimePickerEvent, date?: Date) => {
+    setDatePickerFloor(null);
+    if (event.type === 'dismissed' || !date) return;
+    setDeadline(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
 
   return (
