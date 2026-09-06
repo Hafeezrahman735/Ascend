@@ -879,12 +879,17 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
   // useWindowDimensions, not Dimensions.get(): the latter is read once and goes
   // stale on rotation, which is when a too-tall modal hurts most.
   const { height: windowHeight } = useWindowDimensions();
+  // A category the user invents here does not exist anywhere yet — categories
+  // are derived from the tags already in use, so a brand new one has to live in
+  // local state until this goal is saved and starts using it.
+  const [newCategory, setNewCategory] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
       setTitle(goal?.title ?? ''); setTag(goal?.tag ?? null);
       setDeadline(goal?.deadline?.substring(0, 10) ?? '');
       setDraftTaskIds(null);
+      setNewCategory(null);
       setTitleError(false);
       // This form previously reset nothing about the picker, so a calendar left
       // open on one goal was still mounted when the next goal's deadline was
@@ -964,13 +969,51 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
               <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE }]} placeholder="e.g. Complete Calculus unit" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={80} />
               {titleError && <Text style={{ color: ROSE, fontSize: 11, marginTop: -8, marginBottom: 12 }}>Goal title can't be empty</Text>}
               <Text style={styles.fieldLabel}>Category</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-                {['None', ...existingTags].map((t) => { const sel = t === 'None' ? !tag : tag === t; return (
-                  <TouchableOpacity key={t} onPress={() => setTag(t === 'None' ? null : t)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
+              {/* Categories used to be a closed set: whatever tags already
+                  existed, and nothing else. Creating one meant going and
+                  tagging a TASK first, then coming back. The chip row now ends
+                  in "+ New", and a category the user types is shown selected
+                  immediately even though nothing uses it yet. */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: newCategory !== null ? 8 : 16 }} keyboardShouldPersistTaps="handled">
+                {['None', ...existingTags, ...(tag && !existingTags.includes(tag) ? [tag] : [])].map((t) => { const sel = t === 'None' ? !tag : tag === t; return (
+                  <TouchableOpacity key={t} onPress={() => { setTag(t === 'None' ? null : t); setNewCategory(null); }} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
                     <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{t}</Text>
                   </TouchableOpacity>
                 ); })}
+                <TouchableOpacity
+                  onPress={() => setNewCategory((v) => (v === null ? '' : null))}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: Colors.raised, borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.border }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Create a new category"
+                >
+                  <Ionicons name="add" size={13} color={Colors.primarySoft} style={{ marginRight: 3 }} />
+                  <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>New</Text>
+                </TouchableOpacity>
               </ScrollView>
+              {newCategory !== null && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 14 }]}
+                    placeholder="Category name"
+                    placeholderTextColor={Colors.subtext}
+                    value={newCategory}
+                    onChangeText={setNewCategory}
+                    autoFocus
+                    maxLength={30}
+                    returnKeyType="done"
+                    onSubmitEditing={() => { const v = newCategory.trim(); if (v) setTag(v); setNewCategory(null); }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => { const v = newCategory.trim(); if (v) setTag(v); setNewCategory(null); }}
+                    disabled={!newCategory.trim()}
+                    style={{ paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, backgroundColor: Colors.primary, opacity: newCategory.trim() ? 1 : 0.4 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add category"
+                  >
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               {/* The session stepper used to sit here, above the deadline, and
                   it is why nobody could find the deadline. A goal is measured on
                   its tasks now, so the two things it asks for are WHEN and
