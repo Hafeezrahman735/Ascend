@@ -14,6 +14,17 @@ import {
 } from '../types';
 import { api } from '../services/api';
 
+/**
+ * The non-group feed URL for a scope.
+ *
+ * `scope=public` is sent explicitly and only for the open feed. Sending nothing
+ * is the follow-scoped feed, which is also what the SERVER defaults to — so an
+ * older app binary that never learned about scopes keeps exactly the feed it
+ * has always had.
+ */
+const feedUrl = (scope: 'public' | 'following'): string =>
+  scope === 'public' ? '/social/posts?scope=public' : '/social/posts';
+
 interface SocialState {
   isLoading: boolean;
   isLoadingFollowers: boolean;
@@ -25,6 +36,18 @@ interface SocialState {
   postsCursor: string | null;
   studyGroups: StudyGroup[];
   selectedGroupId: string | null;
+  /**
+   * What the feed shows when NO group is selected.
+   *
+   * 'public' is every public post from anyone; 'following' is only people you
+   * follow, plus yourself. Orthogonal to selectedGroupId rather than folded
+   * into it, because that field also answers "where does a new post go" for
+   * the composer, and a group id is not a feed mode.
+   *
+   * Defaults to 'public': a follow-scoped feed shows a new account nothing at
+   * all, so the social tab used to open empty and stay empty.
+   */
+  feedScope: 'public' | 'following';
   focusLeaderboard: FocusLeaderboardEntry[];
   myFocusEntry: FocusLeaderboardEntry | null;
   notifications: InAppNotification[];
@@ -49,6 +72,7 @@ interface SocialState {
   updateGroupDescription: (groupId: string, description: string | null) =>
     Promise<{ ok: true; description: string | null } | { ok: false; error: string }>;
   setSelectedGroup: (groupId: string | null) => void;
+  setFeedScope: (scope: 'public' | 'following') => void;
   fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
   markNotificationsRead: () => Promise<void>;
   fetchNotifications: () => Promise<void>;
@@ -99,6 +123,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   postsCursor: null,
   studyGroups: [],
   selectedGroupId: null,
+  feedScope: 'public',
   focusLeaderboard: [],
   myFocusEntry: null,
   notifications: [],
@@ -133,7 +158,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     try {
       const url = groupId
         ? `/social/posts?groupId=${encodeURIComponent(groupId)}`
-        : '/social/posts';
+        : feedUrl(get().feedScope);
       const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>(url);
       if (response.success && response.data) {
         set({
@@ -153,7 +178,12 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     const { postsCursor, selectedGroupId } = get();
     if (!postsCursor) return;
     try {
-      const url = `/social/posts?cursor=${encodeURIComponent(postsCursor)}${selectedGroupId ? `&groupId=${encodeURIComponent(selectedGroupId)}` : ''}`;
+      const { feedScope } = get();
+      const url = `/social/posts?cursor=${encodeURIComponent(postsCursor)}${
+        selectedGroupId
+          ? `&groupId=${encodeURIComponent(selectedGroupId)}`
+          : feedScope === 'public' ? '&scope=public' : ''
+      }`;
       const response = await api.get<{ posts: SocialPost[]; cursor: string | null }>(url);
       if (response.success && response.data) {
         set((state) => ({
@@ -330,6 +360,10 @@ export const useSocialStore = create<SocialState>((set, get) => ({
 
   setSelectedGroup: (groupId: string | null) => {
     set({ selectedGroupId: groupId });
+  },
+
+  setFeedScope: (feedScope: 'public' | 'following') => {
+    set({ feedScope });
   },
 
   searchUsersV2: async (query: string) => {

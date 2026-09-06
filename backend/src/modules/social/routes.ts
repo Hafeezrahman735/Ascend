@@ -289,6 +289,15 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
         return;
       }
       whereClause = { groupId, visibility: 'group' };
+    } else if (req.query.scope === 'public') {
+      // The open feed: every public post, from anyone. This is what the Public
+      // chip selects, and it is what a new account sees — a follow-scoped feed
+      // has nothing to show someone who follows nobody, so the social tab used
+      // to open empty and stay empty until you went hunting for people.
+      //
+      // Still only `visibility: 'public'`, so nothing written to a focus group
+      // can surface here, and blocked authors are filtered below.
+      whereClause = { visibility: 'public' };
     } else {
       const following = await prisma.follow.findMany({
         where: { followerId: userId },
@@ -300,6 +309,11 @@ socialRouter.get('/social/posts', async (req: Request, res: Response) => {
       // unconditionally, which pulled the caller's own group-only posts into it —
       // so something written to a private focus group surfaced on the open feed.
       // Own public posts still appear: userId is in feedUserIds.
+      //
+      // This stays the DEFAULT when no scope is given, deliberately. The client
+      // asks for `scope=public` explicitly, so an older app binary that sends
+      // neither keeps the feed it has always had rather than being switched to
+      // a global one by a server deploy it knows nothing about.
       whereClause = { visibility: 'public', authorId: { in: feedUserIds } };
     }
     if (cursor) whereClause.createdAt = { lt: new Date(cursor) };

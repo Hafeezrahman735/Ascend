@@ -1295,10 +1295,49 @@ export default function TraceScreen() {
     setRefreshing(false);
   }, [social.selectedGroupId]);
 
-  const handleGroupSelect = (groupId: string | null) => {
-    social.setSelectedGroup(groupId);
-    social.fetchPosts(groupId ?? undefined);
+  /**
+   * The destination strip has THREE states, not two.
+   *
+   *   Public chip on   -> every public post, from anyone      (the default)
+   *   nothing on       -> only people you follow, plus you
+   *   a group chip on  -> that group
+   *
+   * Every chip toggles. Tapping the one that is already lit turns it off, which
+   * is how you reach the follow-only feed: it is the state where nothing is
+   * selected, so it needs no chip of its own.
+   *
+   * Public is the default because a follow-scoped feed shows a new account
+   * nothing at all — the tab used to open empty and stay empty until you went
+   * looking for people to follow.
+   */
+  const showPublicFeed = () => {
+    social.setSelectedGroup(null);
+    social.setFeedScope('public');
+    social.fetchPosts();
   };
+
+  const showFollowingFeed = () => {
+    social.setSelectedGroup(null);
+    social.setFeedScope('following');
+    social.fetchPosts();
+  };
+
+  const handleGroupSelect = (groupId: string | null) => {
+    if (groupId === null) {
+      // The Public chip: on if off, and off to Following if already on.
+      if (isPublicFeed) showFollowingFeed(); else showPublicFeed();
+      return;
+    }
+    if (social.selectedGroupId === groupId) {
+      showFollowingFeed();
+      return;
+    }
+    social.setSelectedGroup(groupId);
+    social.fetchPosts(groupId);
+  };
+
+  const isPublicFeed = social.selectedGroupId === null && social.feedScope === 'public';
+  const isFollowingFeed = social.selectedGroupId === null && social.feedScope === 'following';
 
   // Drives the context bar under the destination strip.
   const selectedGroup = social.selectedGroupId
@@ -1345,7 +1384,7 @@ export default function TraceScreen() {
       <View style={{ paddingTop: 12, paddingBottom: 4 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
           <PublicFeedChip
-            selected={social.selectedGroupId === null}
+            selected={isPublicFeed}
             onPress={() => handleGroupSelect(null)}
           />
           {social.studyGroups.map((g) => (
@@ -1425,16 +1464,21 @@ export default function TraceScreen() {
             // (other people) rather than implying you have done nothing.
             <View style={{ alignItems: 'center', paddingVertical: 36, paddingHorizontal: 32 }}>
               <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600', textAlign: 'center' }}>
-                {social.selectedGroupId
-                  ? 'No traces in this group yet'
+                {social.selectedGroupId ? 'No traces in this group yet'
+                  : isFollowingFeed ? 'Nobody you follow has posted'
                   : 'Nobody else here yet'}
               </Text>
+              {/* Three empty states because they mean three different things.
+                  An empty PUBLIC feed means the app is quiet. An empty
+                  FOLLOWING feed means you follow nobody, or they are quiet —
+                  and telling that user to go find people is the useful thing,
+                  where telling it to someone on the open feed is not. */}
               <Text style={{ color: Colors.subtext, fontSize: 13, lineHeight: 19, marginTop: 8, textAlign: 'center' }}>
-                {social.selectedGroupId
-                  ? 'Be the first to leave one.'
-                  : 'Follow a few people and their traces show up here as they show up.'}
+                {social.selectedGroupId ? 'Be the first to leave one.'
+                  : isFollowingFeed ? 'Follow a few people, or tap the globe to see everyone.'
+                  : 'Be the first to leave a trace today.'}
               </Text>
-              {!social.selectedGroupId && (
+              {isFollowingFeed && (
                 <Pressable
                   onPress={() => router.push('/search' as never)}
                   accessibilityRole="button"
