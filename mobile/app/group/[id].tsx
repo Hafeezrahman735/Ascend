@@ -5,6 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useShallow } from 'zustand/react/shallow';
 import { useSocialStore } from '../../stores/socialStore';
 import { useTheme } from '../../hooks/useTheme';
 import type { GroupDetail, GroupMember, UserSearchResult } from '../../types';
@@ -80,7 +81,9 @@ function AddMemberSearch({ memberIds, onAdd }: {
   onAdd: (user: UserSearchResult) => Promise<void>;
 }) {
   const Colors = useTheme();
-  const social = useSocialStore();
+  // Only the search action. Actions are stable references, so this component
+  // never re-renders because of the store.
+  const searchUsers = useSocialStore((s) => s.searchUsers);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<UserSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -92,7 +95,7 @@ function AddMemberSearch({ memberIds, onAdd }: {
     if (term.length < 2) { setResults([]); return; }
     setSearching(true);
     const t = setTimeout(() => {
-      social.searchUsers(term).then(setResults).finally(() => setSearching(false));
+      searchUsers(term).then(setResults).finally(() => setSearching(false));
     }, 300);
     return () => clearTimeout(t);
   }, [query]);
@@ -338,7 +341,21 @@ export default function GroupDetailScreen() {
   const Colors = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const social = useSocialStore();
+  // Actions only. Nothing here reads store STATE, so selecting these stable
+  // references means the screen re-renders on its own local state and nothing
+  // else — where before, any change anywhere in socialStore re-rendered it.
+  const social = useSocialStore(
+    useShallow((s) => ({
+      fetchGroupDetail: s.fetchGroupDetail,
+      updateGroupDescription: s.updateGroupDescription,
+      addGroupMember: s.addGroupMember,
+      removeGroupMember: s.removeGroupMember,
+      leaveGroup: s.leaveGroup,
+      fetchStudyGroups: s.fetchStudyGroups,
+      setSelectedGroup: s.setSelectedGroup,
+      fetchPosts: s.fetchPosts,
+    })),
+  );
 
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [loadError, setLoadError] = useState<LoadError | null>(null);

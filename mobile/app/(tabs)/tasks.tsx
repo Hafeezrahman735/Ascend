@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import React, { memo, useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  View, Text, TouchableOpacity, ScrollView, Modal, TextInput,
+  View, Text, TouchableOpacity, ScrollView, FlatList, Modal, TextInput,
   Alert, Platform, Animated,
   StyleSheet, KeyboardAvoidingView, ActivityIndicator, Switch,
   useWindowDimensions,
@@ -1145,9 +1145,21 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
  * swipe-left completes a task, so a dormant row rendered through TaskRow could
  * still be completed by a gesture that leaves no visual trace.
  */
-function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = false, subtitle }: {
+/**
+ * Memoised, and the callbacks below are why it can be.
+ *
+ * The row props used to be inline arrows (`onTap={() => setStatsTask(task)}`),
+ * which are a new function on every parent render — memo would have compared
+ * them, found them different, and re-rendered anyway. The handlers now take the
+ * task as an ARGUMENT so the parent can pass stable references straight through.
+ *
+ * Worth it because this body recomputes getDueChip and a goals.find per row, and
+ * before this every mounted row redid both whenever anything on the Tasks screen
+ * changed.
+ */
+const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = false, subtitle }: {
   task: Task; isActive: boolean; goals: TaskGoal[];
-  onTap: () => void; onLongPressTag?: (t: string) => void;
+  onTap: (task: Task) => void; onLongPressTag?: (t: string) => void;
   dormant?: boolean; subtitle?: string;
 }) {
   const Colors = useTheme();
@@ -1166,7 +1178,7 @@ function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = f
   const isRecurringRow = !!task.parentTaskId || task.isRecurring;
 
   return (
-    <TouchableOpacity activeOpacity={0.75} onPress={onTap} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
+    <TouchableOpacity activeOpacity={0.75} onPress={() => onTap(task)} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
       <View style={{ width: 3, backgroundColor: barColor }} />
       <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: progressFrac !== null ? 10 : 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1228,17 +1240,20 @@ function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = f
       </View>
     </TouchableOpacity>
   );
-}
+});
 
-function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPressTag }: {
+const TaskRow = memo(function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPressTag }: {
   task: Task; isActive: boolean; goals: TaskGoal[];
-  onTap: () => void; onEdit: () => void; onComplete: () => void; onLongPressTag?: (t: string) => void;
+  onTap: (task: Task) => void;
+  onEdit: (task: Task) => void;
+  onComplete: (taskId: string) => void;
+  onLongPressTag?: (t: string) => void;
 }) {
   const Colors = useTheme();
   const { ROSE, ROSE_DIM } = Colors;
   const isCompleted = task.isCompleted;
   const swipeRef = useRef<Swipeable>(null);
-  const handleSwipeOpen = useCallback((direction: 'left' | 'right') => { swipeRef.current?.close(); if (direction === 'left') onComplete(); else onEdit(); }, [onComplete, onEdit]);
+  const handleSwipeOpen = useCallback((direction: 'left' | 'right') => { swipeRef.current?.close(); if (direction === 'left') onComplete(task.id); else onEdit(task); }, [onComplete, onEdit, task]);
 
   const renderLeftActions = () => (
     <View style={{ width: 72, marginRight: 6, marginBottom: 8, borderRadius: 14, backgroundColor: isCompleted ? ROSE_DIM : Colors.traceDim, justifyContent: 'center', alignItems: 'center' }}>
@@ -1258,7 +1273,7 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
       <TaskRowBody task={task} isActive={isActive} goals={goals} onTap={onTap} onLongPressTag={onLongPressTag} />
     </Swipeable>
   );
-}
+});
 
 /**
  * A recurring task on a day it is not scheduled.
@@ -1268,9 +1283,9 @@ function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPress
  * selectTask - and a template id in selectedTaskId leaves the Active filter
  * empty and the focus tab holding a dangling id.
  */
-function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag }: {
+const DormantRecurringRow = memo(function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag }: {
   template: Task; goals: TaskGoal[]; subtitle: string;
-  onEdit: () => void; onLongPressTag?: (t: string) => void;
+  onEdit: (task: Task) => void; onLongPressTag?: (t: string) => void;
 }) {
   return (
     <TaskRowBody
@@ -1283,7 +1298,7 @@ function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag
       subtitle={subtitle}
     />
   );
-}
+});
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message }: { message: string | null }) {
@@ -2337,6 +2352,28 @@ export default function TasksScreen() {
     showToast(task.isCompleted ? 'Marked incomplete' : '✓ Marked complete');
   }, [tasks, taskActions, showToast]);
 
+
+  /**
+   * Stable renderItem for the All Tasks list.
+   *
+   * Defined once rather than inline so FlatList is not handed a new function on
+   * every render — which would defeat the memo on TaskRow it exists to serve.
+   * Every handler it passes is already a stable reference (useState setters and
+   * useCallback'd handlers), so a row only re-renders when its own task,
+   * selection or the goals list actually changes.
+   */
+  const renderTaskRow = useCallback(({ item }: { item: Task }) => (
+    <TaskRow
+      task={item}
+      isActive={item.id === selectedTaskId}
+      goals={goals}
+      onTap={setStatsTask}
+      onEdit={openEdit}
+      onComplete={handleComplete}
+      onLongPressTag={setOverrideTag}
+    />
+  ), [selectedTaskId, goals, openEdit, handleComplete]);
+
   const handleGoalDelete = useCallback(() => {
     if (!formGoal) return;
     const goalToDelete = formGoal;
@@ -2557,15 +2594,25 @@ export default function TasksScreen() {
             ))}
           </ScrollView>
         </View>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}>
-          {/* Empty state stays keyed on REAL tasks: someone whose only items are
-              unscheduled habits still needs the path to create something.
 
-              The copy answers the FILTER that is on. "Nothing planned yet. What
-              has to move today?" is true with no tasks at all, and misleading
-              the moment you filter to Done and simply have not finished
-              anything — it reads as though the app lost your work. */}
-          {filteredTasks.length === 0 && (
+        {/* Virtualised. This rendered EVERY filtered task into a plain ScrollView,
+            so a few hundred tasks meant a few hundred mounted rows, each one
+            recomputing its due chip and goal lookup on any parent render. The
+            dashboard list elsewhere on this screen is capped with slice(); this
+            one is the whole list, which is exactly where windowing matters. */}
+        <FlatList
+          data={filteredTasks}
+          keyExtractor={(task) => task.id}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}
+          renderItem={renderTaskRow}
+          /* Empty state stays keyed on REAL tasks: someone whose only items
+             are unscheduled habits still needs the path to create something.
+
+             The copy answers the FILTER that is on. "Nothing planned yet" is
+             true with no tasks at all, and misleading the moment you filter to
+             Done and simply have not finished anything — it reads as though the
+             app lost your work. */
+          ListEmptyComponent={
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
               <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
                 {taskFilter === 'done' ? 'Nothing finished yet. The first one counts most.'
@@ -2574,83 +2621,82 @@ export default function TasksScreen() {
                   : 'Nothing planned yet. What has to move today?'}
               </Text>
             </View>
-          )}
-          {filteredTasks.map((task) => (
-            <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
-          ))}
-
-          {/* Recurring tasks on a day they are not scheduled. Below a labelled
-              divider so the All filter visibly holds a second class of thing
-              rather than silently miscounting. */}
-          {listForFilter.dormantTotal > 0 && (
-            <View style={{ marginTop: 20 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
-                <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
-                  Not scheduled today · {listForFilter.dormantTotal}
-                </Text>
-                <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
-              </View>
-              {listForFilter.items.map((item) => (
-                item.kind === 'dormant' ? (
-                  <DormantRecurringRow
-                    key={item.template.id}
-                    template={item.template}
-                    goals={goals}
-                    subtitle={nextOccurrenceLabel(item.template)}
-                    onEdit={() => openEdit(item.template)}
-                    onLongPressTag={setOverrideTag}
-                  />
-                ) : null
-              ))}
-              {listForFilter.dormantHidden > 0 && (
-                <TouchableOpacity onPress={() => setShowAllDormant(true)} style={{ paddingVertical: 8, alignItems: 'center' }}>
-                  <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>
-                    Show {listForFilter.dormantHidden} more →
+          }
+          ListFooterComponent={
+            <>
+              {/* Recurring tasks on a day they are not scheduled. Below a labelled
+                  divider so the All filter visibly holds a second class of thing
+                  rather than silently miscounting. */}
+              {listForFilter.dormantTotal > 0 && (
+              <View style={{ marginTop: 20 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                  <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
+                    Not scheduled today · {listForFilter.dormantTotal}
                   </Text>
-                </TouchableOpacity>
+                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                </View>
+                {listForFilter.items.map((item) => (
+                  item.kind === 'dormant' ? (
+                    <DormantRecurringRow
+                      key={item.template.id}
+                      template={item.template}
+                      goals={goals}
+                      subtitle={nextOccurrenceLabel(item.template)}
+                      onEdit={openEdit}
+                      onLongPressTag={setOverrideTag}
+                    />
+                  ) : null
+                ))}
+                {listForFilter.dormantHidden > 0 && (
+                  <TouchableOpacity onPress={() => setShowAllDormant(true)} style={{ paddingVertical: 8, alignItems: 'center' }}>
+                    <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>
+                      Show {listForFilter.dormantHidden} more →
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              )}
+
+            {/* This Week — the same shape the Goals drill-down uses, counting what
+                this screen is about. Goals plots focus SECONDS per day; here the
+                bars are tasks FINISHED per day, because that is the unit the list
+                above is made of.
+
+                Below the list rather than above it, for the same reason it sits
+                at the bottom of the Goals screen: the list is why you opened this,
+                and a summary that pushes it down is a summary in the way. */}
+            <View style={{ marginTop: 28 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
+              <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
+                {DAY_LABELS.map((label, i) => (
+                  <BarColumn
+                    key={i}
+                    dayLabel={label}
+                    value={tasksDoneByDay[i]}
+                    max={maxTasksInDay}
+                    isToday={i === todayColIndex}
+                    isFuture={i > todayColIndex}
+                    formatValue={(n) => String(n)}
+                  />
+                ))}
+              </View>
+
+              {weeklyCompletionRate !== null && (
+                <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', marginTop: 12 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>WEEKLY COMPLETION RATE</Text>
+                    <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginTop: 4 }}>{weeklyCompletionRate}%</Text>
+                  </View>
+                  <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.trace : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' }}>
+                    {weeklyCompletionRate >= 80 ? '🎯 Great planning' : weeklyCompletionRate < 50 ? 'Plan fewer tasks' : 'tasks done / planned'}
+                  </Text>
+                </View>
               )}
             </View>
-          )}
-
-          {/* This Week — the same shape the Goals drill-down uses, counting what
-              this screen is about. Goals plots focus SECONDS per day; here the
-              bars are tasks FINISHED per day, because that is the unit the list
-              above is made of.
-
-              Below the list rather than above it, for the same reason it sits
-              at the bottom of the Goals screen: the list is why you opened this,
-              and a summary that pushes it down is a summary in the way. */}
-          <View style={{ marginTop: 28 }}>
-            <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
-            <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
-              {DAY_LABELS.map((label, i) => (
-                <BarColumn
-                  key={i}
-                  dayLabel={label}
-                  value={tasksDoneByDay[i]}
-                  max={maxTasksInDay}
-                  isToday={i === todayColIndex}
-                  isFuture={i > todayColIndex}
-                  formatValue={(n) => String(n)}
-                />
-              ))}
-            </View>
-
-            {weeklyCompletionRate !== null && (
-              <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', marginTop: 12 }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>WEEKLY COMPLETION RATE</Text>
-                  <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginTop: 4 }}>{weeklyCompletionRate}%</Text>
-                </View>
-                <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.trace : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' }}>
-                  {weeklyCompletionRate >= 80 ? '🎯 Great planning' : weeklyCompletionRate < 50 ? 'Plan fewer tasks' : 'tasks done / planned'}
-                </Text>
-              </View>
-            )}
-          </View>
-
-        </ScrollView>
+            </>
+          }
+        />
         {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
         <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
@@ -2745,7 +2791,7 @@ export default function TasksScreen() {
               return (
                 <View style={{ marginBottom: 12 }}>
                   {shownTasks.map((task) => (
-                    <TaskRow key={task.id} task={task} isActive={task.id === activeTask?.id} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />
+                    <TaskRow key={task.id} task={task} isActive={task.id === activeTask?.id} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />
                   ))}
                   {dormant.map((item) => (
                     item.kind === 'dormant' ? (
@@ -2765,7 +2811,7 @@ export default function TasksScreen() {
             })()}
             {doneTasks.slice(0, 2).length > 0 && <View>
               <GroupHeader dotColor={Colors.trace} label="Done" count={doneTasks.length} />
-              {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={() => setStatsTask(task)} onEdit={() => openEdit(task)} onComplete={() => handleComplete(task.id)} onLongPressTag={setOverrideTag} />)}
+              {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />)}
             </View>}
           </>)}
         </View>

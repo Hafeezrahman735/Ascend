@@ -7,6 +7,7 @@ import { loadTokensFromStorage } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useGamificationStore } from '../stores/gamificationStore';
 import { useTaskStore, initTaskStore } from '../stores/taskStore';
+import { pruneLegacyDailyAggregates } from '../store/sync';
 import { useTimerStore, initTimerStore } from '../stores/timerStore';
 import { useSocialStore } from '../stores/socialStore';
 import { useGoalStore } from '../stores/goalStore';
@@ -50,6 +51,12 @@ function refreshBackgroundData(): void {
   useSocialStore.getState().fetchNotifications();
   useSocialStore.getState().fetchStudyGroups();
   useTimerStore.getState().fetchWeekSessions();
+
+  // One-off sweep of the retired `session:daily:*` keys. Costs one getAllKeys
+  // after the first launch that clears them, and nothing waits on it.
+  pruneLegacyDailyAggregates()
+    .then((n) => { if (n > 0) log(`[storage] pruned ${n} legacy daily-aggregate keys`); })
+    .catch(() => {});
 }
 
 export default function RootLayout() {

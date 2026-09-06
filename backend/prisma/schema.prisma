@@ -50,6 +50,15 @@ model User {
   timerState            TimerState?
   userAchievs           UserAchievement[]
 
+  /// The focus leaderboard is the only thing that sorts users, and it always
+  /// filters on showOnLeaderboard first, then orders by (or counts across)
+  /// totalFocusTime. Both the top-100 page and the "how many are ahead of me"
+  /// count were full-table sorts without this.
+  ///
+  /// Deliberately no index on xp or currentStreak: the boards that ordered by
+  /// those were deleted as dead code, and an index nothing reads is just write
+  /// cost.
+  @@index([showOnLeaderboard, totalFocusTime])
   @@map("users")
 }
 
@@ -306,6 +315,9 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isRead])
+  /// The hot read path is `where userId orderBy createdAt desc` — the isRead
+  /// index above cannot serve that ordering.
+  @@index([userId, createdAt])
   @@map("notifications")
 }
 

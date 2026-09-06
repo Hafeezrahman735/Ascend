@@ -6,6 +6,7 @@ import {
 } from '../../middleware/eventBus';
 import { prisma } from '../../lib/prisma';
 import { shouldNotify, allowsEvent } from './service';
+import { pruneNotifications } from '../../lib/retention';
 const expo = new Expo();
 
 async function sendPushNotification(
@@ -42,6 +43,7 @@ async function storeAndNotify(
     await prisma.notification.create({
       data: { userId, type, title, body },
     });
+    void pruneNotifications(userId);
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -97,6 +99,7 @@ async function fanOutToFollowers(
   await prisma.notification.createMany({
     data: recipients.map((u) => ({ userId: u.id, type, title, body })),
   });
+  for (const u of recipients) void pruneNotifications(u.id);
 
   const messages: ExpoPushMessage[] = recipients
     .filter((u) => u.pushToken && Expo.isExpoPushToken(u.pushToken))

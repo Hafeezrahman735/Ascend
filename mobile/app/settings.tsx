@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, Switch, Alert, ActivityIndicator,
@@ -118,7 +119,9 @@ function DailyFocusGoalRow() {
 function CalendarSyncRows() {
   const Colors = useTheme();
   const user = useAuthStore((s) => s.user);
-  const { googleStatus, fetchGoogleStatus } = useCalendarStore();
+  const { googleStatus, fetchGoogleStatus } = useCalendarStore(
+    useShallow((s) => ({ googleStatus: s.googleStatus, fetchGoogleStatus: s.fetchGoogleStatus })),
+  );
   const [appleCalendars, setAppleCalendars] = useState<DeviceCalendar[]>([]);
   const [appleSelected, setAppleSelected] = useState<string | null>(null);
   const [showApplePicker, setShowApplePicker] = useState(false);
@@ -373,8 +376,35 @@ export default function SettingsScreen() {
   const xp = useGamificationStore((s) => s.xp);
   const rank = getRank(xp);
 
-  const profile = useUserProfileStore();
-  const settings = useUserSettingsStore();
+  // Selected fields rather than the whole store — see the note in app/(tabs)/index.tsx.
+  const profile = useUserProfileStore(
+    useShallow((s) => ({
+      avatarEmoji: s.avatarEmoji,
+      displayName: s.displayName,
+      handle: s.handle,
+      load: s.load,
+      save: s.save,
+    })),
+  );
+  // Selected fields rather than the whole store — see the note in app/(tabs)/index.tsx.
+  const settings = useUserSettingsStore(
+    useShallow((s) => ({
+      theme: s.theme,
+      weekStartDay: s.weekStartDay,
+      dailyReminderHour: s.dailyReminderHour,
+      dailyReminderMinute: s.dailyReminderMinute,
+      remindFocusMode: s.remindFocusMode,
+      notifySessionComplete: s.notifySessionComplete,
+      notifyDailyReminder: s.notifyDailyReminder,
+      notifyAchievements: s.notifyAchievements,
+      notifyFriendActivity: s.notifyFriendActivity,
+      publicProfile: s.publicProfile,
+      showOnLeaderboard: s.showOnLeaderboard,
+      shareFocusStats: s.shareFocusStats,
+      load: s.load,
+      update: s.update,
+    })),
+  );
 
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);

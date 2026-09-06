@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, RefreshCon
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useCalendarStore } from '../../stores/calendarStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useTheme } from '../../hooks/useTheme';
@@ -44,11 +45,31 @@ export default function CalendarScreen() {
   const [eventSheet, setEventSheet] = useState<{ event: CalendarEvent | null } | null>(null);
   const [noteSheet, setNoteSheet] = useState<{ note: Note | null } | null>(null);
 
+  // Picked inside the selector. Destructuring the result of a bare hook call
+  // reads the same fields but subscribes to the whole store, so it re-renders on
+  // anything — including the Google-sync status this screen never shows.
   const {
     items, stats, isLoading, isLoadingStats, error, syncWarning,
     fetchRange, fetchStats, createNote, updateNote, deleteNote,
     createEvent, updateEvent, deleteEvent,
-  } = useCalendarStore();
+  } = useCalendarStore(
+    useShallow((s) => ({
+      items: s.items,
+      stats: s.stats,
+      isLoading: s.isLoading,
+      isLoadingStats: s.isLoadingStats,
+      error: s.error,
+      syncWarning: s.syncWarning,
+      fetchRange: s.fetchRange,
+      fetchStats: s.fetchStats,
+      createNote: s.createNote,
+      updateNote: s.updateNote,
+      deleteNote: s.deleteNote,
+      createEvent: s.createEvent,
+      updateEvent: s.updateEvent,
+      deleteEvent: s.deleteEvent,
+    })),
+  );
 
   // The visible range is derived from the mode, so every view fetches exactly
   // what it renders and nothing more.

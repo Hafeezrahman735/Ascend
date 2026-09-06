@@ -1,6 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SESSION_HISTORY_KEY = 'session:history';
+/**
+ * Legacy only. `session:daily:YYYY-MM-DD` aggregates were written once per day
+ * and read by nothing — `getDailyAggregate` had zero callers — so every install
+ * accumulated one permanent key per day of use, plus an extra AsyncStorage write
+ * on the session-complete path that bought nothing.
+ *
+ * Writing stopped; this prefix survives only so the keys already on disk can be
+ * swept up. See pruneLegacyDailyAggregates below.
+ */
 const DAILY_KEY_PREFIX = 'session:daily:';
 
 export interface SessionRecord {
@@ -21,13 +30,6 @@ export interface SessionRecord {
   primaryTag?: string | null;
 }
 
-interface DailyAggregate {
-  date: string;
-  totalSessions: number;
-  totalMinutes: number;
-  focusMinutes: number;
-}
-
 export function generateSessionId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -35,9 +37,23 @@ export function generateSessionId(): string {
   });
 }
 
-function getTodayKey(): string {
-  const now = new Date();
-  return `${DAILY_KEY_PREFIX}${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+/**
+ * In-memory mirror of the history blob.
+ *
+ * The cap is 1000 records, which serialises to roughly 150-250 KB of JSON, and
+ * getSessionHistory() was re-reading and re-parsing all of it on EVERY focus of
+ * both the Tasks tab and the Trace tab. Switching between the two tabs a few
+ * times parsed a quarter of a megabyte on the JS thread each way, for data that
+ * only changes when a session ends.
+ *
+ * Every writer below clears this, so it cannot serve a stale list. It is a
+ * process-lifetime mirror, not persistence — AsyncStorage remains the truth.
+ */
+let historyCache: SessionRecord[] | null = null;
+
+/** Called by every path in this file that writes or clears the blob. */
+function invalidateHistoryCache(): void {
+  historyCache = null;
 }
 
 async function appendSessionToHistory(record: SessionRecord): Promise<void> {
@@ -47,36 +63,23 @@ async function appendSessionToHistory(record: SessionRecord): Promise<void> {
     history.push(record);
     if (history.length > 1000) history.splice(0, history.length - 1000);
     await AsyncStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(history));
+    invalidateHistoryCache();
   } catch (err) {
     console.warn('[sync] appendSessionToHistory failed:', err);
   }
 }
 
-async function updateDailyAggregate(durationSeconds: number): Promise<void> {
-  try {
-    const key = getTodayKey();
-    const raw = await AsyncStorage.getItem(key);
-    const daily: DailyAggregate = raw
-      ? JSON.parse(raw)
-      : { date: key.replace(DAILY_KEY_PREFIX, ''), totalSessions: 0, totalMinutes: 0, focusMinutes: 0 };
-    daily.totalSessions += 1;
-    daily.totalMinutes += Math.round(durationSeconds / 60);
-    daily.focusMinutes += Math.round(durationSeconds / 60);
-    await AsyncStorage.setItem(key, JSON.stringify(daily));
-  } catch (err) {
-    console.warn('[sync] updateDailyAggregate failed:', err);
-  }
-}
-
 export function recordCompletedSession(record: SessionRecord): void {
   appendSessionToHistory(record).catch((err) => console.warn('[sync] recordCompletedSession append failed:', err));
-  updateDailyAggregate(record.durationSeconds).catch((err) => console.warn('[sync] recordCompletedSession daily failed:', err));
 }
 
 export async function getSessionHistory(): Promise<SessionRecord[]> {
+  if (historyCache) return historyCache;
   try {
     const raw = await AsyncStorage.getItem(SESSION_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed: SessionRecord[] = raw ? JSON.parse(raw) : [];
+    historyCache = parsed;
+    return parsed;
   } catch {
     return [];
   }
@@ -85,6 +88,7 @@ export async function getSessionHistory(): Promise<SessionRecord[]> {
 export async function clearSessionHistory(): Promise<void> {
   try {
     await AsyncStorage.removeItem(SESSION_HISTORY_KEY);
+    invalidateHistoryCache();
   } catch {}
 }
 
@@ -98,19 +102,10 @@ export async function removeTaskSessionsFromHistory(taskId: string): Promise<voi
     const filtered = local.filter((s) => s.taskId !== taskId);
     if (filtered.length !== local.length) {
       await AsyncStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(filtered));
+      invalidateHistoryCache();
     }
   } catch (err) {
     console.warn('[sync] removeTaskSessionsFromHistory failed:', err);
-  }
-}
-
-export async function getDailyAggregate(date?: string): Promise<DailyAggregate | null> {
-  try {
-    const key = date ? `${DAILY_KEY_PREFIX}${date}` : getTodayKey();
-    const raw = await AsyncStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
   }
 }
 
@@ -171,7 +166,29 @@ export async function mergeWithServerSessions(
       .slice(0, 1000);
 
     await AsyncStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(merged));
+    invalidateHistoryCache();
   } catch (err) {
     console.warn('[sync] mergeWithServerSessions failed:', err);
+  }
+}
+
+/**
+ * Deletes the retired `session:daily:*` keys.
+ *
+ * One-shot, best-effort, and safe to call on every launch: after the first
+ * sweep there is nothing left to match, so it costs one getAllKeys and stops.
+ * Called unawaited from the bootstrap — a user who has had the app a year has a
+ * few hundred of these, and nothing should wait on tidying them.
+ */
+export async function pruneLegacyDailyAggregates(): Promise<number> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const stale = keys.filter((k) => k.startsWith(DAILY_KEY_PREFIX));
+    if (stale.length === 0) return 0;
+    await AsyncStorage.multiRemove(stale);
+    return stale.length;
+  } catch (err) {
+    console.warn('[sync] pruneLegacyDailyAggregates failed:', err);
+    return 0;
   }
 }
