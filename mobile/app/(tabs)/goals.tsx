@@ -464,9 +464,6 @@ interface HeroCardProps {
   avatarEmoji: string;
   xp: number;
   rank: RankTier;
-  totalSessions: number;
-  totalFocusMinutes: number;
-  longestStreak: number;
   xpProgress: number;
   xpToNextRank: number;
   nextRank: RankTier | null;
@@ -479,15 +476,13 @@ interface HeroCardProps {
 
 function HeroCard({
   username, avatarEmoji, xp, rank,
-  totalSessions, totalFocusMinutes, longestStreak,
   xpProgress, xpToNextRank, nextRank,
   reduceMotion, onSettings,
   socialStats, onFollowersPress, onFollowingPress,
 }: HeroCardProps) {
   const Colors = useTheme();
-  const { GOLD_DIM, GOLD, BORDER_SOFT } = Colors;
+  const { GOLD_DIM, GOLD } = Colors;
   const isNewUser = xp === 0;
-  const focusHours = Math.round(totalFocusMinutes / 60);
 
   return (
     <View style={{
@@ -591,30 +586,6 @@ function HeroCard({
           onFollowing={onFollowingPress}
         />
       )}
-
-      {/* Bottom stat row */}
-      <View style={{
-        flexDirection: 'row', marginTop: 18,
-        paddingTop: 16,
-        borderTopWidth: 1, borderTopColor: BORDER_SOFT,
-      }}>
-        {[
-          { value: String(totalSessions), label: 'Sessions' },
-          { value: `${focusHours}h`, label: 'Focus' },
-          { value: `${longestStreak}d`, label: 'Best Streak' },
-        ].map((stat, i) => (
-          <View key={stat.label} style={{
-            flex: 1, alignItems: 'center',
-            borderRightWidth: i < 2 ? 1 : 0,
-            borderRightColor: BORDER_SOFT,
-          }}>
-            <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '700', fontFamily: Font.mono }}>
-              {stat.value}
-            </Text>
-            <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 2 }}>{stat.label}</Text>
-          </View>
-        ))}
-      </View>
     </View>
   );
 }
@@ -893,31 +864,30 @@ export default function ProfileScreen() {
       edges={['top']}
       style={{ flex: 1, backgroundColor: Colors.bg }}
     >
-      {/* Hero Card — fixed, does not scroll */}
-      <HeroCard
-        username={auth.user?.username ?? 'User'}
-        avatarEmoji={profileAvatar || getAvatarEmoji(auth.user?.username ?? 'User')}
-        xp={xp}
-        rank={currentRank}
-        totalSessions={gamification.totalSessions}
-        totalFocusMinutes={gamification.totalFocusMinutes}
-        longestStreak={gamification.longestStreak}
-        xpProgress={xpProgress}
-        xpToNextRank={xpToNextRank}
-        nextRank={nextRank}
-        reduceMotion={reduceMotion}
-        onSettings={() => router.push('/settings')}
-        socialStats={social.userSocialStats}
-        onFollowersPress={() => { setShowFollowers(true); social.fetchFollowers(); }}
-        onFollowingPress={() => { setShowFollowing(true); social.fetchFollowing(); }}
-      />
-
-      {/* Scrollable sections */}
+      {/* One scroll, hero included. The card used to be pinned above the
+          ScrollView, so it held the top third of the screen permanently and the
+          sections below it fought for what was left — on a short phone the
+          streak row started already half-cut. It is a header, not a toolbar:
+          nothing in it needs to stay reachable while you read further down. */}
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
+        <HeroCard
+          username={auth.user?.username ?? 'User'}
+          avatarEmoji={profileAvatar || getAvatarEmoji(auth.user?.username ?? 'User')}
+          xp={xp}
+          rank={currentRank}
+          xpProgress={xpProgress}
+          xpToNextRank={xpToNextRank}
+          nextRank={nextRank}
+          reduceMotion={reduceMotion}
+          onSettings={() => router.push('/settings')}
+          socialStats={social.userSocialStats}
+          onFollowersPress={() => { setShowFollowers(true); social.fetchFollowers(); }}
+          onFollowingPress={() => { setShowFollowing(true); social.fetchFollowing(); }}
+        />
         <StreakSection streakState={{ ...streakState, ...serverDerivedStreak }} reduceMotion={reduceMotion} />
         <RankSection xp={xp} currentRank={currentRank} />
 
