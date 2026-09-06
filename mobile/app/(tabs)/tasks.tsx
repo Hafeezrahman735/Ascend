@@ -621,7 +621,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
           )}
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={monoLabel}>SUBJECT</Text>
+          <Text style={monoLabel}>CATEGORY</Text>
           <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap' }}>
             {tags.map((t) => (
               <TouchableOpacity key={t} onPress={() => toggleTag(t)} style={{ backgroundColor: Colors.primaryDim, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>

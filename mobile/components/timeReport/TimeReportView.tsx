@@ -20,8 +20,8 @@ import { Rule, SectionTitle, DeltaText, LedgerRow, ShareBar, WeekdayStrip, Notic
  *   1. "I spent my time doing what?"
  *   2. "Was that where I actually wanted my time to go?"
  *
- * Which is why GOALS lead and TAGS come last. A tag says what a thing was
- * about; a goal says whether it mattered. Question 2 needs no new input from
+ * Which is why GOALS lead and CATEGORIES come last. A category says what a
+ * thing was about; a goal says whether it mattered. Question 2 needs no new input from
  * the user — a goal already carries a deadline and the tasks they chose to
  * attach to it, so the share of goal-linked time answers it in one number.
  *
@@ -482,10 +482,10 @@ function ReportBody({
         </Text>
       )}
 
-      {/* ── 5. Tags — secondary, below the fold ────────────────────────── */}
+      {/* ── 5. Categories — secondary, below the fold ─────────────────── */}
       {report.tags.length > 0 && (
         <>
-          <SectionTitle>Tags</SectionTitle>
+          <SectionTitle>Categories</SectionTitle>
           <AppPressable
             onPress={onToggleTags}
             accessibilityRole="button"

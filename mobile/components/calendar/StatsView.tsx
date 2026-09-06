@@ -79,7 +79,7 @@ export default function StatsView({ stats }: { stats: CalendarStats | null }) {
       </View>
 
       <View style={styles.statCard}>
-        <Text style={styles.statHeading}>Time by tag</Text>
+        <Text style={styles.statHeading}>Time by category</Text>
         {tagEntries.map(([tag, seconds]) => (
           <View key={tag} style={{ marginTop: 8 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
