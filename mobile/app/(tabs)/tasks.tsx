@@ -1089,7 +1089,11 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
               {goal && onDelete && (
                 <TouchableOpacity
                   onPress={onDelete}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, marginTop: 8, borderRadius: 12, borderWidth: 1, borderColor: ROSE }}
+                  // 24, not 8. The task checklist directly above ends in a row
+                  // of small circle-X buttons that remove ONE task; this button
+                  // deletes the whole goal. Two removal gestures at very
+                  // different scales should not be a thumb-width apart.
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, marginTop: 24, borderRadius: 12, borderWidth: 1, borderColor: ROSE }}
                   accessibilityRole="button"
                   accessibilityLabel="Delete goal"
                 >
