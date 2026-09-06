@@ -4,6 +4,7 @@ import {
   View, Text, TouchableOpacity, ScrollView, Modal, TextInput,
   Alert, Platform, Animated,
   StyleSheet, KeyboardAvoidingView, ActivityIndicator, Switch,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -875,6 +876,9 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
   // native picker writes a new date before it relaxes an old floor.
   const [datePickerFloor, setDatePickerFloor] = useState<Date | null>(null);
   const [titleError, setTitleError] = useState(false);
+  // useWindowDimensions, not Dimensions.get(): the latter is read once and goes
+  // stale on rotation, which is when a too-tall modal hurts most.
+  const { height: windowHeight } = useWindowDimensions();
 
   useEffect(() => {
     if (visible) {
@@ -931,13 +935,20 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
       <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'center' }} pointerEvents="box-none">
         <TouchableOpacity activeOpacity={1} style={{ marginHorizontal: 20 }}>
-          <View style={{ backgroundColor: Colors.surface, borderRadius: 20, overflow: 'hidden' }}>
+          {/* maxHeight is load-bearing, not polish. The card is vertically
+              CENTERED, and its ScrollView sizes to its content — so without a
+              ceiling the card grows past the viewport and overflows off BOTH
+              ends, carrying this header (Cancel and Save) off the top of the
+              screen. Opening the inline date picker adds ~350px and does
+              exactly that. The same bug was found once before in this file's
+              BottomSheet: always pair a scrolling child with a height bound. */}
+          <View style={{ backgroundColor: Colors.surface, borderRadius: 20, overflow: 'hidden', maxHeight: windowHeight * 0.82 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}>
-              <TouchableOpacity onPress={onClose}><Text style={{ color: Colors.subtext, fontSize: 15, fontWeight: '500' }}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity onPress={onClose} hitSlop={10}><Text style={{ color: Colors.subtext, fontSize: 15, fontWeight: '500' }}>Cancel</Text></TouchableOpacity>
               <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{goal ? 'Edit Goal' : 'New Goal'}</Text>
-              <TouchableOpacity onPress={handleSave}><Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Save</Text></TouchableOpacity>
+              <TouchableOpacity onPress={handleSave} hitSlop={10}><Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Save</Text></TouchableOpacity>
             </View>
-            <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+            <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
               <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE }]} placeholder="e.g. Complete Calculus unit" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={80} />
               {titleError && <Text style={{ color: ROSE, fontSize: 11, marginTop: -8, marginBottom: 12 }}>Goal title can't be empty</Text>}
               <Text style={styles.fieldLabel}>Category</Text>
