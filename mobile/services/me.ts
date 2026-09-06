@@ -32,6 +32,14 @@ let inFlight: Promise<MeResponse> | null = null;
 let cached: { at: number; response: MeResponse } | null = null;
 
 /**
+ * Bumped by invalidateMe(). A request that was already in flight when the cache
+ * was invalidated must not be allowed to populate it when it lands — its body
+ * describes the state BEFORE whatever caused the invalidation, and on logout it
+ * describes a different account entirely.
+ */
+let generation = 0;
+
+/**
  * Fetch the current user, sharing one request between concurrent callers and
  * reusing a very recent result.
  *
@@ -46,10 +54,19 @@ export function fetchMe<T>(options: { force?: boolean } = {}): Promise<ApiRespon
     return inFlight as Promise<ApiResponse<T>>;
   }
 
+  const startedAt = generation;
   inFlight = api
     .get<Record<string, unknown>>('/auth/me')
     .then((response) => {
-      if (response.success) cached = { at: Date.now(), response };
+      // Discard the result if the cache was invalidated while this was in the
+      // air. Without this check, logout's invalidateMe() clears `cached` and the
+      // request that was already running writes it straight back — so the next
+      // account to sign in within the freshness window reads the previous one's
+      // row. That is the same leak clearSessionHistory and clearCalendar are
+      // called alongside it to prevent.
+      if (response.success && startedAt === generation) {
+        cached = { at: Date.now(), response };
+      }
       return response;
     })
     .finally(() => {
@@ -68,4 +85,7 @@ export function fetchMe<T>(options: { force?: boolean } = {}): Promise<ApiRespon
  */
 export function invalidateMe(): void {
   cached = null;
+  // Also disowns any request already in flight — see `generation` above.
+  generation += 1;
+  inFlight = null;
 }
