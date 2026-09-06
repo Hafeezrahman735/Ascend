@@ -29,7 +29,7 @@ import FormSheet from '../../components/FormSheet';
 import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
 import AppPressable from '../../components/AppPressable';
 import GoalStatsModal from '../../components/GoalStatsModal';
-import TaskMultiSelect from '../../components/TaskMultiSelect';
+import TaskPicker, { SelectedTaskList } from '../../components/TaskMultiSelect';
 import TimeReportView from '../../components/timeReport/TimeReportView';
 import TimeReportSummary from '../../components/timeReport/TimeReportSummary';
 import type { ReportPeriod } from '../../hooks/useTimeReport';
@@ -883,6 +883,7 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
   // are derived from the tags already in use, so a brand new one has to live in
   // local state until this goal is saved and starts using it.
   const [newCategory, setNewCategory] = useState<string | null>(null);
+  const [tasksOpen, setTasksOpen] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -890,6 +891,7 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
       setDeadline(goal?.deadline?.substring(0, 10) ?? '');
       setDraftTaskIds(null);
       setNewCategory(null);
+      setTasksOpen(false);
       setTitleError(false);
       // This form previously reset nothing about the picker, so a calendar left
       // open on one goal was still mounted when the next goal's deadline was
@@ -904,6 +906,17 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
     [goal, linkableTasks],
   );
   const taskIds = draftTaskIds ?? linkedNow;
+  const byId = useMemo(() => new Map(linkableTasks.map((t) => [t.id, t])), [linkableTasks]);
+  // Ordered by SELECTION, not by the task list, so a task you just picked lands
+  // at the bottom of the checklist where you are looking.
+  const selectedTasks = useMemo(
+    () => taskIds.map((id) => byId.get(id)).filter((t): t is Task => !!t),
+    [taskIds, byId],
+  );
+  const availableTasks = useMemo(
+    () => linkableTasks.filter((t) => !taskIds.includes(t.id)),
+    [linkableTasks, taskIds],
+  );
 
   const handleSave = () => {
     if (!title.trim()) { setTitleError(true); return; }
@@ -1039,15 +1052,37 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
                   only from the other side — open a task, pick its goal — so
                   linking twelve tasks meant opening twelve tasks. */}
               <Text style={styles.fieldLabel}>
-                Tasks{taskIds.length > 0 ? ` · ${taskIds.length} selected` : ''}
+                Tasks{selectedTasks.length > 0 ? ` · ${selectedTasks.length}` : ''}
               </Text>
-              <TaskMultiSelect
-                tasks={linkableTasks}
-                goals={goals}
-                goalId={goal?.id ?? null}
-                selectedIds={taskIds}
-                onToggle={toggleTask}
-              />
+              {/* A dropdown to ADD, a checklist below of what is ON. One
+                  always-open list of every task, with the chosen ones checked
+                  somewhere inside it, buried the answer to "what is on this
+                  goal" among fifty rows — and nested a scroll view inside the
+                  form's own scroll view for the whole life of the sheet. */}
+              <TouchableOpacity
+                onPress={() => setTasksOpen((v) => !v)}
+                style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: tasksOpen ? 0 : 12 }]}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: tasksOpen }}
+                accessibilityLabel={tasksOpen ? 'Close the task list' : `Add tasks, ${availableTasks.length} available`}
+              >
+                <Ionicons name="add-circle-outline" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
+                <Text style={{ color: Colors.subtext, fontSize: 14, flex: 1 }}>
+                  {tasksOpen ? 'Done adding' : `Add tasks${availableTasks.length > 0 ? ` (${availableTasks.length})` : ''}`}
+                </Text>
+                <Ionicons name={tasksOpen ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.subtext} />
+              </TouchableOpacity>
+              {tasksOpen && (
+                <View style={{ borderWidth: 1, borderColor: Colors.border, borderTopWidth: 0, borderBottomLeftRadius: 13, borderBottomRightRadius: 13, marginBottom: 12, overflow: 'hidden' }}>
+                  <TaskPicker
+                    tasks={availableTasks}
+                    goals={goals}
+                    goalId={goal?.id ?? null}
+                    onPick={toggleTask}
+                  />
+                </View>
+              )}
+              <SelectedTaskList tasks={selectedTasks} onRemove={toggleTask} />
 
               {/* Editing only. Goals previously had no delete affordance anywhere
                   in the app — they could be created but never removed. */}

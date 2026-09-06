@@ -5,93 +5,84 @@ import { useTheme } from '../hooks/useTheme';
 import type { Task, TaskGoal } from '../types';
 
 /**
- * Pick the tasks that belong to a goal.
+ * Choosing the tasks a goal is made of.
  *
- * The mirror of the task form's single-goal picker: there you say which goal one
- * task belongs to, here you say which tasks belong to one goal. Both write the
- * same `Task.taskGoalId` column, which holds exactly ONE goal — so checking a
- * task here MOVES it off whatever goal it was on.
+ * Two pieces, deliberately split. `TaskPicker` is the menu you open to ADD, and
+ * `SelectedTaskList` is the running checklist of what you have picked. A single
+ * always-open list of every task, with the chosen ones checked somewhere inside
+ * it, made the answer to "what is on this goal" something you had to go hunting
+ * for among fifty rows.
  *
- * That move is the reason for `movedFrom`. Without it the other goal's progress
- * quietly drops and nothing on screen explains why, which reads as the app
- * losing your work. The label is derived locally from goals already in the
- * store, so it costs no request and no extra field on the wire.
+ * The menu shows only tasks NOT yet on the goal, so nothing appears twice and
+ * the menu shrinks as you work — the list of things left to add is the thing
+ * that should be getting shorter.
  *
- * Completed tasks are shown, not filtered out. They are what a goal's
- * "3 of 6" is made of, and a picker that hid them would invite the user to save
- * a set that silently drops them.
+ * Both write the same `Task.taskGoalId` column, which holds exactly ONE goal,
+ * so adding a task MOVES it off whatever goal it was on. That is what
+ * `movedFrom` exists to say out loud: without it the other goal's progress
+ * quietly drops and nothing explains why. It is derived from goals already in
+ * the store, so it costs no request and no extra field on the wire.
  */
-export default function TaskMultiSelect({
+
+/** Height cap so the menu cannot itself overflow the modal it lives in. */
+const MENU_MAX_HEIGHT = 220;
+
+export default function TaskPicker({
   tasks,
   goals,
   goalId,
-  selectedIds,
-  onToggle,
+  onPick,
 }: {
-  /** Candidates to choose from. Archived rows must already be excluded. */
+  /** Only tasks NOT already on this goal. Archived rows excluded upstream. */
   tasks: Task[];
   /** Every goal, for naming the one a task would move away from. */
   goals: TaskGoal[];
   /** The goal being edited, or null while creating. */
   goalId: string | null;
-  selectedIds: string[];
-  onToggle: (taskId: string) => void;
+  onPick: (taskId: string) => void;
 }) {
   const Colors = useTheme();
-  const goalTitles = useMemo(
-    () => new Map(goals.map((g) => [g.id, g.title])),
-    [goals],
-  );
+  const goalTitles = useMemo(() => new Map(goals.map((g) => [g.id, g.title])), [goals]);
 
   if (tasks.length === 0) {
     return (
-      <Text style={{ color: Colors.subtext, fontSize: 13, paddingVertical: 12 }}>
-        No tasks yet. Create a task first, then link it here.
+      <Text style={{ color: Colors.subtext, fontSize: 13, paddingVertical: 14, paddingHorizontal: 12 }}>
+        Nothing left to add. Every task is already on this goal.
       </Text>
     );
   }
 
-  const selected = new Set(selectedIds);
-
   return (
     <ScrollView
-      style={{ maxHeight: 240 }}
+      style={{ maxHeight: MENU_MAX_HEIGHT }}
       nestedScrollEnabled
       keyboardShouldPersistTaps="handled"
     >
       {tasks.map((task) => {
-        const isSelected = selected.has(task.id);
-        // Only worth saying when checking this box would actually take the task
-        // away from a different goal.
         const movedFrom =
-          isSelected && task.taskGoalId && task.taskGoalId !== goalId
+          task.taskGoalId && task.taskGoalId !== goalId
             ? goalTitles.get(task.taskGoalId)
             : null;
 
         return (
           <TouchableOpacity
             key={task.id}
-            onPress={() => onToggle(task.id)}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: isSelected }}
+            onPress={() => onPick(task.id)}
+            accessibilityRole="button"
             accessibilityLabel={
-              `${task.title}${task.isCompleted ? ', completed' : ''}` +
+              `Add ${task.title}${task.isCompleted ? ', completed' : ''}` +
               (movedFrom ? `, moves from ${movedFrom}` : '')
             }
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               paddingVertical: 11,
+              paddingHorizontal: 12,
               borderBottomWidth: 0.5,
               borderBottomColor: Colors.border,
             }}
           >
-            <Ionicons
-              name={isSelected ? 'checkbox' : 'square-outline'}
-              size={20}
-              color={isSelected ? Colors.primary : Colors.subtext}
-              style={{ marginRight: 12 }}
-            />
+            <Ionicons name="add-circle-outline" size={19} color={Colors.primarySoft} style={{ marginRight: 11 }} />
             <View style={{ flex: 1 }}>
               <Text
                 numberOfLines={1}
@@ -110,12 +101,82 @@ export default function TaskMultiSelect({
                 </Text>
               )}
             </View>
-            {task.isCompleted && (
-              <Ionicons name="checkmark-circle" size={15} color={Colors.trace} />
-            )}
+            {task.isCompleted && <Ionicons name="checkmark-circle" size={15} color={Colors.trace} />}
           </TouchableOpacity>
         );
       })}
     </ScrollView>
+  );
+}
+
+/**
+ * What is on the goal, in the order it was added.
+ *
+ * Rendered below the picker rather than inside it: this is the answer to "what
+ * did I just build", and it should be readable without opening anything. New
+ * picks land at the bottom, so the list reads as a record of what you did.
+ *
+ * Completed tasks are shown, never filtered. They are what a goal's "3 of 6" is
+ * made of, and hiding them would invite saving a set that silently drops them.
+ */
+export function SelectedTaskList({
+  tasks,
+  onRemove,
+}: {
+  tasks: Task[];
+  onRemove: (taskId: string) => void;
+}) {
+  const Colors = useTheme();
+
+  if (tasks.length === 0) {
+    return (
+      <Text style={{ color: Colors.subtext, fontSize: 12.5, paddingVertical: 10 }}>
+        No tasks on this goal yet. A goal with no tasks cannot show progress.
+      </Text>
+    );
+  }
+
+  return (
+    <View>
+      {tasks.map((task) => (
+        <View
+          key={task.id}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingVertical: 10,
+            borderBottomWidth: 0.5,
+            borderBottomColor: Colors.border,
+          }}
+        >
+          <Ionicons
+            name={task.isCompleted ? 'checkbox' : 'square-outline'}
+            size={19}
+            color={task.isCompleted ? Colors.trace : Colors.subtext}
+            style={{ marginRight: 11 }}
+          />
+          <Text
+            numberOfLines={1}
+            style={{
+              flex: 1,
+              color: task.isCompleted ? Colors.subtext : Colors.textBright,
+              fontSize: 14,
+              fontWeight: '600',
+              textDecorationLine: task.isCompleted ? 'line-through' : 'none',
+            }}
+          >
+            {task.title}
+          </Text>
+          <TouchableOpacity
+            onPress={() => onRemove(task.id)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${task.title} from this goal`}
+          >
+            <Ionicons name="close-circle" size={19} color={Colors.subtext} />
+          </TouchableOpacity>
+        </View>
+      ))}
+    </View>
   );
 }
