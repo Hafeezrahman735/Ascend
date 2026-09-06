@@ -1323,17 +1323,28 @@ function GroupHeader({ dotColor, label, count }: { dotColor: string; label: stri
  * getPeakHour, where the client ranked peak focus by count while the server
  * ranked it by seconds.
  */
-function BarColumn({ dayLabel, seconds, maxSeconds, isToday, isFuture }: { dayLabel: string; seconds: number; maxSeconds: number; isToday: boolean; isFuture: boolean }) {
+/**
+ * One day's bar in a week strip.
+ *
+ * `value` and `formatValue` rather than `seconds` and a hardcoded duration
+ * format: the same strip now draws focus time on the Goals screen and a count
+ * of tasks finished on the Tasks screen. A prop called `seconds` holding a task
+ * count is the kind of small lie that outlives everyone's memory of it.
+ */
+function BarColumn({ dayLabel, value, max, isToday, isFuture, formatValue = compactDuration }: {
+  dayLabel: string; value: number; max: number; isToday: boolean; isFuture: boolean;
+  formatValue?: (n: number) => string;
+}) {
   const Colors = useTheme();
   const BAR_MAX_H = 56;
-  const barHeight = isFuture ? 3 : Math.max(seconds > 0 ? (seconds / maxSeconds) * BAR_MAX_H : 3, 3);
+  const barHeight = isFuture ? 3 : Math.max(value > 0 ? (value / max) * BAR_MAX_H : 3, 3);
   const barColor = isToday ? Colors.trace : Colors.primary;
-  const countLabel = isFuture ? '—' : compactDuration(seconds);
+  const countLabel = isFuture ? '—' : formatValue(value);
   const labelColor = isToday ? Colors.trace : Colors.subtext;
   return (
     <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 2 }}>
       <View style={{ height: BAR_MAX_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' }}>
-        <View style={{ width: '70%', height: barHeight, borderRadius: 3, backgroundColor: isFuture ? Colors.inactive : barColor, opacity: isFuture ? 0.15 : seconds === 0 && !isToday ? 0.25 : 1 }} />
+        <View style={{ width: '70%', height: barHeight, borderRadius: 3, backgroundColor: isFuture ? Colors.inactive : barColor, opacity: isFuture ? 0.15 : value === 0 && !isToday ? 0.25 : 1 }} />
       </View>
       <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 5, color: labelColor }}>{countLabel}</Text>
       <Text style={{ fontSize: 10, fontWeight: '500', marginTop: 2, color: labelColor }}>{dayLabel}</Text>
@@ -2162,6 +2173,25 @@ export default function TasksScreen() {
 
   const maxDaySeconds = useMemo(() => Math.max(...thisWeekByDay, 1), [thisWeekByDay]);
 
+  // Tasks finished per weekday. Reads the UNFILTERED task list on purpose:
+  // completed recurring instances are archived the next day, and a habit you
+  // ticked on Monday is still a task you finished this week. Filtering to
+  // nonArchived would quietly erase every habit completion older than today —
+  // the same trap loadGoalCounts documents on the server.
+  const tasksDoneByDay = useMemo(() => {
+    const counts = [0, 0, 0, 0, 0, 0, 0];
+    for (const t of tasks) {
+      if (!t.isCompleted || !t.completedAt) continue;
+      const d = new Date(t.completedAt);
+      if (d >= monday && d < nextMonday) {
+        const dow = d.getDay();
+        counts[dow === 0 ? 6 : dow - 1] += 1;
+      }
+    }
+    return counts;
+  }, [tasks, monday, nextMonday]);
+  const maxTasksInDay = useMemo(() => Math.max(...tasksDoneByDay, 1), [tasksDoneByDay]);
+
 
   // Category totals used to be derived here, from the local session cache, and
   // that second derivation is what disagreed with the server. The Time Tracker
@@ -2431,7 +2461,7 @@ export default function TasksScreen() {
           <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
             <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
             <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
-              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} seconds={thisWeekByDay[i]} maxSeconds={maxDaySeconds} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
+              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} value={thisWeekByDay[i]} max={maxDaySeconds} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
             </View>
           </View>
           {weeklyCompletionRate !== null && (
@@ -2582,6 +2612,43 @@ export default function TasksScreen() {
               )}
             </View>
           )}
+
+          {/* This Week — the same shape the Goals drill-down uses, counting what
+              this screen is about. Goals plots focus SECONDS per day; here the
+              bars are tasks FINISHED per day, because that is the unit the list
+              above is made of.
+
+              Below the list rather than above it, for the same reason it sits
+              at the bottom of the Goals screen: the list is why you opened this,
+              and a summary that pushes it down is a summary in the way. */}
+          <View style={{ marginTop: 28 }}>
+            <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
+            <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
+              {DAY_LABELS.map((label, i) => (
+                <BarColumn
+                  key={i}
+                  dayLabel={label}
+                  value={tasksDoneByDay[i]}
+                  max={maxTasksInDay}
+                  isToday={i === todayColIndex}
+                  isFuture={i > todayColIndex}
+                  formatValue={(n) => String(n)}
+                />
+              ))}
+            </View>
+
+            {weeklyCompletionRate !== null && (
+              <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', marginTop: 12 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>WEEKLY COMPLETION RATE</Text>
+                  <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginTop: 4 }}>{weeklyCompletionRate}%</Text>
+                </View>
+                <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.trace : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' }}>
+                  {weeklyCompletionRate >= 80 ? '🎯 Great planning' : weeklyCompletionRate < 50 ? 'Plan fewer tasks' : 'tasks done / planned'}
+                </Text>
+              </View>
+            )}
+          </View>
 
         </ScrollView>
         {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
