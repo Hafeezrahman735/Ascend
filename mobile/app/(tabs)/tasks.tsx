@@ -2490,20 +2490,53 @@ export default function TasksScreen() {
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, marginBottom: 12 }}>
-          {FILTERS.map(({ key, label }) => (
-            <TouchableOpacity key={key} onPress={() => setTaskFilter(key)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: taskFilter === key ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: taskFilter === key ? Colors.primary : Colors.border }}>
-              <Text style={{ color: taskFilter === key ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '600' }}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* The wrapper View is load-bearing. A horizontal ScrollView placed
+            DIRECTLY in this flex column has no height cap, so it expands to
+            fill the leftover vertical space — and its content container's
+            default alignItems:'stretch' then stretches every chip to that whole
+            height, turning four filter pills into full-height bars and
+            squeezing the task list underneath to nothing. Wrapping it in a
+            plain, flex-less View bounds it to its content, which is how the
+            identical chip row in index.tsx:1346 has always behaved. flexGrow:0
+            names the cause so a future edit cannot quietly reintroduce it.
+            marginBottom also moved off contentContainerStyle, where a margin on
+            a horizontal content container does nothing useful. */}
+        <View style={{ paddingBottom: 12 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ flexGrow: 0 }}
+            contentContainerStyle={{ paddingHorizontal: 20, alignItems: 'center' }}
+          >
+            {FILTERS.map(({ key, label }) => (
+              <TouchableOpacity
+                key={key}
+                onPress={() => setTaskFilter(key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: taskFilter === key }}
+                style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: taskFilter === key ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: taskFilter === key ? Colors.primary : Colors.border }}
+              >
+                <Text style={{ color: taskFilter === key ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '600' }}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
         <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}>
           {/* Empty state stays keyed on REAL tasks: someone whose only items are
-              unscheduled habits still needs "Nothing planned yet" and the path
-              to create something. */}
+              unscheduled habits still needs the path to create something.
+
+              The copy answers the FILTER that is on. "Nothing planned yet. What
+              has to move today?" is true with no tasks at all, and misleading
+              the moment you filter to Done and simply have not finished
+              anything — it reads as though the app lost your work. */}
           {filteredTasks.length === 0 && (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
-              <Text style={{ color: Colors.subtext, fontSize: 13 }}>Nothing planned yet. What has to move today?</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
+                {taskFilter === 'done' ? 'Nothing finished yet. The first one counts most.'
+                  : taskFilter === 'active' ? 'No task is loaded in the timer right now.'
+                  : taskFilter === 'pending' ? 'Nothing outstanding. Everything you added is done.'
+                  : 'Nothing planned yet. What has to move today?'}
+              </Text>
             </View>
           )}
           {filteredTasks.map((task) => (
