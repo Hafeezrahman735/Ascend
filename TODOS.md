@@ -213,3 +213,19 @@ check types. A shared schema (zod on both sides) would, and is the real fix.
       goal created on another device gets one here only after this device
       hydrates. A server-side scheduler would fix that, and would also unblock
       the streak-at-risk push above — still the largest missing piece.
+
+## From /plan-eng-review — month heat map weights (2026-09-06)
+
+- [ ] **Calibrate the four month-view heat map weights against a real month.**
+      `UNTIMED_TASK_WEIGHT` (30), `HABIT_WEIGHT` (30), `DEADLINE_WEIGHT` (90) and
+      `ALL_DAY_EVENT_WEIGHT` (180) in `mobile/lib/calendarItems.ts` are all
+      invented — chosen to make a mockup look right, derived from nothing. They
+      are exported constants, so each is a one-line change.
+      **The concrete symptom that means they are wrong:** a day whose only item
+      is a goal deadline shades DARKER than a day holding two genuine hours of
+      work. That is a new lie in the shape of the old one.
+      Second thing to watch: a two-hour daily habit weighs the same as a
+      five-minute one, because habits are weighted flat to stop projected
+      occurrences shading differently from spawned ones. Fine until long habits
+      are common.
+      Depends on: shipping, plus a month of real data.

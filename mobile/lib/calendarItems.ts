@@ -294,3 +294,54 @@ export function bookedMinutes(items: CalendarItem[]): number {
   }
   return total;
 }
+
+/**
+ * Weight — how much of a day an item claims, whether or not it carries a clock.
+ *
+ * This is NOT bookedMinutes and must never be printed as if it were. Booked
+ * minutes are measured; weight is a judgement expressed in the same unit so the
+ * two can be compared. The month heat map shades by weight and reports booked
+ * minutes, and conflating them would put an invented number on screen labelled
+ * as a real one.
+ *
+ * These four constants are the calibration, and they are invented — chosen to
+ * make a month of real data use its whole scale, derived from nothing. They are
+ * exported so tests name them instead of hardcoding the number, because tuning
+ * them is expected. See TODOS.md for the failure to watch for.
+ */
+export const UNTIMED_TASK_WEIGHT = 30;
+export const HABIT_WEIGHT = 30;
+export const DEADLINE_WEIGHT = 90;
+export const ALL_DAY_EVENT_WEIGHT = 180;
+
+/**
+ * INVARIANT: every type except `note` returns a positive number.
+ *
+ * MonthView deletes its count-based fallback on the strength of this. That
+ * fallback existed only because untimed items scored zero; if any non-note type
+ * ever weighs nothing again, its day silently renders as free. The unit test
+ * pins this for the whole union so a newly added type cannot quietly break it.
+ */
+export function itemWeight(item: CalendarItem): number {
+  if (item.type === 'note') return 0;
+
+  // Recurring tasks are weighted FLAT, ignoring any time they carry. A future
+  // occurrence is a projected placeholder with no startMinutes at all (see the
+  // calendar route), so weighting by duration would make today's spawned copy
+  // heavier than the identical one next Tuesday — and next Tuesday would darken
+  // by itself when it spawned. The cost is real and accepted: a two-hour daily
+  // habit weighs the same as a five-minute one.
+  if (item.type === 'habit_instance') return HABIT_WEIGHT;
+
+  // A deadline never has a time. It is a claim on the day regardless.
+  if (item.type === 'goal_deadline') return DEADLINE_WEIGHT;
+
+  const range = itemTimeRange(item);
+  const timed = range ? range.end - range.start : 0;
+  if (timed > 0) return timed;
+
+  // No usable clock. A zero-length block counts as its untimed self rather than
+  // as nothing — that is the invariant above. Anything that is not a task and
+  // has no time is an all-day event, which is the largest claim a day can hold.
+  return item.type === 'task' ? UNTIMED_TASK_WEIGHT : ALL_DAY_EVENT_WEIGHT;
+}

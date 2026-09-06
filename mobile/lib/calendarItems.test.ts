@@ -3,6 +3,7 @@ import {
   TYPE_META, DAY_GROUP_ORDER, calendarTaxonomyIsComplete, calendarItemKey,
   countsTowardLoad, isNote, itemTimeRange, itemIsDone, itemTitle, isPastEvent,
   bookedMinutes, groupItemsByDate, isRenderableCalendarItem,
+  itemWeight, UNTIMED_TASK_WEIGHT, HABIT_WEIGHT, DEADLINE_WEIGHT, ALL_DAY_EVENT_WEIGHT,
 } from './calendarItems';
 import type { CalendarEvent, CalendarItem, CalendarItemType } from '../types';
 
@@ -263,5 +264,134 @@ describe('every type is handled by the shared helpers', () => {
       const item: CalendarItem = { type, date: '2026-08-25', data: { title: 'x', content: 'x' } };
       expect(typeof itemTitle(item)).toBe('string');
     }
+  });
+});
+
+
+describe('itemWeight', () => {
+  /**
+   * Weight is what the month heat map shades by. It used to shade by booked
+   * minutes, which meant it counted only the items carrying a clock — so an
+   * untimed task and a goal deadline both scored zero, and a day holding a hard
+   * deadline rendered as an empty one.
+   *
+   * The constants below are invented calibration, not measurements. These tests
+   * reference the exported constants rather than the literals on purpose: tuning
+   * them is expected, and a test that hardcodes 30 turns a deliberate adjustment
+   * into a red suite.
+   */
+
+  const at = (startMinutes: number, endMinutes: number) => ({
+    id: 't', title: 'Write', isCompleted: false, startMinutes, endMinutes,
+  });
+
+  it('weighs a timed task by its real duration', () => {
+    const item: CalendarItem = { type: 'task', date: '2026-08-25', data: at(540, 630) };
+    expect(itemWeight(item)).toBe(90);
+  });
+
+  it('gives an untimed task a default rather than nothing', () => {
+    const item: CalendarItem = {
+      type: 'task',
+      date: '2026-08-25',
+      data: { id: 't', title: 'Write', isCompleted: false },
+    };
+    expect(itemWeight(item)).toBe(UNTIMED_TASK_WEIGHT);
+  });
+
+  it('weighs a recurring task flat, whether or not it carries a time', () => {
+    // The projected occurrence the calendar route sends for a future date is a
+    // deliberately narrow placeholder: title and isCompleted, no startMinutes.
+    // Weighting by duration would make today's spawned copy heavier than the
+    // identical one next Tuesday, and next Tuesday would darken by itself the
+    // morning it spawned. The accepted cost is that a two-hour habit weighs the
+    // same as a five-minute one.
+    const spawned: CalendarItem = { type: 'habit_instance', date: '2026-08-25', data: at(540, 660) };
+    const projected: CalendarItem = {
+      type: 'habit_instance',
+      date: '2026-09-01',
+      data: { id: 'projected:x:2026-09-01', title: 'Read', isCompleted: false },
+    };
+    expect(itemWeight(spawned)).toBe(HABIT_WEIGHT);
+    expect(itemWeight(projected)).toBe(HABIT_WEIGHT);
+    expect(itemWeight(spawned)).toBe(itemWeight(projected));
+  });
+
+  it('gives a goal deadline weight — it has no clock but it is still a claim on the day', () => {
+    const item: CalendarItem = {
+      type: 'goal_deadline',
+      date: '2026-08-25',
+      data: { id: 'g', title: 'Ship it' },
+    };
+    expect(itemWeight(item)).toBe(DEADLINE_WEIGHT);
+  });
+
+  it('weighs a timed event by its duration', () => {
+    expect(itemWeight(eventItem())).toBe(60);
+  });
+
+  it('weighs an all-day event heaviest of all — a conference is the whole day', () => {
+    expect(itemWeight(eventItem({ startMinutes: null, endMinutes: null })))
+      .toBe(ALL_DAY_EVENT_WEIGHT);
+  });
+
+  it('weighs an all-day external event the same way', () => {
+    const item: CalendarItem = {
+      type: 'external_google',
+      date: '2026-08-25',
+      data: { id: 'g1', title: 'Offsite', isAllDay: true, startTime: null },
+    };
+    expect(itemWeight(item)).toBe(ALL_DAY_EVENT_WEIGHT);
+  });
+
+  it('treats a zero-length block as its untimed self, not as nothing', () => {
+    // Guards the invariant below against bad data: a start equal to its end
+    // would otherwise sum to zero and shade the day free.
+    const task: CalendarItem = { type: 'task', date: '2026-08-25', data: at(540, 540) };
+    expect(itemWeight(task)).toBe(UNTIMED_TASK_WEIGHT);
+    expect(itemWeight(eventItem({ startMinutes: 540, endMinutes: 540 })))
+      .toBe(ALL_DAY_EVENT_WEIGHT);
+  });
+
+  it('gives a note and a to-do no weight at all', () => {
+    const noteData = { id: 'n', content: 'idea', isTodo: false, isCompleted: false };
+    const note: CalendarItem = { type: 'note', date: '2026-08-25', data: noteData };
+    const todo: CalendarItem = {
+      type: 'note',
+      date: '2026-08-25',
+      data: { ...noteData, isTodo: true },
+    };
+    expect(itemWeight(note)).toBe(0);
+    expect(itemWeight(todo)).toBe(0);
+  });
+
+  it('gives EVERY non-note type a positive weight', () => {
+    /**
+     * The invariant MonthView deleted its count-based fallback on. That fallback
+     * existed only because untimed items scored zero; without it, any type that
+     * weighs nothing renders its whole day as free — which is worse than the bug
+     * this all replaced. A new CalendarItemType that forgets a branch fails here
+     * rather than in someone's calendar.
+     */
+    for (const type of DAY_GROUP_ORDER) {
+      if (type === 'note') continue;
+      // Deliberately bare data: no times, no fields beyond identity. This is the
+      // worst case, and it is exactly the shape a projected item arrives in.
+      const item: CalendarItem = { type, date: '2026-08-25', data: { id: 'x', title: 'x' } };
+      expect(itemWeight(item), type).toBeGreaterThan(0);
+    }
+  });
+
+  it('leaves bookedMinutes alone — a day of untimed work still books nothing', () => {
+    // The two numbers must not converge. MonthView shades by weight and prints
+    // booked minutes; if weight leaked into that tile, a day with one untimed
+    // task would report "30m booked" having booked nothing.
+    const untimed: CalendarItem = {
+      type: 'task',
+      date: '2026-08-25',
+      data: { id: 't', title: 'Write', isCompleted: false },
+    };
+    expect(itemWeight(untimed)).toBeGreaterThan(0);
+    expect(bookedMinutes([untimed])).toBe(0);
   });
 });

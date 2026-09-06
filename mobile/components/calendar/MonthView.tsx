@@ -6,55 +6,111 @@ import type { CalendarItem, Note } from '../../types';
 import { eachDayOfRange, getLocalDateString, parseLocalDate, startOfMonth, endOfMonth } from '../../utils/date';
 import {
   itemTitle, itemIsDone, typeColor, itemTimeRange, countsTowardLoad, isNote,
+  itemWeight, bookedMinutes as sumBookedMinutes,
   calendarItemKey, formatMinutes, formatSeconds, getCalendarStyles,
 } from './shared';
 
 const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-/** Hours booked that read as a light, a moderate, and a full day. */
-const MODERATE_MINUTES = 2 * 60;
-const BUSY_MINUTES = 4 * 60;
-
 /**
  * Month as a workload grid.
  *
  * Cells are shaded by how much of the day is spoken for, not by which item types
- * are present. The old version drew one coloured dot per type, which answered
+ * are present. An earlier version drew one coloured dot per type, which answered
  * "what kind of thing is on the 12th" — a question nobody asks at month zoom.
  * The question at this zoom is "which week am I going to regret", and shading
  * answers it without reading a single word.
  *
- * Days with items but no times still shade, one step down, so an untimed day is
- * never mistaken for an empty one.
+ * The shading is by WEIGHT, not by booked minutes. It used to be by minutes, and
+ * that made the map count roughly a third of what was on a day: an untimed task
+ * and a goal deadline both carry no clock, so both scored zero and fell to a
+ * count-based fallback that only knew "three or more". A day holding nothing but
+ * a hard deadline rendered as an empty one. itemWeight gives every non-note type
+ * a positive number, which is what let the fallback go.
+ *
+ * The panel below still reports real booked minutes, from a separate sum. Weight
+ * is a judgement and must never be printed as if it were measured.
  */
 
-type Load = 'empty' | 'light' | 'moderate' | 'busy';
+/** Weight thresholds. These are rendering decisions — how many shades of the
+ *  primary hue a month should span — so they live here, not beside the weights
+ *  in lib/calendarItems.ts. */
+const LIGHT_MINUTES = 60;
+const SOME_MINUTES = 150;
+const HEAVY_MINUTES = 300;
 
-function dayLoad(items: CalendarItem[]): { load: Load; bookedMinutes: number } {
-  const scheduled = items.filter(countsTowardLoad);
-  if (scheduled.length === 0) return { load: 'empty', bookedMinutes: 0 };
+type Load = 'free' | 'light' | 'some' | 'heavy' | 'full';
 
-  let booked = 0;
-  for (const item of scheduled) {
-    const range = itemTimeRange(item);
-    if (range) booked += range.end - range.start;
-  }
+const LOAD_STEPS: Load[] = ['free', 'light', 'some', 'heavy', 'full'];
 
-  // Nothing carries a time — fall back to count so the day still reads as used.
-  if (booked === 0) return { load: scheduled.length >= 3 ? 'moderate' : 'light', bookedMinutes: 0 };
-  if (booked >= BUSY_MINUTES) return { load: 'busy', bookedMinutes: booked };
-  if (booked >= MODERATE_MINUTES) return { load: 'moderate', bookedMinutes: booked };
-  return { load: 'light', bookedMinutes: booked };
+function loadForWeight(weight: number): Load {
+  if (weight <= 0) return 'free';
+  if (weight >= HEAVY_MINUTES) return 'full';
+  if (weight >= SOME_MINUTES) return 'heavy';
+  if (weight >= LIGHT_MINUTES) return 'some';
+  return 'light';
 }
 
+/**
+ * Load shades the cell; booked is what the panel prints. Deliberately two
+ * numbers: a day with one untimed task weighs 30 and has booked nothing, and
+ * printing "30m booked" there would be a fabrication.
+ *
+ * Notes contribute zero weight by itemWeight's own contract — a jotting is not
+ * work — so they need no filtering here.
+ */
+function dayLoad(items: CalendarItem[]): { load: Load; booked: number } {
+  let weight = 0;
+  for (const item of items) weight += itemWeight(item);
+  return { load: loadForWeight(weight), booked: sumBookedMinutes(items) };
+}
+
+/**
+ * Blends two hex colours, `t` of the way from `a` to `b`.
+ *
+ * Used for exactly one step of the ramp — the gap between primaryDim and
+ * primary — rather than adding a palette token that only this screen would ever
+ * read. Both themes are plain 6-digit hex; anything else falls back to `b`
+ * instead of rendering an invalid colour.
+ */
+function mixHex(a: string, b: string, t: number): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(a) || !/^#[0-9a-fA-F]{6}$/.test(b)) return b;
+  const channel = (i: number) => {
+    const from = parseInt(a.slice(1 + i * 2, 3 + i * 2), 16);
+    const to = parseInt(b.slice(1 + i * 2, 3 + i * 2), 16);
+    return Math.round(from + (to - from) * t).toString(16).padStart(2, '0');
+  };
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
+/**
+ * Five steps, five distinguishable backgrounds. `free` used to share `raised`
+ * with `light`, so a scale with four levels rendered as three and the emptiest
+ * days were indistinguishable from the barely-used ones.
+ */
 function cellColors(load: Load, Colors: ThemeColors): { bg: string; fg: string } {
   switch (load) {
-    case 'busy':     return { bg: Colors.primary, fg: '#fff' };
-    case 'moderate': return { bg: Colors.primaryDim, fg: Colors.textBright };
-    case 'light':    return { bg: Colors.raised, fg: Colors.text };
-    default:         return { bg: Colors.raised, fg: Colors.subtext };
+    case 'full':  return { bg: Colors.primary, fg: '#fff' };
+    case 'heavy': return { bg: mixHex(Colors.primaryDim, Colors.primary, 0.5), fg: Colors.textBright };
+    case 'some':  return { bg: Colors.primaryDim, fg: Colors.textBright };
+    case 'light': return { bg: Colors.raised, fg: Colors.text };
+    // One step off the page rather than a named token: surface is DARKER than
+    // raised in the dark theme but LIGHTER in the light one, so it reads as an
+    // empty cell in one and vanishes into the background in the other. Blending
+    // from bg toward raised keeps the ramp monotonic in both.
+    default:      return { bg: mixHex(Colors.bg, Colors.raised, 0.35), fg: Colors.subtext };
   }
 }
+
+/** What the cell reads out. Hours alone stopped being the whole story once
+ *  untimed work started counting. */
+const LOAD_PHRASE: Record<Load, string> = {
+  free: 'nothing scheduled',
+  light: 'light day',
+  some: 'some load',
+  heavy: 'heavy day',
+  full: 'full day',
+};
 
 function StatTile({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
   const Colors = useTheme();
@@ -106,7 +162,7 @@ export default function MonthView({
   // Notes were absent from this panel entirely, which made Month the one
   // view where a note could not be seen at all — not even a to-do.
   const selectedNotes = selectedItems.filter(isNote).map((i) => i.data as Note);
-  const { bookedMinutes } = dayLoad(selectedItems);
+  const { booked: selectedBooked } = dayLoad(selectedItems);
   const taskCount = selectedScheduled.filter(
     (i) => i.type === 'task' || i.type === 'habit_instance',
   ).length;
@@ -118,15 +174,21 @@ export default function MonthView({
 
   return (
     <View>
-      {/* ── Legend ────────────────────────────────────────────────────── */}
+      {/* ── Legend ────────────────────────────────────────────────────────
+          All five steps, because a scale that names two of its five levels is
+          asking the reader to guess the rest. ──────────────────────────────── */}
       <View style={{
-        flexDirection: 'row', gap: 14, justifyContent: 'flex-end',
-        paddingHorizontal: 16, marginBottom: 10,
+        flexDirection: 'row', gap: 9, justifyContent: 'flex-end',
+        alignItems: 'center', paddingHorizontal: 16, marginBottom: 10,
       }}>
-        {([['light', Colors.raised], ['busy', Colors.primary]] as const).map(([label, color]) => (
-          <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: color }} />
-            <Text style={{ fontSize: 10, color: Colors.subtext }}>{label}</Text>
+        {LOAD_STEPS.map((step) => (
+          <View key={step} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={{
+              width: 7, height: 7, borderRadius: 2,
+              backgroundColor: cellColors(step, Colors).bg,
+              borderWidth: step === 'free' ? 1 : 0, borderColor: Colors.border,
+            }} />
+            <Text style={{ fontSize: 9.5, color: Colors.subtext }}>{step}</Text>
           </View>
         ))}
       </View>
@@ -152,7 +214,7 @@ export default function MonthView({
 
           {days.map((dateKey) => {
             const dayItems = itemsByDate.get(dateKey) ?? [];
-            const { load, bookedMinutes: booked } = dayLoad(dayItems);
+            const { load, booked } = dayLoad(dayItems);
             // Notes deliberately do NOT shade the cell: the heat map answers
             // "how heavy is this day", and a jotting is not weight. They get a
             // dot instead, so a note-only day stops reading as a blank one.
@@ -168,7 +230,7 @@ export default function MonthView({
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityState={{ selected: isSelected }}
-                  accessibilityLabel={`${parseLocalDate(dateKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}, ${load === 'empty' && noteCount === 0 ? 'nothing scheduled' : `${booked > 0 ? `${Math.round(booked / 60 * 10) / 10} hours booked` : `${dayItems.length - noteCount} scheduled`}`}${noteCount > 0 ? `, ${noteCount} note${noteCount === 1 ? '' : 's'}` : ''}`}
+                  accessibilityLabel={`${parseLocalDate(dateKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}, ${LOAD_PHRASE[load]}${booked > 0 ? `, ${Math.round(booked / 60 * 10) / 10} hours booked` : ''}${noteCount > 0 ? `, ${noteCount} note${noteCount === 1 ? '' : 's'}` : ''}`}
                   style={{
                     aspectRatio: 1, borderRadius: 8,
                     alignItems: 'center', justifyContent: 'center',
@@ -222,7 +284,7 @@ export default function MonthView({
         </TouchableOpacity>
 
         <View style={{ flexDirection: 'row', gap: 8, marginBottom: 11 }}>
-          <StatTile value={bookedMinutes > 0 ? formatSeconds(bookedMinutes * 60) : '—'} label="booked" />
+          <StatTile value={selectedBooked > 0 ? formatSeconds(selectedBooked * 60) : '—'} label="booked" />
           <StatTile value={String(taskCount)} label={taskCount === 1 ? 'task' : 'tasks'} />
           <StatTile value={String(eventCount)} label={eventCount === 1 ? 'event' : 'events'} accent={eventCount > 0} />
         </View>
