@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
-import { resolveLocalDate, dayNameFromLocalDate } from '../../lib/localDate';
+import { resolveLocalDate, dayNameFromLocalDate, utcDateStr } from '../../lib/localDate';
 import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
 import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
 import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
@@ -12,6 +12,16 @@ import { taskCompletionXP } from '../../lib/xp';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
 
 const PRIORITY_VALUES = ['low', 'medium', 'high', 'urgent'] as const;
+
+/**
+ * A recurring template's last day, as 'YYYY-MM-DD', or null for "never ends".
+ *
+ * dueDate is stored at UTC midnight, so utcDateStr reads back the same calendar
+ * day it was written as. Reading local fields off the instant instead is a day
+ * early west of UTC, which is the bug already recorded against Task.dueDate.
+ */
+const repeatsUntil = (dueDate: Date | null): string | null =>
+  dueDate ? utcDateStr(dueDate) : null;
 const DAY_VALUES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
 // Returns the [start, end) UTC-day bounds for an ISO date string 'YYYY-MM-DD'.
@@ -233,8 +243,11 @@ export function setupTaskRoutes(router: Router): void {
         success: true,
         data: templates.map((t) => ({
           ...t,
-          scheduledToday: isScheduledOn(t.recurringDays, today),
-          nextOccurrence: nextOccurrence(t.recurringDays, today),
+          // A template's dueDate is the last day it repeats. Past it, the
+          // habit is neither scheduled today nor ever again, and the client
+          // renders that as "no longer repeats" rather than a stale next date.
+          scheduledToday: isScheduledOn(t.recurringDays, today, repeatsUntil(t.dueDate)),
+          nextOccurrence: nextOccurrence(t.recurringDays, today, repeatsUntil(t.dueDate)),
         })),
       });
     } catch (err) {
@@ -319,9 +332,15 @@ export function setupTaskRoutes(router: Router): void {
         }
 
         // ── 3. Spawn today's instance if scheduled ──
+        // The template's dueDate is the last day it repeats, inclusive. Without
+        // this check a habit the user gave an end date to kept spawning a fresh
+        // instance every scheduled day forever, because the spawner only ever
+        // looked at the weekday.
+        const endsOn = repeatsUntil(template.dueDate);
         const shouldSpawn =
-          template.recurringDays.length === 0 ||
-          template.recurringDays.includes(todayDayName);
+          (!endsOn || today <= endsOn) &&
+          (template.recurringDays.length === 0 ||
+            template.recurringDays.includes(todayDayName));
         if (!shouldSpawn) continue;
 
         // Safety check — never create a duplicate instance for today.

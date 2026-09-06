@@ -3,8 +3,16 @@ import { projectRecurring, eachDateInRange, isScheduledOn } from './recurringPro
 
 // Created well before the test range so existing cases are unaffected by the
 // createdAt bound; the bound gets its own tests below.
-const template = (id: string, days: string[] = [], createdAt = new Date('2020-01-01T00:00:00.000Z')) =>
-  ({ id, recurringDays: days, createdAt });
+const template = (
+  id: string,
+  days: string[] = [],
+  createdAt = new Date('2020-01-01T00:00:00.000Z'),
+  dueDate: Date | null = null,
+) => ({ id, recurringDays: days, createdAt, dueDate });
+
+/** A template that stops repeating after `date`, inclusive. */
+const endingOn = (id: string, days: string[], date: string) =>
+  template(id, days, new Date('2020-01-01T00:00:00.000Z'), new Date(`${date}T00:00:00.000Z`));
 const instance = (parentTaskId: string, date: string, extra: Record<string, unknown> = {}) => ({
   parentTaskId,
   dueDate: new Date(`${date}T00:00:00.000Z`),
@@ -188,5 +196,73 @@ describe('projectRecurring — createdAt bound', () => {
     });
     expect(out.filter((o) => o.template?.id === 'old')).toHaveLength(3);
     expect(out.filter((o) => o.template?.id === 'new')).toHaveLength(1);
+  });
+});
+
+describe('the end date bound', () => {
+  /**
+   * A recurring task used to run forever. The spawner looked only at the
+   * weekday, and the projection bounded occurrences by createdAt and nothing
+   * else — so a habit the user had given an end date to still drew on every
+   * future month they scrolled to. A template's dueDate is now the last day it
+   * repeats, INCLUSIVE.
+   */
+
+  it('still fires ON the end date', () => {
+    // Inclusive, not exclusive. "Ends Tuesday" means Tuesday still counts.
+    expect(isScheduledOn(endingOn('t', [], TUE), TUE)).toBe(true);
+  });
+
+  it('does not fire after the end date', () => {
+    expect(isScheduledOn(endingOn('t', [], TUE), WED)).toBe(false);
+  });
+
+  it('never ends when dueDate is null', () => {
+    // Every template created before end dates existed.
+    expect(isScheduledOn(template('t'), '2099-12-31')).toBe(true);
+  });
+
+  it('stops projecting occurrences past the end', () => {
+    const out = projectRecurring({
+      templates: [endingOn('t', [], TUE)],
+      instances: [],
+      start: MON,
+      end: WED,
+    });
+    expect(out.map((o) => o.date)).toEqual([MON, TUE]);
+  });
+
+  it('projects nothing at all for a habit that ended before the range', () => {
+    const out = projectRecurring({
+      templates: [endingOn('t', [], '2026-08-01')],
+      instances: [],
+      start: MON,
+      end: WED,
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('bounds each template independently', () => {
+    const out = projectRecurring({
+      templates: [endingOn('ends', [], MON), template('forever')],
+      instances: [],
+      start: MON,
+      end: WED,
+    });
+    expect(out.filter((o) => o.template?.id === 'ends').map((o) => o.date)).toEqual([MON]);
+    expect(out.filter((o) => o.template?.id === 'forever').map((o) => o.date)).toEqual([MON, TUE, WED]);
+  });
+
+  it('keeps a real instance that was completed before the habit ended', () => {
+    // Work that actually happened does not disappear because the habit later
+    // stopped — the same reason an instance survives a schedule edit.
+    const out = projectRecurring({
+      templates: [endingOn('t', [], MON)],
+      instances: [instance('t', MON)],
+      start: MON,
+      end: WED,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].instance).not.toBeNull();
   });
 });

@@ -152,3 +152,42 @@ describe('composeTaskList', () => {
     expect(items).toEqual([]);
   });
 });
+
+describe('nextOccurrenceLabel — a habit that has stopped repeating', () => {
+  /**
+   * A recurring task used to run forever. Now a template's dueDate is the last
+   * day it repeats, and the server stops sending a nextOccurrence past it.
+   *
+   * null means two different things and they need different copy: no weekdays
+   * ticked, versus the repeat having ended. "No days selected" on an ended
+   * habit sends the user hunting for a setting that is not the problem.
+   */
+  it('says it finished, not that no days are selected', () => {
+    expect(nextOccurrenceLabel(
+      template({ id: 'a', nextOccurrence: null, dueDate: '2026-08-01T00:00:00.000Z' }),
+      TODAY,
+    )).toBe('Finished repeating');
+  });
+
+  it('still says no days selected when there is no end date', () => {
+    expect(nextOccurrenceLabel(
+      template({ id: 'a', nextOccurrence: null, dueDate: null }),
+      TODAY,
+    )).toBe('No days selected');
+  });
+
+  it('is not finished on the end date itself', () => {
+    // Inclusive everywhere else, inclusive here.
+    expect(nextOccurrenceLabel(
+      template({ id: 'a', nextOccurrence: '2026-08-18', dueDate: '2026-08-18T00:00:00.000Z' }),
+      TODAY,
+    )).not.toBe('Finished repeating');
+  });
+
+  it('is unaffected while the end date is still ahead', () => {
+    expect(nextOccurrenceLabel(
+      template({ id: 'a', nextOccurrence: '2026-08-19', dueDate: '2026-12-31T00:00:00.000Z' }),
+      TODAY,
+    )).toBe('Next: tomorrow');
+  });
+});

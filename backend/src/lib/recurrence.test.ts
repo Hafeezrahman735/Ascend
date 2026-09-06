@@ -79,3 +79,52 @@ describe('nextOccurrence', () => {
     expect(nextOccurrence(['bogus'], TUE)).toBeNull();
   });
 });
+
+describe('the end date', () => {
+  /**
+   * A recurring task ran forever until this existed. The bound lives with the
+   * schedule rule so the spawner, the calendar projection and the client all
+   * inherit it — three copies of "when does this stop" would end a habit in one
+   * place and keep it running in another.
+   *
+   * The end date is INCLUSIVE: "ends on the 10th" fires on the 10th.
+   */
+  const MON = '2026-08-17';
+  const TUE = '2026-08-18';
+  const WED = '2026-08-19';
+
+  it('fires on the end date itself', () => {
+    expect(isScheduledOn([], TUE, TUE)).toBe(true);
+    expect(isScheduledOn(['tue'], TUE, TUE)).toBe(true);
+  });
+
+  it('does not fire after it', () => {
+    expect(isScheduledOn([], WED, TUE)).toBe(false);
+    expect(isScheduledOn(['wed'], WED, TUE)).toBe(false);
+  });
+
+  it('never ends without one', () => {
+    expect(isScheduledOn([], '2099-12-31')).toBe(true);
+    expect(isScheduledOn([], '2099-12-31', null)).toBe(true);
+  });
+
+  it('reports no next occurrence once it has passed', () => {
+    expect(nextOccurrence([], WED, TUE)).toBeNull();
+    expect(daysUntilNextOccurrence([], WED, TUE)).toBeNull();
+  });
+
+  it('reports the end date itself as the last occurrence', () => {
+    expect(nextOccurrence([], TUE, TUE)).toBe(TUE);
+  });
+
+  it('reports none when the schedule ends mid-week before its next day', () => {
+    // Mon/Wed/Fri ending on Tuesday: Wednesday matches the weekday but falls
+    // past the end, and there is no later day to find. Checking only the
+    // weekday would return Wednesday here.
+    expect(nextOccurrence(['mon', 'wed', 'fri'], TUE, TUE)).toBeNull();
+  });
+
+  it('still finds a day that falls before the end', () => {
+    expect(nextOccurrence(['wed'], MON, WED)).toBe(WED);
+  });
+});

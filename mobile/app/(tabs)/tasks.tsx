@@ -603,7 +603,11 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       {/* due date + category */}
       <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
         <View style={{ flex: 1 }}>
-          <Text style={monoLabel}>DUE DATE</Text>
+          {/* The same field means two things, so it says which. On a one-off task
+              it is the day the task is due. On a repeating one it is the last
+              day the habit fires — which the app now actually honours. It was
+              always collectable here and read by nothing at all. */}
+          <Text style={monoLabel}>{isRecurring ? 'REPEAT UNTIL' : 'DUE DATE'}</Text>
           {dueDate ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
@@ -616,7 +620,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
           ) : (
             <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
               <Ionicons name="calendar-outline" size={14} color={Colors.subtext} />
-              <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>Set date</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>
+                {isRecurring ? 'No end date' : 'Set date'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>

@@ -65,11 +65,22 @@ export function daysUntil(dateStr: string | null | undefined, from: Date = new D
 
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** Short human label for when a dormant template comes back. */
+/**
+ * Short human label for when a dormant template comes back.
+ *
+ * `nextOccurrence` is null for two different reasons and they need different
+ * copy. A template with no weekdays ticked has never had a next date. A
+ * template whose repeat END has passed had plenty and will not have another —
+ * telling that user "No days selected" would send them to look for a setting
+ * that is not the problem. The template's own dueDate separates the two.
+ */
 export function nextOccurrenceLabel(
   template: RecurringTemplate,
   from: Date = new Date(),
 ): string {
+  const endedDays = daysUntil(template.dueDate ? template.dueDate.slice(0, 10) : null, from);
+  if (endedDays !== null && endedDays < 0) return 'Finished repeating';
+
   const days = daysUntil(template.nextOccurrence, from);
   if (days === null) return 'No days selected';
   if (days <= 0) return 'Due today';

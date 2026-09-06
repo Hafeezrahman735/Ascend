@@ -27,6 +27,14 @@ export interface TemplateLike {
    * user genuinely missed.
    */
   createdAt: Date;
+  /**
+   * The last day this habit repeats, INCLUSIVE, or null for "forever".
+   *
+   * This is the template's own dueDate. Without it the projection ran to the
+   * end of whatever range was asked for, so a habit the user had ended still
+   * drew occurrences on every future month they scrolled to.
+   */
+  dueDate: Date | null;
 }
 
 export interface InstanceLike {
@@ -65,7 +73,11 @@ export function eachDateInRange(start: string, end: string): string[] {
  */
 export function isScheduledOn(template: TemplateLike, date: string): boolean {
   if (date < utcDateStr(template.createdAt)) return false;
-  return scheduleMatches(template.recurringDays, date);
+  return scheduleMatches(
+    template.recurringDays,
+    date,
+    template.dueDate ? utcDateStr(template.dueDate) : null,
+  );
 }
 
 export function projectRecurring<T extends TemplateLike, I extends InstanceLike>(params: {
@@ -94,11 +106,19 @@ export function projectRecurring<T extends TemplateLike, I extends InstanceLike>
   const dates = eachDateInRange(start, end);
   const dayNames = new Map(dates.map((d) => [d, dayNameFromLocalDate(d)]));
   const createdOn = new Map(templates.map((t) => [t.id, utcDateStr(t.createdAt)]));
+  // Precomputed alongside createdAt for the same reason: an 8000-pair range
+  // should not re-derive either bound per pair.
+  const endsOn = new Map(
+    templates.map((t) => [t.id, t.dueDate ? utcDateStr(t.dueDate) : null] as const),
+  );
 
   for (const date of dates) {
     const dayName = dayNames.get(date)!;
     for (const template of templates) {
       if (date < createdOn.get(template.id)!) continue;
+      // Inclusive: a habit ending on the 10th still draws on the 10th.
+      const endsAt = endsOn.get(template.id);
+      if (endsAt && date > endsAt) continue;
       if (template.recurringDays.length > 0 && !template.recurringDays.includes(dayName)) continue;
       const key = `${template.id}|${date}`;
       const instance = byTemplateAndDate.get(key) ?? null;
