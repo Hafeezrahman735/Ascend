@@ -1247,6 +1247,11 @@ export default function TraceScreen() {
       postsCursor: s.postsCursor,
       studyGroups: s.studyGroups,
       selectedGroupId: s.selectedGroupId,
+      // Added after this selector was introduced. A field the screen reads but
+      // the selector omits is invisible to tsc only until it is dereferenced —
+      // it typechecks as a missing property, which is how this was caught.
+      feedScope: s.feedScope,
+      setFeedScope: s.setFeedScope,
       notifications: s.notifications,
       unreadCount: s.unreadCount,
       isLoading: s.isLoading,
