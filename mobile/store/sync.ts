@@ -42,7 +42,7 @@ export function generateSessionId(): string {
  *
  * The cap is 1000 records, which serialises to roughly 150-250 KB of JSON, and
  * getSessionHistory() was re-reading and re-parsing all of it on EVERY focus of
- * both the Tasks tab and the Trace tab. Switching between the two tabs a few
+ * both the Tasks tab and the Ascend tab. Switching between the two tabs a few
  * times parsed a quarter of a megabyte on the JS thread each way, for data that
  * only changes when a session ends.
  *

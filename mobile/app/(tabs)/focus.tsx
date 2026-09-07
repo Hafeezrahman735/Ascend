@@ -358,7 +358,7 @@ export default function TimerScreen() {
   // Tasks pill strip reads the same field through the same lib/dailyTarget.ts
   // helper, so the two screens cannot quote different numbers for the same day.
   //
-  // Colour carries the state: amber while there is work left, `trace` once the
+  // Colour carries the state: amber while there is work left, `accent` once the
   // target is met — matching how the Tasks strip already tints "to goal" vs
   // "Goal reached". With no target configured there is nothing to be short of,
   // so it reads as a muted dash rather than a zero, which would look achieved.
@@ -372,7 +372,7 @@ export default function TimerScreen() {
     : formatGlobalTime(targetLeft.seconds);
   const targetLeftColor =
     targetLeft.kind === 'none' ? Colors.subtext
-    : targetLeft.kind === 'reached' ? Colors.trace
+    : targetLeft.kind === 'reached' ? Colors.accent
     : Colors.AMBER;
 
   const handleStopwatchStart = () => {
@@ -502,13 +502,13 @@ export default function TimerScreen() {
                   it sits beneath. */}
               <AnimatedCircle
                 r={DOT_RADIUS + 3}
-                fill={Colors.trace}
+                fill={Colors.accent}
                 opacity={0.15}
                 animatedProps={dotProps}
               />
               <AnimatedCircle
                 r={DOT_RADIUS}
-                fill={Colors.trace}
+                fill={Colors.accent}
                 animatedProps={dotProps}
               />
             </Svg>
@@ -567,7 +567,7 @@ export default function TimerScreen() {
                       width: Math.max(12, Math.round((minutes / total) * 180)),
                       height: 6,
                       borderRadius: 3,
-                      backgroundColor: isCurrent ? Colors.trace : Colors.inactive,
+                      backgroundColor: isCurrent ? Colors.accent : Colors.inactive,
                       marginHorizontal: 3,
                     }}
                   />
@@ -580,7 +580,7 @@ export default function TimerScreen() {
                     width: i < completedDots ? 28 : 20,
                     height: 6,
                     borderRadius: 3,
-                    backgroundColor: i < completedDots ? Colors.trace : Colors.inactive,
+                    backgroundColor: i < completedDots ? Colors.accent : Colors.inactive,
                     marginHorizontal: 3,
                   }}
                 />
@@ -678,7 +678,7 @@ export default function TimerScreen() {
               <View style={{
                 position: 'absolute', top: 8, right: 8,
                 width: 8, height: 8, borderRadius: 4,
-                backgroundColor: Colors.trace,
+                backgroundColor: Colors.accent,
               }} />
             )}
           </AppPressable>
@@ -746,7 +746,7 @@ export default function TimerScreen() {
                 <View style={{
                   width: `${Math.min((selectedTask.totalTimeOnTask / (selectedTask.estimatedMinutes * 60)) * 100, 100)}%`,
                   height: '100%',
-                  backgroundColor: Colors.trace,
+                  backgroundColor: Colors.accent,
                   borderRadius: 3,
                 }} />
               </View>
@@ -776,7 +776,7 @@ export default function TimerScreen() {
         }}>
           <FocusStatCard
             value={formatGlobalTime(globalTotalTime)}
-            valueColor={Colors.trace}
+            valueColor={Colors.accent}
             label="Focus Time Today"
           />
           <FocusStatCard
@@ -836,7 +836,7 @@ export default function TimerScreen() {
                         <Ionicons
                           name={isSelected ? 'checkbox' : 'square-outline'}
                           size={20}
-                          color={isSelected ? Colors.trace : Colors.text}
+                          color={isSelected ? Colors.accent : Colors.text}
                           style={{ marginRight: 12 }}
                         />
                         <Text style={{

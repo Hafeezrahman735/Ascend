@@ -12,11 +12,14 @@ export const darkColors = {
   text: '#B8AEFF',
   textBright: '#EEE9FF',
   subtext: '#6B6899',
-  // `trace` is the brand's own hue: the colour of a finished session, a live
-  // streak, and the orbit-tail mark itself. Named for what it means, not for
-  // what colour it happens to be — it is teal in dark, green in light.
-  trace: '#00E5C3',
-  traceDim: '#003d35',
+  // The completion hue: a finished session, a live streak, a checked box.
+  // Named for its ROLE, not for the product and not for the colour — it is teal
+  // in dark and green in light. It was called `trace` back when the product was
+  // called Trace, which is exactly the coupling this name exists to avoid: the
+  // product has since been renamed twice more and this token did not move, nor
+  // did the 88 call sites that read it. Do not rename it after the app again.
+  accent: '#00E5C3',
+  accentDim: '#003d35',
   inactive: '#2E2C50',
   border: '#2C2C6A',
 
@@ -39,8 +42,8 @@ export const lightColors: typeof darkColors = {
   textBright: '#1A0A00',   // headings, primary labels
   subtext: '#9A8070',   // muted / secondary labels
 
-  trace: '#2D8A6A',   // green replaces teal for completion states
-  traceDim: '#E0F4EE',   // green chip background
+  accent: '#2D8A6A',   // green replaces teal for completion states
+  accentDim: '#E0F4EE',   // green chip background
 
   inactive: '#EAD5C8',   // progress rails, empty track
   border: '#E8DDD5',   // card borders, dividers

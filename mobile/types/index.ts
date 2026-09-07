@@ -471,16 +471,16 @@ export interface SocialPost {
   sessionCount: number | null;
   focusMinutes: number | null;
   streakAtPost: number | null;
-  /** Tasks finished on the post's day. Only on auto-generated daily traces. */
+  /** Tasks finished on the post's day. Only on auto-generated daily recaps. */
   tasksCompleted?: number | null;
   /**
-   * Set by the server on a daily trace it generated from finished sessions, as
-   * opposed to a recap the user wrote by hand. The Trace screen uses it to know
-   * which card is already being drawn locally as "your trace today", so the
+   * Set by the server on a daily recap it generated from finished sessions, as
+   * opposed to a recap the user wrote by hand. The Ascend screen uses it to know
+   * which card is already being drawn locally as "your recap today", so the
    * same day is not shown twice.
    */
   auto?: boolean;
-  /** 'YYYY-MM-DD' — the local day an auto-generated trace covers. */
+  /** 'YYYY-MM-DD' — the local day an auto-generated recap covers. */
   localDate?: string;
   totalSessionsAtPost: number | null;
   totalFocusHoursAtPost: number | null;

@@ -463,7 +463,7 @@ const resetSchema = z.object({
  * Answers identically whether or not the address has an account. That is the
  * whole point: a different message, a different status code, or a measurably
  * different response time all turn this into an oracle for "does this person
- * use Trace", which is worth something to a spammer and more to someone
+ * use Ascend", which is worth something to a spammer and more to someone
  * targeting one individual.
  *
  * It follows that nothing below may return early with a distinguishable result,
@@ -513,7 +513,7 @@ authRouter.post('/auth/forgot-password', async (req: Request, res: Response) => 
     // `link` holds the RAW token and is never logged, here or in lib/email.ts.
     void sendEmail({
       to: email,
-      subject: 'Reset your Trace password',
+      subject: 'Reset your Ascend password',
       text: `Open this link to set a new password:\n\n${link}\n\nIt expires in ${RESET_TOKEN_TTL_MINUTES} minutes and can only be used once. If you didn't ask for this, you can ignore this email — your password has not changed.`,
       html: `<p>Open this link to set a new password:</p><p><a href="${link}">Reset my password</a></p><p>It expires in ${RESET_TOKEN_TTL_MINUTES} minutes and can only be used once.</p><p>If you didn't ask for this, you can ignore this email — your password has not changed.</p>`,
     });

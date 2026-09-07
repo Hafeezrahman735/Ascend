@@ -14,10 +14,10 @@ import { Font } from '../constants/typography';
  * captured moment of the thing rather than a logo bolted on beside it.
  *
  * The tail fades to nothing along its length, so at tab-bar size the dot is what
- * carries the mark and the fade just reads as weight. Rendered in `trace`, the
+ * carries the mark and the fade just reads as weight. Rendered in `accent`, the
  * colour that already means done/progress everywhere else in the app.
  *
- * Kept to three places on purpose — the wordmark, the Trace tab icon, and the
+ * Kept to three places on purpose — the wordmark, the Ascend tab icon, and the
  * live Focus ring. Sprinkling it onto other screens as decoration is what would
  * cost it its recognisability.
  */
@@ -26,20 +26,20 @@ const VB = 72;          // viewBox, so geometry stays in one readable unit
 const R = 26;           // ring radius
 const STROKE = 7;       // ring + tail weight at 72; scales with the whole mark
 
-export function TraceMark({ size = 28, color, trackColor }: {
+export function AscendMark({ size = 28, color, trackColor }: {
   size?: number;
-  /** Overrides the `trace` token — the tab bar passes its active/inactive tint. */
+  /** Overrides the `accent` token — the tab bar passes its active/inactive tint. */
   color?: string;
   /** The unswept part of the ring. Defaults to the empty-track token. */
   trackColor?: string;
 }) {
   const Colors = useTheme();
-  const tint = color ?? Colors.trace;
+  const tint = color ?? Colors.accent;
   const track = trackColor ?? Colors.inactive;
 
   // Gradient ids are document-global in SVG. Two marks on one screen (wordmark
   // plus tab icon) would otherwise share one id and the second would win.
-  const gradientId = `trace-tail-${useId()}`;
+  const gradientId = `orbit-tail-${useId()}`;
 
   return (
     <Svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} fill="none">
@@ -64,10 +64,10 @@ export function TraceMark({ size = 28, color, trackColor }: {
 }
 
 /**
- * Mark + name, locked up. The one place the brand states itself: the Trace tab
+ * Mark + name, locked up. The one place the brand states itself: the Ascend tab
  * header and the sign-in screen.
  */
-export function TraceWordmark({ size = 25, showTagline = false }: {
+export function AscendWordmark({ size = 25, showTagline = false }: {
   size?: number;
   showTagline?: boolean;
 }) {
@@ -75,7 +75,7 @@ export function TraceWordmark({ size = 25, showTagline = false }: {
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-      <TraceMark size={size} />
+      <AscendMark size={size} />
       <View>
         <Text style={{
           color: Colors.textBright,
@@ -84,7 +84,7 @@ export function TraceWordmark({ size = 25, showTagline = false }: {
           letterSpacing: -0.7,
           lineHeight: size * 1.15,
         }}>
-          Trace
+          Ascend
         </Text>
         {showTagline && (
           <Text style={{

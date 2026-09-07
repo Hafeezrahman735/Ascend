@@ -166,7 +166,7 @@ export default function DayView({
                   <Ionicons
                     name={note.isCompleted ? 'checkbox' : 'square-outline'}
                     size={17}
-                    color={note.isCompleted ? Colors.trace : Colors.subtext}
+                    color={note.isCompleted ? Colors.accent : Colors.subtext}
                   />
                 )}
                 <Text

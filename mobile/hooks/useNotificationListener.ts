@@ -21,7 +21,7 @@ export function useNotificationListener(): void {
 
       // Each notification type lands where you can act on it: a timer alarm on
       // the timer, a goal due-date reminder on the tab that owns goals. Routing
-      // is explicit because /(tabs) lands on Trace, so a bare group push would
+      // is explicit because /(tabs) lands on Ascend, so a bare group push would
       // drop the user on the feed instead of the thing they just tapped.
       const destination =
         type === 'focus_complete' || type === 'break_complete' || type === 'daily_reminder'

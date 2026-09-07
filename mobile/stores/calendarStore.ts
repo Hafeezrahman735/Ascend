@@ -50,7 +50,7 @@ const MAX_CACHED_RANGES = 12;
  * takes the whole tab down rather than itself.
  *
  * Logged rather than dropped quietly — an item vanishing from the calendar is
- * exactly the kind of thing that should leave a trace.
+ * exactly the kind of thing that should leave a record.
  */
 function renderableOnly(items: unknown, source: string): CalendarItem[] {
   if (!Array.isArray(items)) {

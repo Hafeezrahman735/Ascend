@@ -1,14 +1,14 @@
 <!--
-  Trace — the orbit-tail mark. Master artwork.
+  Ascend — the orbit-tail mark. Master artwork.
 
   This is the source the app icon, adaptive icon and favicon rasters are
-  exported from. It is the same geometry as components/TraceMark.tsx, drawn on
+  exported from. It is the same geometry as components/AscendMark.tsx, drawn on
   a 1024 canvas: a track ring, a tail fading up the top-left quadrant, and the
   solid leading dot.
 
   Colours are the dark palette's literals on purpose — an app icon has no theme
   to read. bg #08081A matches app.json's splash/adaptive-icon backgroundColor,
-  the ring track is `inactive` #2E2C50 and the mark is `trace` #00E5C3.
+  the ring track is `inactive` #2E2C50 and the mark is `accent` #00E5C3.
 
   The mark is the 72-unit drawing scaled and centred so its outer edge spans
   about 75% of the canvas — Apple's icon grid, and far enough inside Android's

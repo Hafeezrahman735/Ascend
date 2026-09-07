@@ -13,7 +13,7 @@ import { useTheme } from '../hooks/useTheme';
  * selection is carried by colour and a slightly heavier stroke alone. That is
  * what makes them look like a set rather than five borrowed pictures.
  *
- * Trace is the exception, and deliberately: its tail and dot stay in the `trace`
+ * Ascend is the exception, and deliberately: its tail and dot stay in the `accent`
  * colour whether or not the tab is selected, because that mark is the brand and
  * it should not go grey. Only its track ring picks up the active/inactive tint.
  */
@@ -34,22 +34,22 @@ function strokeWidth(focused: boolean): number {
   return focused ? 2 : 1.8;
 }
 
-/** Orbit-tail, small. The same geometry as components/TraceMark. */
-export function TraceTabIcon({ color, focused, size = SIZE }: IconProps) {
+/** Ascend-tail, small. The same geometry as components/AscendMark. */
+export function AscendTabIcon({ color, focused, size = SIZE }: IconProps) {
   const Colors = useTheme();
-  const gradientId = `tab-trace-tail-${useId()}`;
+  const gradientId = `tab-orbit-tail-${useId()}`;
 
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Defs>
         <LinearGradient id={gradientId} x1="0.1" y1="0.95" x2="0.5" y2="0.05">
-          <Stop offset="0" stopColor={Colors.trace} stopOpacity={0} />
-          <Stop offset="1" stopColor={Colors.trace} stopOpacity={1} />
+          <Stop offset="0" stopColor={Colors.accent} stopOpacity={0} />
+          <Stop offset="1" stopColor={Colors.accent} stopOpacity={1} />
         </LinearGradient>
       </Defs>
       <Circle cx={12} cy={12} r={8} stroke={color} strokeWidth={focused ? 2.2 : 1.8} />
       <Path d="M4 12 A8 8 0 0 1 12 4" stroke={`url(#${gradientId})`} strokeWidth={2.4} strokeLinecap="round" />
-      <Circle cx={12} cy={4} r={2.6} fill={Colors.trace} />
+      <Circle cx={12} cy={4} r={2.6} fill={Colors.accent} />
     </Svg>
   );
 }

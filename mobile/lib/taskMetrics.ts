@@ -103,7 +103,7 @@ export function getDueChip(
 ): { label: string; bg: string; fg: string; a11yLabel: string } | null {
   if (!task.dueDate) return null;
   if (task.isCompleted) {
-    return { label: '✓ Done', bg: c.traceDim, fg: c.trace, a11yLabel: 'Done' };
+    return { label: '✓ Done', bg: c.accentDim, fg: c.accent, a11yLabel: 'Done' };
   }
   const daysLeft = calcDaysUntilDue(task, now);
   // null covers a malformed dueDate as well as a missing one. Without this the

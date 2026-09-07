@@ -68,7 +68,7 @@ export default function Onboarding1Screen() {
             No one is telling you what to do next
           </Text>
           <Text style={{ color: Colors.subtext, fontSize: 15, marginBottom: 36, lineHeight: 22 }}>
-            That is the hard part of working for yourself. Trace is the structure
+            That is the hard part of working for yourself. Ascend is the structure
             you would otherwise have to invent every morning. First — what should
             we call you?
           </Text>
@@ -132,7 +132,7 @@ export default function Onboarding1Screen() {
                   maxLength={20}
                 />
                 {handle.length >= 3 && (
-                  <Text style={{ color: Colors.trace, fontSize: 14, fontWeight: '700' }}>✓</Text>
+                  <Text style={{ color: Colors.accent, fontSize: 14, fontWeight: '700' }}>✓</Text>
                 )}
               </View>
               <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 6 }}>

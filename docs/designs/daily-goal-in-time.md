@@ -45,7 +45,7 @@ Two details that make the direction obvious:
   the same file writes down.
 
 Time is what the rest of the product measures: the leaderboard sorts on
-`totalFocusTime`, the trace card shows FOCUSED, the profile shows hours.
+`totalFocusTime`, the recap card shows FOCUSED, the profile shows hours.
 
 ## Constraints
 
@@ -168,7 +168,7 @@ about the day; it just is not the goal.
 
 ### 6. Focus tab
 "Target left" reads `dailyFocusMinutes` directly. Colour semantics unchanged:
-amber while remaining, `trace` when met, muted dash when no target.
+amber while remaining, `accent` when met, muted dash when no target.
 
 ### 7. Dead code found while mapping this
 `noTarget` (`tasks.tsx:1285`) and `TargetState.kind === 'none'` are unreachable:
@@ -191,7 +191,7 @@ deliberately as a guard and say which.
    `lib/sessionPlan.ts`'s own granularity.
 
 2. **Display format: reuse `formatSeconds`** from `lib/calendarItems.ts`, which
-   renders `3h` / `1h 15m` / `25m` and is what the trace cards already use, so the
+   renders `3h` / `1h 15m` / `25m` and is what the recap cards already use, so the
    goal reads like every other duration in the app.
 
 ## Success Criteria

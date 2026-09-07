@@ -1,5 +1,5 @@
 <!--
-  Trace mark, monochrome silhouette — source for the Android notification icon.
+  Ascend mark, monochrome silhouette — source for the Android notification icon.
 
   Android throws away every channel but alpha here and tints the result with the
   `color` set in app.json, so this is deliberately white-on-transparent with no

@@ -102,7 +102,7 @@ export default function UnlockOverlay() {
 
           <View style={{
             marginTop: 16, paddingHorizontal: 14, paddingVertical: 6,
-            borderRadius: 20, backgroundColor: Colors.traceDim,
+            borderRadius: 20, backgroundColor: Colors.accentDim,
           }}>
             <Text style={{ color: TRACE, fontSize: 13, fontWeight: '700' }}>
               +{current.xpReward} XP

@@ -12,12 +12,12 @@ import { useTheme } from '../hooks/useTheme';
  * silence another app's notifications. Only the person holding the phone can do
  * it, by hand or through a Shortcuts Automation they create themselves. So this
  * sheet is a guided manual setup, and it says so plainly rather than implying
- * Trace is doing something it cannot.
+ * Ascend is doing something it cannot.
  *
  * Deliberately NOT used here: `App-Prefs:` / `prefs:root=` URLs that jump
  * straight to the Focus pane. Those are undocumented, therefore private API,
  * and Apple review rejects them. `Linking.openSettings()` is the only sanctioned
- * call, and it lands on Trace's own page — the copy says that, because that is
+ * call, and it lands on Ascend's own page — the copy says that, because that is
  * where it lands.
  */
 
@@ -26,7 +26,7 @@ const SHORTCUTS_URL = 'shortcuts://';
 const AUTOMATION_STEPS = [
   'Open the Shortcuts app, then the Automation tab.',
   'Tap +, then App.',
-  'Choose Trace, and set it to run when the app is Opened.',
+  'Choose Ascend, and set it to run when the app is Opened.',
   'Pick Run Immediately so it does not ask you every time.',
   'Add the action Set Focus, and set it to turn Do Not Disturb On.',
   'Optionally add a second automation for App Closed that turns it back Off.',
@@ -106,7 +106,7 @@ export default function FocusModeSheet({ visible, onClose }: {
             }}>
               <Ionicons name="information-circle-outline" size={17} color={Colors.subtext} />
               <Text style={{ flex: 1, color: Colors.subtext, fontSize: 12.5, lineHeight: 18 }}>
-                iOS does not let any app switch Focus on for you. Trace can only
+                iOS does not let any app switch Focus on for you. Ascend can only
                 walk you to the switch. The setup below is a one-time thing.
               </Text>
             </View>
@@ -119,7 +119,7 @@ export default function FocusModeSheet({ visible, onClose }: {
             </Text>
             <Text style={{ color: Colors.text, fontSize: 13.5, lineHeight: 20, marginBottom: 14 }}>
               This is the closest thing to automatic that iOS allows. Once set up,
-              Do Not Disturb turns itself on whenever you open Trace.
+              Do Not Disturb turns itself on whenever you open Ascend.
             </Text>
 
             {AUTOMATION_STEPS.map((text, i) => (
@@ -167,7 +167,7 @@ export default function FocusModeSheet({ visible, onClose }: {
             <Pressable
               onPress={() => Linking.openSettings()}
               accessibilityRole="button"
-              accessibilityLabel="Open Trace settings in iOS"
+              accessibilityLabel="Open Ascend settings in iOS"
               style={{
                 flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
                 borderRadius: 14, paddingVertical: 13,
@@ -176,7 +176,7 @@ export default function FocusModeSheet({ visible, onClose }: {
             >
               <Ionicons name="settings-outline" size={16} color={Colors.subtext} />
               <Text style={{ color: Colors.subtext, fontSize: 13.5, fontWeight: '600' }}>
-                Open Trace in iOS Settings
+                Open Ascend in iOS Settings
               </Text>
             </Pressable>
           </ScrollView>

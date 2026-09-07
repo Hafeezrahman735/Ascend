@@ -347,7 +347,7 @@ export default function MonthView({
               <Ionicons
                 name={note.isCompleted ? 'checkbox' : 'square-outline'}
                 size={15}
-                color={note.isCompleted ? Colors.trace : Colors.subtext}
+                color={note.isCompleted ? Colors.accent : Colors.subtext}
               />
               <Text
                 numberOfLines={1}

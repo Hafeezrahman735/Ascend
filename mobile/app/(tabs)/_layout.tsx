@@ -1,10 +1,10 @@
 import { Tabs } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import {
-  TraceTabIcon, FocusTabIcon, TasksTabIcon, CalendarTabIcon, ProfileTabIcon,
+  AscendTabIcon, FocusTabIcon, TasksTabIcon, CalendarTabIcon, ProfileTabIcon,
 } from '../../components/TabIcons';
 
-// Trace is the landing tab, so it owns the group's index route — that is what
+// Ascend is the landing tab, so it owns the group's index route — that is what
 // makes a cold launch (and every bare `router.replace('/(tabs)')`) open on the
 // feed rather than the timer. Focus keeps its own named route at /(tabs)/focus;
 // anything that means "take me to the timer" must say so explicitly.
@@ -38,15 +38,15 @@ export default function TabLayout() {
         },
       }}
     >
-      {/* Order is deliberate: Trace · Focus · Tasks · Calendar · Profile. Focus
+      {/* Order is deliberate: Ascend · Focus · Tasks · Calendar · Profile. Focus
           sits at position two — one tap from the landing screen — because this
           is a demotion in landing priority, not in reachability. */}
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Trace',
+          title: 'Ascend',
           tabBarIcon: ({ color, focused }) => (
-            <TraceTabIcon color={color} focused={focused} />
+            <AscendTabIcon color={color} focused={focused} />
           ),
         }}
       />

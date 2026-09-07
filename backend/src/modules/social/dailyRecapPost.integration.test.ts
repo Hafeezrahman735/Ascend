@@ -3,12 +3,12 @@ import { createUser, authed, type TestUser } from '../../test/factories';
 import { prisma } from '../../lib/prisma';
 
 /**
- * The daily trace post, driven through the real POST /timer/complete route
+ * The daily recap post, driven through the real POST /timer/complete route
  * against a real Postgres.
  *
  * These deliberately go through the route rather than calling
- * upsertDailyTracePost directly. The whole risk in this feature is the wiring —
- * whether finishing a session actually leaves a trace, whether a second session
+ * upsertDailyRecapPost directly. The whole risk in this feature is the wiring —
+ * whether finishing a session actually leaves an recap, whether a second session
  * revises the first card instead of stacking a new one, and whether the privacy
  * flags are consulted on the path a real client takes. Calling the service
  * directly would test none of that.
@@ -34,7 +34,7 @@ async function completeSession(user: TestUser, over: Record<string, unknown> = {
   return res;
 }
 
-async function tracePosts(user: TestUser) {
+async function recapPosts(user: TestUser) {
   return prisma.socialPost.findMany({
     where: { authorId: user.id, type: 'session_recap' },
     orderBy: { createdAt: 'asc' },
@@ -45,13 +45,13 @@ function payloadOf(post: { payload: unknown }): Record<string, unknown> {
   return post.payload as Record<string, unknown>;
 }
 
-describe('daily trace post', () => {
+describe('daily recap post', () => {
   it('creates one on the first finished session of the day', async () => {
     const user = await createUser();
 
     await completeSession(user);
 
-    const posts = await tracePosts(user);
+    const posts = await recapPosts(user);
     expect(posts).toHaveLength(1);
     expect(posts[0].visibility).toBe('public');
 
@@ -71,7 +71,7 @@ describe('daily trace post', () => {
     await completeSession(user);
     await completeSession(user);
 
-    const posts = await tracePosts(user);
+    const posts = await recapPosts(user);
     expect(posts).toHaveLength(1);
 
     const payload = payloadOf(posts[0]);
@@ -97,7 +97,7 @@ describe('daily trace post', () => {
 
     await completeSession(user);
 
-    const posts = await tracePosts(user);
+    const posts = await recapPosts(user);
     expect(payloadOf(posts[0]).tasksCompleted).toBe(1);
   });
 
@@ -110,7 +110,7 @@ describe('daily trace post', () => {
     const yesterday = dateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
     await completeSession(user, { localDate: yesterday });
 
-    const posts = await tracePosts(user);
+    const posts = await recapPosts(user);
     expect(posts).toHaveLength(2);
     const days = posts.map((p) => payloadOf(p).localDate).sort();
     expect(days).toEqual([yesterday, todayLocal()].sort());
@@ -146,7 +146,7 @@ describe('daily trace post', () => {
   });
 });
 
-describe('daily trace post — privacy', () => {
+describe('daily recap post — privacy', () => {
   /**
    * These are the tests that decide whether the privacy flags are real. Both
    * default to true, so a user who has turned one OFF has made a deliberate
@@ -159,7 +159,7 @@ describe('daily trace post — privacy', () => {
 
     await completeSession(user);
 
-    expect(await tracePosts(user)).toHaveLength(0);
+    expect(await recapPosts(user)).toHaveLength(0);
   });
 
   it('writes nothing when publicProfile is off', async () => {
@@ -168,7 +168,7 @@ describe('daily trace post — privacy', () => {
 
     await completeSession(user);
 
-    expect(await tracePosts(user)).toHaveLength(0);
+    expect(await recapPosts(user)).toHaveLength(0);
   });
 
   it('still records the session itself when posting is declined', async () => {
@@ -189,14 +189,14 @@ describe('daily trace post — privacy', () => {
 
     await completeSession(user);
 
-    const posts = await tracePosts(user);
+    const posts = await recapPosts(user);
     expect(posts).toHaveLength(1);
     // Frozen at the one session it had before the flag flipped.
     expect(payloadOf(posts[0]).sessionCount).toBe(1);
   });
 });
 
-describe('daily trace post — hand-written recaps', () => {
+describe('daily recap post — hand-written recaps', () => {
   it('never overwrites a session_recap the user composed themselves', async () => {
     // A manual recap carries no `auto` flag, so the upsert must not adopt it.
     // Without that clause the automation would rewrite the user's own caption
@@ -212,7 +212,7 @@ describe('daily trace post — hand-written recaps', () => {
 
     await completeSession(user);
 
-    const posts = await tracePosts(user);
+    const posts = await recapPosts(user);
     expect(posts).toHaveLength(2);
 
     const kept = posts.find((p) => p.id === manual.body.data.id);

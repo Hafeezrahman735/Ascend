@@ -22,10 +22,10 @@ function GroupCard({ group, onJoin, onLeave, onOpen }: {
   const Colors = useTheme();
   const [loading, setLoading] = useState(false);
   const GROUP_BG: Record<string, string> = {
-    purple: Colors.primaryDim, teal: Colors.traceDim, amber: Colors.AMBER_DIM, rose: Colors.ROSE_DIM,
+    purple: Colors.primaryDim, teal: Colors.accentDim, amber: Colors.AMBER_DIM, rose: Colors.ROSE_DIM,
   };
   const GROUP_BORDER: Record<string, string> = {
-    purple: Colors.primary, teal: Colors.trace, amber: Colors.AMBER, rose: Colors.ROSE,
+    purple: Colors.primary, teal: Colors.accent, amber: Colors.AMBER, rose: Colors.ROSE,
   };
   const border = GROUP_BORDER[group.color] ?? Colors.primary;
   const bg = GROUP_BG[group.color] ?? Colors.surface;
@@ -102,7 +102,7 @@ function CreateGroupModal({ visible, onClose, onCreate }: {
   const Colors = useTheme();
   const COLOR_OPTIONS = [
     { key: 'purple', color: Colors.primary },
-    { key: 'teal', color: Colors.trace },
+    { key: 'teal', color: Colors.accent },
     { key: 'amber', color: Colors.AMBER },
     { key: 'rose', color: Colors.ROSE },
   ] as const;

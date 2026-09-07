@@ -4,7 +4,7 @@ import { localPartsOf, safeTimeZone } from '../../lib/localParts';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
 
 /**
- * The daily trace post — what a finished session leaves behind for other people.
+ * The daily recap post — what a finished session leaves behind for other people.
  *
  * ONE POST PER USER PER DAY, updated in place, not one post per session. That
  * is the whole design decision here and it is worth stating plainly: a person
@@ -26,7 +26,7 @@ import { eventBus, EventTypes } from '../../middleware/eventBus';
 /** Marks a post as owned by this automation rather than written by the user. */
 const AUTO_FLAG = true;
 
-export interface DailyTraceNumbers {
+export interface DailyRecapNumbers {
   sessionCount: number;
   focusMinutes: number;
   tasksCompleted: number;
@@ -36,20 +36,20 @@ export interface DailyTraceNumbers {
 export interface UpsertResult {
   postId: string;
   created: boolean;
-  numbers: DailyTraceNumbers;
+  numbers: DailyRecapNumbers;
 }
 
 /**
  * Why this can decline to post at all.
  *
  * `privacy` is not an error — it is the setting working. Returned rather than
- * thrown so the caller can log it without a stack trace, and so the tests can
+ * thrown so the caller can log it without a stack recap, and so the tests can
  * assert on the reason instead of on "nothing happened", which would also pass
  * if the feature were simply broken.
  */
 export type SkipReason = 'privacy' | 'no_sessions';
 
-export async function upsertDailyTracePost(input: {
+export async function upsertDailyRecapPost(input: {
   userId: string;
   /** 'YYYY-MM-DD' in the user's local timezone — the day the post represents. */
   localDate: string;
@@ -168,7 +168,7 @@ async function computeDailyNumbers(input: {
   localDate: string;
   timeZone?: string | null;
   currentStreak: number;
-}): Promise<DailyTraceNumbers> {
+}): Promise<DailyRecapNumbers> {
   const { userId, localDate, timeZone, currentStreak } = input;
 
   const dayStart = new Date(`${localDate}T00:00:00.000Z`);

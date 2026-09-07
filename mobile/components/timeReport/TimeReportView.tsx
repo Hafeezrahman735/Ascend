@@ -476,7 +476,7 @@ function ReportBody({
       )}
       {report.approxShare > 0.05 && (
         <Text style={{ color: Colors.subtext, fontSize: 11, lineHeight: 16, marginTop: Space.sm }}>
-          {pct(report.approxShare)} of this time was recorded before Trace stored your
+          {pct(report.approxShare)} of this time was recorded before Ascend stored your
           timezone. Its day and hour are worked out from your current one, which is
           right unless you have moved since.
         </Text>

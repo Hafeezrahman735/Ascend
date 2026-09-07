@@ -40,7 +40,7 @@ export function makePostTypeMeta(
   return {
     session_recap:      { label: '⚡ Session Recap',        bg: c.primaryDim, color: c.primarySoft },
     achievement_unlock: { label: '🏅 Achievement Unlocked', bg: c.GOLD_DIM,   color: c.GOLD },
-    accountability:     { label: '🤝 Accountability',        bg: c.traceDim,    color: c.trace },
+    accountability:     { label: '🤝 Accountability',        bg: c.accentDim,    color: c.accent },
     streak_milestone:   { label: '🔥 Streak Milestone',      bg: c.AMBER_DIM,  color: c.AMBER },
     free_post:          { label: '✏️ Free Post',             bg: c.ROSE_DIM,   color: c.ROSE },
   };

@@ -149,7 +149,7 @@ export default function StatsView({ stats }: { stats: CalendarStats | null }) {
                     width: `${Math.min(100, (p.ratio ?? 0) * 100)}%`,
                     height: '100%',
                     borderRadius: 3,
-                    backgroundColor: p.isOutlier ? Colors.ROSE : Colors.trace,
+                    backgroundColor: p.isOutlier ? Colors.ROSE : Colors.accent,
                   }}
                 />
               </View>

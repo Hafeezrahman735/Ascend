@@ -43,12 +43,12 @@ describe('GET /social/posts?scope=public', () => {
     // The whole point. This account has no follows, which is every account on
     // its first day.
     const [newcomer, stranger] = [await createUser(), await createUser()];
-    await post(stranger, 'a stranger’s trace');
+    await post(stranger, 'a stranger’s recap');
 
     const res = await authed(newcomer).get('/social/posts?scope=public');
 
     expect(res.status).toBe(200);
-    expect(contentsOf(res.body)).toContain('a stranger’s trace');
+    expect(contentsOf(res.body)).toContain('a stranger’s recap');
   });
 
   it('includes your own public posts too', async () => {
@@ -92,12 +92,12 @@ describe('GET /social/posts with no scope — unchanged', () => {
     // The regression guard. An older binary sends no scope and must keep the
     // follow-scoped feed it has always had.
     const [newcomer, stranger] = [await createUser(), await createUser()];
-    await post(stranger, 'a stranger’s trace');
+    await post(stranger, 'a stranger’s recap');
 
     const res = await authed(newcomer).get('/social/posts');
 
     expect(res.status).toBe(200);
-    expect(contentsOf(res.body)).not.toContain('a stranger’s trace');
+    expect(contentsOf(res.body)).not.toContain('a stranger’s recap');
   });
 
   it('shows someone you DO follow', async () => {

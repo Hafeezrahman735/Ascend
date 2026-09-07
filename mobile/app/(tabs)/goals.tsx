@@ -336,13 +336,13 @@ function PostsPane({ posts, isLoading, hasMore, onLoadMore, onPostPress }: {
     return (
       <View style={{ padding: 32, alignItems: 'center' }}>
         <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
-          {"You haven't posted anything yet. Share your progress from the Trace tab."}
+          {"You haven't posted anything yet. Share your progress from the Ascend tab."}
         </Text>
         <Pressable
           onPress={() => router.push('/(tabs)')}
           style={{ marginTop: 14, backgroundColor: Colors.primaryDim, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 }}
         >
-          <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Go to Trace</Text>
+          <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 13 }}>Go to Ascend</Text>
         </Pressable>
       </View>
     );
@@ -594,13 +594,13 @@ function HeroCard({
 // ─── Week dots ────────────────────────────────────────────────────────────────
 
 /**
- * A day you showed up is drawn in `trace`; today, still unfinished, keeps its
+ * A day you showed up is drawn in `accent`; today, still unfinished, keeps its
  * amber ring.
  *
- * The two colours are saying different things and that is the point. `trace` is
+ * The two colours are saying different things and that is the point. `accent` is
  * the colour of a day that happened — the same hue the feed cards and the mark
  * use for done. Amber is the nudge on the day you can still do something about.
- * Painting today's ring `trace` as well would quietly congratulate you for a day
+ * Painting today's ring `accent` as well would quietly congratulate you for a day
  * you have not had yet.
  */
 function WeekDots({ days, studiedToday }: { days: boolean[]; studiedToday: boolean }) {
@@ -619,14 +619,14 @@ function WeekDots({ days, studiedToday }: { days: boolean[]; studiedToday: boole
           <View key={idx} style={{ flex: 1, alignItems: 'center', gap: 5 }}>
             <View style={{
               width: 36, height: 36, borderRadius: 8,
-              backgroundColor: isDone ? Colors.traceDim : isFuture ? Colors.inactive : Colors.raised,
+              backgroundColor: isDone ? Colors.accentDim : isFuture ? Colors.inactive : Colors.raised,
               borderWidth: 1.5,
-              borderColor: isDone ? Colors.trace : isToday ? AMBER : Colors.border,
+              borderColor: isDone ? Colors.accent : isToday ? AMBER : Colors.border,
               alignItems: 'center', justifyContent: 'center',
               opacity: isFuture ? 0.4 : 1,
             }}>
               {isDone && (
-                <Text style={{ color: Colors.trace, fontSize: 14, fontWeight: '700' }}>✓</Text>
+                <Text style={{ color: Colors.accent, fontSize: 14, fontWeight: '700' }}>✓</Text>
               )}
             </View>
             <Text style={{
@@ -671,7 +671,7 @@ function StreakSection({
           borderWidth: 1, borderColor: Colors.border,
           overflow: 'hidden',
         }}>
-          {/* Amber glow — stays. The number below is `trace` now, but the warmth
+          {/* Amber glow — stays. The number below is `accent` now, but the warmth
               behind the flame is what makes this card feel like a streak rather
               than another statistic, and the two read fine together. */}
           <View style={{
@@ -683,7 +683,7 @@ function StreakSection({
           <FlameIcon isMilestone={isMilestone} reduceMotion={reduceMotion} />
 
           <Text style={{
-            color: currentStreak > 0 ? Colors.trace : Colors.subtext,
+            color: currentStreak > 0 ? Colors.accent : Colors.subtext,
             fontSize: 40, fontWeight: '800', fontFamily: Font.mono,
             marginTop: 4, opacity: currentStreak === 0 ? 0.5 : 1,
           }}>

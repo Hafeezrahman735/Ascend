@@ -36,7 +36,7 @@ const envSchema = z.object({
   SMTP_PORT: z.string().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  /** The From header, e.g. 'Trace <you@gmail.com>'. Must be an address the provider has verified. */
+  /** The From header, e.g. 'Ascend <you@gmail.com>'. Must be an address the provider has verified. */
   EMAIL_FROM: z.string().optional(),
 
   TOKEN_ENCRYPTION_KEY: z.string()

@@ -10,7 +10,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useTheme } from '../../hooks/useTheme';
 import PasswordField from '../../components/PasswordField';
-import { TraceMark } from '../../components/TraceMark';
+import { AscendMark } from '../../components/AscendMark';
 import { Font } from '../../constants/typography';
 import { validateNewPassword } from '../../lib/passwordRules';
 
@@ -87,15 +87,15 @@ export default function AuthScreen() {
           <View style={{ alignItems: 'center', marginBottom: 40 }}>
             {/* The mark carries the identity here, so the emoji that used to
                 stand in for it is gone rather than sitting beside it. */}
-            <TraceMark size={64} />
+            <AscendMark size={64} />
             <Text style={{
               color: Colors.textBright, fontFamily: Font.display, fontSize: 30,
               letterSpacing: -0.8, marginTop: 14,
             }}>
-              Trace
+              Ascend
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 14, marginTop: 6 }}>
-              Show up. Leave a trace.
+              Plan it. Lock in. Ascend.
             </Text>
           </View>
 

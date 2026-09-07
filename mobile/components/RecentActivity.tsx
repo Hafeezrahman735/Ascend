@@ -19,12 +19,12 @@ const EVENT_META: Record<
   { icon: keyof typeof Ionicons.glyphMap; tint: (c: ThemeColors) => string }
 > = {
   session_completed:    { icon: 'timer',        tint: (c) => c.primary },
-  task_completed:       { icon: 'checkmark-circle', tint: (c) => c.trace },
+  task_completed:       { icon: 'checkmark-circle', tint: (c) => c.accent },
   goal_completed:       { icon: 'flag',         tint: (c) => c.ROSE },
   achievement_unlocked: { icon: 'trophy',       tint: (c) => c.AMBER },
   streak_milestone:     { icon: 'flame',        tint: (c) => c.AMBER },
   level_up:             { icon: 'trending-up',  tint: (c) => c.primary },
-  rank_up:              { icon: 'trending-up',  tint: (c) => c.trace },
+  rank_up:              { icon: 'trending-up',  tint: (c) => c.accent },
 };
 
 /** Human line for one event, from the payload each emitter writes. */

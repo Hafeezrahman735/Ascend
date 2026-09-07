@@ -101,7 +101,7 @@ export default function TaskPicker({
                 </Text>
               )}
             </View>
-            {task.isCompleted && <Ionicons name="checkmark-circle" size={15} color={Colors.trace} />}
+            {task.isCompleted && <Ionicons name="checkmark-circle" size={15} color={Colors.accent} />}
           </TouchableOpacity>
         );
       })}
@@ -152,7 +152,7 @@ export function SelectedTaskList({
           <Ionicons
             name={task.isCompleted ? 'checkbox' : 'square-outline'}
             size={19}
-            color={task.isCompleted ? Colors.trace : Colors.subtext}
+            color={task.isCompleted ? Colors.accent : Colors.subtext}
             style={{ marginRight: 11 }}
           />
           <Text

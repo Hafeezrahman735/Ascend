@@ -83,7 +83,7 @@ export async function setupAndroidChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
 
   await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL, {
-    name: 'Trace Timer Alarm',
+    name: 'Ascend Timer Alarm',
     importance: Notifications.AndroidImportance.MAX,
     sound: ALARM_SOUND,
     vibrationPattern: [0, 500, 200, 500, 200, 500],

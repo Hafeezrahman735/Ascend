@@ -17,15 +17,15 @@ type LoadError = { reason: 'not-found' | 'unavailable'; message?: string };
  *
  *   ┌─ identity ───────────────────────┐  icon · title · private · member count
  *   ├─ description ────────────────────┤
- *   ├─ posts link ─────────────────────┤  jumps to the Trace tab, filtered here
+ *   ├─ posts link ─────────────────────┤  jumps to the Ascend tab, filtered here
  *   ├─ members ────────────────────────┤  inline list, remove for the creator
  *   ├─ add someone ────────────────────┤  creator only, search by username
  *   └─ leave ──────────────────────────┘  members only; the creator cannot
  *
  * This screen used to carry a message room as well. It was removed: the room
- * rendered the same group-scoped posts the Trace tab already shows, so the
+ * rendered the same group-scoped posts the Ascend tab already shows, so the
  * same content lived in two places with two different composers. Posting now
- * happens in one place, and the Trace tab's group filter is the one way to
+ * happens in one place, and the Ascend tab's group filter is the one way to
  * read a group's posts.
  */
 
@@ -399,7 +399,7 @@ export default function GroupDetailScreen() {
       memberCount: detail.members.length + 1,
       memberIds: [...(detail.memberIds ?? []), member.id],
     });
-    // The Trace tab's chip strip shows member counts, so keep it honest.
+    // The Ascend tab's chip strip shows member counts, so keep it honest.
     social.fetchStudyGroups();
   };
 
@@ -553,7 +553,7 @@ export default function GroupDetailScreen() {
           onSave={handleSaveAbout}
         />
 
-        {/* posts live on the Trace tab now, so point at them rather than
+        {/* posts live on the Ascend tab now, so point at them rather than
             duplicating the feed here */}
         {isMember && (
           <Pressable

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeTodayTrace, isTraceEmpty, formatTraceDuration } from './todayTrace';
+import { computeTodayRecap, isRecapEmpty, formatRecapDuration } from './todayRecap';
 import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
 
@@ -41,42 +41,42 @@ function task(over: Partial<Task> = {}): Task {
 
 const base = { sessionHistory: [], tasks: [], currentStreak: 0 };
 
-describe('computeTodayTrace', () => {
+describe('computeTodayRecap', () => {
   it('is all zeros for someone who has done nothing', () => {
-    expect(computeTodayTrace(base)).toEqual({
+    expect(computeTodayRecap(base)).toEqual({
       sessionCount: 0, focusSeconds: 0, tasksCompleted: 0, streakDays: 0,
     });
   });
 
   it('sums today focus sessions', () => {
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       sessionHistory: [session(), session({ durationSeconds: 50 * 60 })],
     });
-    expect(trace.sessionCount).toBe(2);
-    expect(trace.focusSeconds).toBe(75 * 60);
+    expect(recap.sessionCount).toBe(2);
+    expect(recap.focusSeconds).toBe(75 * 60);
   });
 
   it('ignores breaks — a break is not focus time', () => {
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       sessionHistory: [session(), session({ type: 'break', durationSeconds: 5 * 60 })],
     });
-    expect(trace.sessionCount).toBe(1);
-    expect(trace.focusSeconds).toBe(25 * 60);
+    expect(recap.sessionCount).toBe(1);
+    expect(recap.focusSeconds).toBe(25 * 60);
   });
 
   it('ignores sessions from previous days', () => {
     // The card says "today". Yesterday's work belongs on yesterday's card.
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       sessionHistory: [session(), session({ completedAt: middayToday() - 48 * HOUR })],
     });
-    expect(trace.sessionCount).toBe(1);
+    expect(recap.sessionCount).toBe(1);
   });
 
   it('counts tasks completed today only', () => {
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       tasks: [
         task({ isCompleted: true, completedAt: new Date(middayToday()).toISOString() }),
@@ -84,71 +84,71 @@ describe('computeTodayTrace', () => {
         task({ isCompleted: false }),
       ],
     });
-    expect(trace.tasksCompleted).toBe(1);
+    expect(recap.tasksCompleted).toBe(1);
   });
 
   it('counts an archived task that was completed today', () => {
     // Finishing something and filing it away is still having finished it —
     // excluding archived rows would make the number drop during the day.
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       tasks: [task({ isCompleted: true, isArchived: true, completedAt: new Date().toISOString() })],
     });
-    expect(trace.tasksCompleted).toBe(1);
+    expect(recap.tasksCompleted).toBe(1);
   });
 
   it('ignores a completed task with no completion time', () => {
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       tasks: [task({ isCompleted: true, completedAt: null })],
     });
-    expect(trace.tasksCompleted).toBe(0);
+    expect(recap.tasksCompleted).toBe(0);
   });
 
   it('passes the streak straight through', () => {
-    expect(computeTodayTrace({ ...base, currentStreak: 7 }).streakDays).toBe(7);
+    expect(computeTodayRecap({ ...base, currentStreak: 7 }).streakDays).toBe(7);
   });
 });
 
-describe('isTraceEmpty', () => {
+describe('isRecapEmpty', () => {
   it('is empty with no sessions and no tasks', () => {
-    expect(isTraceEmpty(computeTodayTrace(base))).toBe(true);
+    expect(isRecapEmpty(computeTodayRecap(base))).toBe(true);
   });
 
   it('is NOT empty when only tasks were done', () => {
     // Clearing tasks without running the timer is still showing up.
-    const trace = computeTodayTrace({
+    const recap = computeTodayRecap({
       ...base,
       tasks: [task({ isCompleted: true, completedAt: new Date(middayToday()).toISOString() })],
     });
-    expect(isTraceEmpty(trace)).toBe(false);
+    expect(isRecapEmpty(recap)).toBe(false);
   });
 
   it('is NOT empty on a streak alone if a session ran', () => {
-    const trace = computeTodayTrace({ ...base, sessionHistory: [session()], currentStreak: 3 });
-    expect(isTraceEmpty(trace)).toBe(false);
+    const recap = computeTodayRecap({ ...base, sessionHistory: [session()], currentStreak: 3 });
+    expect(isRecapEmpty(recap)).toBe(false);
   });
 });
 
-describe('formatTraceDuration', () => {
+describe('formatRecapDuration', () => {
   it('shows bare minutes under an hour', () => {
-    expect(formatTraceDuration(25 * 60)).toBe('25m');
+    expect(formatRecapDuration(25 * 60)).toBe('25m');
   });
 
   it('shows a whole hour without a trailing zero', () => {
-    expect(formatTraceDuration(60 * 60)).toBe('1h');
+    expect(formatRecapDuration(60 * 60)).toBe('1h');
   });
 
   it('shows hours and minutes together', () => {
-    expect(formatTraceDuration(75 * 60)).toBe('1h 15m');
+    expect(formatRecapDuration(75 * 60)).toBe('1h 15m');
   });
 
   it('shows 0m rather than an empty string', () => {
-    expect(formatTraceDuration(0)).toBe('0m');
+    expect(formatRecapDuration(0)).toBe('0m');
   });
 
   it('rounds part-minutes down rather than up', () => {
     // 59 seconds of focus is not a minute of focus.
-    expect(formatTraceDuration(119)).toBe('1m');
+    expect(formatRecapDuration(119)).toBe('1m');
   });
 });

@@ -3,7 +3,7 @@ import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
 
 /**
- * The numbers on your own trace card: what today looks like so far.
+ * The numbers on your own recap card: what today looks like so far.
  *
  * Computed on the device from the local session cache and task list rather than
  * fetched. That is deliberate, and it is what makes the landing screen work for
@@ -12,25 +12,25 @@ import type { SessionRecord } from '../store/sync';
  * the server has ever heard of them.
  *
  * The server computes the same four numbers independently for the post other
- * people see (backend src/modules/social/tracePost.ts). Two derivations of one
+ * people see (backend src/modules/social/dailyRecapPost.ts). Two derivations of one
  * thing is a real risk — it is exactly how the Tasks screen's category totals
  * once drifted from the server's — so the rule is that this side is only ever
  * used to draw YOUR OWN card, and the server's numbers are what anyone else
  * reads. Neither one is ever corrected against the other.
  */
 
-export interface TodayTrace {
+export interface TodayRecap {
   sessionCount: number;
   focusSeconds: number;
   tasksCompleted: number;
   streakDays: number;
 }
 
-export function computeTodayTrace(input: {
+export function computeTodayRecap(input: {
   sessionHistory: SessionRecord[];
   tasks: Task[];
   currentStreak: number;
-}): TodayTrace {
+}): TodayRecap {
   const { sessionHistory, tasks, currentStreak } = input;
 
   let sessionCount = 0;
@@ -54,9 +54,9 @@ export function computeTodayTrace(input: {
   return { sessionCount, focusSeconds, tasksCompleted, streakDays: currentStreak };
 }
 
-/** True when nothing has happened yet today — drives the "no trace yet" copy. */
-export function isTraceEmpty(trace: TodayTrace): boolean {
-  return trace.sessionCount === 0 && trace.tasksCompleted === 0;
+/** True when nothing has happened yet today — drives the "no recap yet" copy. */
+export function isRecapEmpty(recap: TodayRecap): boolean {
+  return recap.sessionCount === 0 && recap.tasksCompleted === 0;
 }
 
 /**
@@ -65,7 +65,7 @@ export function isTraceEmpty(trace: TodayTrace): boolean {
  * Never "0h 25m" and never "1h 0m" — the card is a receipt, and a receipt does
  * not print a zero it does not need.
  */
-export function formatTraceDuration(seconds: number): string {
+export function formatRecapDuration(seconds: number): string {
   const totalMinutes = Math.floor(seconds / 60);
   if (totalMinutes < 60) return `${totalMinutes}m`;
   const hours = Math.floor(totalMinutes / 60);
