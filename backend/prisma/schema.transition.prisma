@@ -1,0 +1,566 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// TRANSITIONAL SCHEMA — do not edit by hand, and do not let it outlive the
+// release it belongs to.
+//
+// This is prisma/schema.prisma with four retired things PUT BACK:
+//   users.level, users.friends_can_see_activity, model Streak, model Friendship
+//
+// It exists because one `prisma db push` of the real schema would do the
+// additive and the destructive work in the same operation, and production is
+// still running main's code, which reads all four. Pushing this first adds the
+// new tables, columns and indexes the incoming code needs while leaving what
+// the outgoing code still reads alone.
+//
+// Used ONLY as:  npx prisma db push --schema=prisma/schema.transition.prisma
+// Delete it after the destructive push in step 5.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String                       @id @default(uuid()) @db.Uuid
+  username              String                       @unique @db.VarChar(50)
+  email                 String                       @unique @db.VarChar(255)
+  passwordHash          String                       @map("password_hash") @db.VarChar(255)
+  avatarUrl             String?                      @map("avatar_url")
+  avatarEmoji           String?                      @map("avatar_emoji")
+  privacySetting        PrivacySetting               @default(public) @map("privacy_setting")
+  pushToken             String?                      @map("push_token")
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  notificationPrefs     String?                      @map("notification_prefs")
+  publicProfile         Boolean                      @default(true) @map("public_profile")
+  showOnLeaderboard     Boolean                      @default(true) @map("show_on_leaderboard")
+  shareFocusStats       Boolean                      @default(true) @map("share_focus_stats")
+  currentStreak         Int                          @default(0) @map("current_streak")
+  lastActiveDate        DateTime?                    @map("last_active_date")
+  longestStreak         Int                          @default(0) @map("longest_streak")
+  totalFocusTime        Int                          @default(0) @map("total_focus_time")
+  totalSessions         Int                          @default(0) @map("total_sessions")
+  // Running count of tasks completed, maintained alongside the XP award in
+  // modules/tasks/routes.ts. Denormalized rather than COUNTed on read because
+  // it is checked on every achievement evaluation.
+  tasksCompleted        Int                          @default(0) @map("tasks_completed")
+  xp                    Int                          @default(0)
+  // TRANSITIONAL — dropped in step 5.
+  level                 Int                          @default(1)
+  friendsCanSeeActivity Boolean                      @default(true) @map("friends_can_see_activity")
+  feedEvents            FeedEvent[]
+  following             Follow[]                     @relation("UserFollower")
+  followers             Follow[]                     @relation("UserFollowing")
+  notes                 Note[]
+  events                Event[]
+  calendarLinks         ExternalCalendarConnection[]
+  notifications         Notification[]
+  refreshTokens         RefreshToken[]
+  passwordResets        PasswordResetToken[]
+  sessions              Session[]
+  socialPosts           SocialPost[]                 @relation("PostAuthor")
+  groupMemberships      StudyGroupMember[]
+  createdGroups         StudyGroup[]                 @relation("GroupCreator")
+  taskGoals             TaskGoal[]
+  tasks                 Task[]
+  timerState            TimerState?
+  userAchievs           UserAchievement[]
+  // TRANSITIONAL — dropped in step 5.
+  streaks               Streak?
+  friendshipsAddr       Friendship[]                 @relation("Addressee")
+  friendshipsReq        Friendship[]                 @relation("Requester")
+
+  /// The focus leaderboard is the only thing that sorts users, and it always
+  /// filters on showOnLeaderboard first, then orders by (or counts across)
+  /// totalFocusTime. Both the top-100 page and the "how many are ahead of me"
+  /// count were full-table sorts without this.
+  ///
+  /// Deliberately no index on xp or currentStreak: the boards that ordered by
+  /// those were deleted as dead code, and an index nothing reads is just write
+  /// cost.
+  @@index([showOnLeaderboard, totalFocusTime])
+  @@map("users")
+}
+
+/**
+ * A pending password reset.
+ * Only a HASH of the token is stored. The raw token exists in exactly two
+ * places: the email that was sent, and the request that redeems it. That is the
+ * same reasoning as password hashing, for the same reason — a database read
+ * must not hand out usable credentials — and it is the one place this model
+ * deliberately does NOT follow RefreshToken, which stores its token raw.
+ * SHA-256 rather than bcrypt, which looks inconsistent and is not: bcrypt is
+ * slow on purpose to make LOW-entropy secrets expensive to guess. This token is
+ * 256 bits of CSPRNG output, so guessing is already off the table, and a slow
+ * hash would only make the lookup slow. Hashing here is about what a leaked
+ * table yields, not about brute force.
+ */
+model PasswordResetToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /**
+   * SHA-256 of the raw token, hex. Unique so the lookup is indexed.
+   */
+  tokenHash String   @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique @db.VarChar(500)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model TimerState {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @unique @map("user_id") @db.Uuid
+  phase            String    @db.VarChar(20)
+  phaseType        String    @db.VarChar(20)
+  remainingSeconds Int       @map("remaining_seconds")
+  totalSeconds     Int       @map("total_seconds")
+  isRunning        Boolean   @map("is_running")
+  pomodoroCount    Int       @default(0) @map("pomodoro_count")
+  taskLabel        String?   @map("task_label") @db.VarChar(200)
+  startedAt        DateTime? @map("started_at")
+  pausedAt         DateTime? @map("paused_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("timer_states")
+}
+
+model Session {
+  id                     String   @id @default(uuid()) @db.Uuid
+  userId                 String   @map("user_id") @db.Uuid
+  type                   String   @db.VarChar(20)
+  durationSeconds        Int      @map("duration_seconds")
+  taskLabel              String?  @map("task_label") @db.VarChar(200)
+  completedAt            DateTime @map("completed_at")
+  createdAt              DateTime @default(now()) @map("created_at")
+  clientSessionId        String?  @unique @map("client_session_id") @db.VarChar(36)
+  plannedDurationSeconds Int?     @map("planned_duration_seconds")
+  taskId                 String?  @map("task_id")
+
+  // ─── Frozen attribution ──────────────────────────────────────────────────
+  // Stamped when the session is saved, never recomputed. Resolving attribution
+  // at read time meant joining against GET /tasks, which excludes archived
+  // rows — and recurring habits archive yesterday's instance every day, so a
+  // habit's whole history silently reclassified itself as "Untagged" overnight.
+  // Freezing also makes reports a join-free GROUP BY, and means a February
+  // report still reads correctly after the task or goal behind it is renamed
+  // or deleted.
+  //
+  // taskGoalId is deliberately NOT a relation: a foreign key would let a
+  // deleted goal take its own history with it, which is the opposite of the
+  // point. The snapshot title is what the report renders.
+  taskGoalId        String?  @map("task_goal_id")
+  goalTitleSnapshot String?  @map("goal_title_snapshot") @db.VarChar(80)
+  taskTitleSnapshot String?  @map("task_title_snapshot") @db.VarChar(100)
+  /// Drives the one tag breakdown that has to sum to 100%.
+  primaryTag        String?  @map("primary_tag")
+  /// Every tag the task carried, so a multi-tag task is not lossy.
+  tags              String[] @default([])
+  priority          String?  @db.VarChar(10)
+  /// Habit time and project time are different kinds of work; do not pool them.
+  wasRecurring      Boolean  @default(false) @map("was_recurring")
+
+  // Local-time buckets, frozen for the same reason. Resolving a timezone at
+  // read time re-derives buckets on every request and misattributes sessions
+  // for anyone who has travelled since.
+  localDate       String? @map("local_date") @db.VarChar(10)
+  localHour       Int?    @map("local_hour")
+  localWeekday    Int?    @map("local_weekday")
+  /// True when localHour had to be inferred rather than resolved from a real
+  /// timezone — backfilled rows, and clients that send no tz. The report says so.
+  localDateApprox Boolean @default(false) @map("local_date_approx")
+
+  task Task? @relation("TaskSessions", fields: [taskId], references: [id])
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, completedAt])
+  @@index([taskId])
+  @@index([type, completedAt])
+  @@index([userId, localDate])
+  @@index([userId, taskGoalId])
+  @@map("sessions")
+}
+
+model Achievement {
+  id          String              @id @default(cuid())
+  title       String              @db.VarChar(200)
+  description String
+  icon        String              @db.VarChar(50)
+  category    AchievementCategory
+  key         String              @unique @db.VarChar(100)
+  threshold   Int
+  xpReward    Int                 @default(0)
+  unlockedBy  UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String      @map("user_id") @db.Uuid
+  achievementId String      @map("achievement_id")
+  unlockedAt    DateTime    @default(now()) @map("unlocked_at")
+  isShared      Boolean     @default(false) @map("is_shared")
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model Task {
+  id               String    @id @default(cuid())
+  userId           String    @map("user_id") @db.Uuid
+  title            String    @db.VarChar(100)
+  description      String?
+  dueDate          DateTime? @map("due_date")
+  tags             String[]  @default([])
+  estimatedMinutes Int?      @map("estimated_minutes")
+
+  // ── Scheduled time of day — wall clock, NOT an instant ────────────────
+  // Minutes from local midnight (0-1439). Deliberately not a DateTime: dueDate
+  // already models "a calendar day, wherever the user is" (see rangeBounds in
+  // modules/calendar/routes.ts), and storing 09:00 as an instant would drift by
+  // an hour across DST and by a whole working day across a timezone change.
+  // 09:00 means 09:00 on the phone in the user’s hand.
+  // Both null = untimed, which is the default and stays the common case.
+  startMinutes    Int?      @map("start_minutes")
+  endMinutes      Int?      @map("end_minutes")
+  priority        String    @default("medium") @db.VarChar(10)
+  isArchived      Boolean   @default(false) @map("is_archived")
+  isCompleted     Boolean   @default(false) @map("is_completed")
+  completedAt     DateTime? @map("completed_at")
+  sessionsOnTask  Int       @default(0) @map("sessions_on_task")
+  totalTimeOnTask Int       @default(0) @map("total_time_on_task")
+  sessionDates    String[]  @default([]) @map("session_dates")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  order           Int?
+  taskGoalId      String?   @map("task_goal_id")
+
+  // Recurring task fields
+  isRecurring     Boolean  @default(false) @map("is_recurring")
+  recurringDays   String[] @default([]) @map("recurring_days")
+  // Valid values: 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'. Empty array means every day.
+  lastSpawnedDate String?  @map("last_spawned_date")
+  // ISO date string 'YYYY-MM-DD' — the last date an instance was spawned (lives on the template)
+  parentTaskId    String?  @map("parent_task_id")
+  // If set, this task is an instance spawned from the template with this ID
+
+  // ── Habit-tracker lifetime stats — live on the TEMPLATE ──
+  // currentStreak keeps the existing `recurring_streak` column (renamed field only)
+  // so production data is preserved with a purely additive db push. It resets to 0
+  // immediately at spawn time when a day is missed (see spawn-recurring route).
+  currentStreak    Int @default(0) @map("recurring_streak")
+  longestStreak    Int @default(0) @map("longest_streak")
+  totalCompletions Int @default(0) @map("total_completions")
+  totalFocusTimeMs Int @default(0) @map("total_focus_time_ms")
+
+  // ── Denormalized onto INSTANCES at spawn time — read-only display copies ──
+  lifetimeStreak           Int @default(0) @map("lifetime_streak")
+  lifetimeTotalCompletions Int @default(0) @map("lifetime_total_completions")
+  lifetimeTotalFocusTime   Int @default(0) @map("lifetime_total_focus_time")
+
+  sessions Session[] @relation("TaskSessions")
+  taskGoal TaskGoal? @relation(fields: [taskGoalId], references: [id])
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([parentTaskId])
+  @@map("tasks")
+}
+
+model TaskGoal {
+  id             String       @id @default(cuid())
+  userId         String       @map("user_id") @db.Uuid
+  title          String       @db.VarChar(80)
+  tag            String?      @db.VarChar(30)
+  targetSessions Int?         @map("target_sessions")
+  // Which components count toward this goal's progress. Defaults to 'tasks';
+  // creating a goal with targetSessions > 0 defaults it to 'both' instead.
+  // A goal with no targetSessions is always treated as 'tasks' at read time,
+  // regardless of what is stored — see resolveProgressMode in taskgoals/routes.
+  progressMode   ProgressMode @default(tasks) @map("progress_mode")
+  // A deadline is a CALENDAR DAY, not an instant. Stored as @db.Date so it
+  // carries no time or timezone: picking "Aug 10" means Aug 10 wherever the user
+  // is, and travelling or crossing DST cannot shift it.
+  deadline       DateTime?    @db.Date
+  isCompleted    Boolean      @default(false) @map("is_completed")
+  completedAt    DateTime?    @map("completed_at")
+  isArchived     Boolean      @default(false) @map("is_archived")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks          Task[]
+
+  @@index([userId])
+  @@map("task_goals")
+}
+
+model FeedEvent {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  eventType String   @map("event_type") @db.VarChar(30)
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("feed_events")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  type      String   @db.VarChar(50)
+  title     String   @db.VarChar(200)
+  body      String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  /// The hot read path is `where userId orderBy createdAt desc` — the isRead
+  /// index above cannot serve that ordering.
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model Follow {
+  id          String   @id @default(uuid()) @db.Uuid
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  follower    User     @relation("UserFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("UserFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("follows")
+}
+
+/// Surfaced in the UI as "Focus Group" — the audience is students, freelancers
+/// and solo operators, and "study" only speaks to one of the three. The model
+/// name is left alone deliberately: renaming it is a table rename with no
+/// product benefit, so code and copy diverge on this one noun by design.
+model StudyGroup {
+  id          String             @id @default(uuid()) @db.Uuid
+  name        String             @db.VarChar(100)
+  // What the group is for, shown on the group detail screen. Optional because
+  // every group created before this column existed has none.
+  description String?            @db.VarChar(500)
+  emoji       String             @db.VarChar(10)
+  color       String             @default("purple") @db.VarChar(20)
+  isPrivate   Boolean            @default(false) @map("is_private")
+  createdBy   String             @map("created_by") @db.Uuid
+  createdAt   DateTime           @default(now()) @map("created_at")
+  members     StudyGroupMember[]
+  // Cascade: without it this relation defaults to Restrict, so deleting a user
+  // who ever created a group failed with a foreign-key error — breaking account
+  // deletion (App Store Guideline 5.1.1(v)) for that whole class of users.
+  creator     User               @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([createdBy])
+  @@map("study_groups")
+}
+
+model StudyGroupMember {
+  id       String     @id @default(uuid()) @db.Uuid
+  groupId  String     @map("group_id") @db.Uuid
+  userId   String     @map("user_id") @db.Uuid
+  joinedAt DateTime   @default(now()) @map("joined_at")
+  group    StudyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("study_group_members")
+}
+
+model SocialPost {
+  id         String   @id @default(uuid()) @db.Uuid
+  authorId   String   @map("author_id") @db.Uuid
+  type       String   @db.VarChar(30)
+  caption    String?
+  visibility String   @default("public") @db.VarChar(20)
+  groupId    String?  @map("group_id") @db.Uuid
+  payload    Json     @default("{}")
+  reactions  Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  author     User     @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId, createdAt])
+  @@index([groupId, createdAt])
+  @@index([createdAt])
+  @@map("social_posts")
+}
+
+model Note {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id") @db.Uuid
+  content     String
+  // 'YYYY-MM-DD' when pinned to a day; null for an unscheduled note. Kept as a
+  // plain date string (not DateTime) for the same reason as TaskGoal.deadline —
+  // a day-pinned note belongs to a calendar day, not an instant.
+  date        String?  @db.VarChar(10)
+  isTodo      Boolean  @default(false) @map("is_todo")
+  isCompleted Boolean  @default(false) @map("is_completed")
+  isArchived  Boolean  @default(false) @map("is_archived")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("notes")
+}
+
+model Event {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id") @db.Uuid
+  title        String   @db.VarChar(200)
+  // 'YYYY-MM-DD', the same convention as Note.date and for the same reason: an
+  // event belongs to a calendar day, not an instant. Required, unlike a note —
+  // an event with no day is not a thing.
+  date         String   @db.VarChar(10)
+  // Minutes from local midnight (0-1439), both set or both null. Null is an
+  // all-day event; there is deliberately no isAllDay flag, which would be a
+  // second source of the same truth and could disagree with these two.
+  startMinutes Int?     @map("start_minutes")
+  endMinutes   Int?     @map("end_minutes")
+  isArchived   Boolean  @default(false) @map("is_archived")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("events")
+}
+
+model ExternalCalendarConnection {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id") @db.Uuid
+  // 'google' only. Apple Calendar is device-native and MUST NOT be stored here —
+  // its tokens and events never leave the device. See mobile/services/appleCalendar.ts.
+  provider     String    @db.VarChar(20)
+  accessToken  String    @map("access_token")
+  refreshToken String    @map("refresh_token")
+  expiresAt    DateTime  @map("expires_at")
+  calendarId   String    @default("primary") @map("calendar_id")
+  syncEnabled  Boolean   @default(true) @map("sync_enabled")
+  lastSyncedAt DateTime? @map("last_synced_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@map("external_calendar_connections")
+}
+
+// Moderation (App Store Guideline 1.2). Standalone tables (no relation fields on
+// User/SocialPost) to keep the schema impact minimal.
+model PostReport {
+  id         String   @id @default(cuid())
+  postId     String   @map("post_id")
+  reportedBy String   @map("reported_by") @db.Uuid
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([postId])
+  @@map("post_reports")
+}
+
+model UserBlock {
+  id        String   @id @default(cuid())
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("user_blocks")
+}
+
+enum PrivacySetting {
+  public
+  friends_only
+  private
+}
+
+enum ProgressMode {
+  tasks
+  sessions
+  both
+}
+
+enum AchievementCategory {
+  STREAK
+  SESSIONS
+  FOCUS_TIME
+  // Thresholds are XP values, because a rank IS a band of XP. Replaces LEVEL,
+  // whose thresholds were level numbers, now that the Level ladder is gone.
+  RANK
+  TASKS
+
+  /// RETIRED — nothing in src/ reads or writes this, and no seeded achievement
+  /// carries it any more (see src/lib/achievementSeedData.ts).
+  ///
+  /// It is still listed ON PURPOSE. Deployed databases hold achievement rows
+  /// stamped `LEVEL`, and Postgres will not drop an enum value that existing
+  /// rows still reference — a `prisma db push` that removed it here would fail
+  /// against staging or production, or demand data loss to get through.
+  ///
+  /// The safe order is: push this schema (adds RANK, keeps LEVEL) → run
+  /// `npm run db:seed`, which upserts those rows onto RANK → then delete this
+  /// value and push again. Doing it in one step is what breaks.
+  LEVEL
+}
+
+
+// ─── TRANSITIONAL MODELS — dropped in step 5 ─────────────────────────────────
+// Verbatim from origin/main. Production's running code still reads both; they
+// go once that code is replaced.
+
+model Streak {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @unique @map("user_id") @db.Uuid
+  currentStreak   Int       @default(0) @map("current_streak")
+  longestStreak   Int       @default(0) @map("longest_streak")
+  lastSessionDate DateTime? @map("last_session_date")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
+}
+
+model Friendship {
+  id          String   @id @default(uuid()) @db.Uuid
+  requesterId String   @map("requester_id") @db.Uuid
+  addresseeId String   @map("addressee_id") @db.Uuid
+  status      String   @default("pending") @db.VarChar(10)
+  createdAt   DateTime @default(now()) @map("created_at")
+  addressee   User     @relation("Addressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  requester   User     @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+  @@map("friendships")
+}
