@@ -16,9 +16,10 @@ const MAX_COLUMN_CARDS = 3;
  * Week as seven columns for comparison, then seven cards for detail.
  *
  * The strip answers "which day is emptiest" — load visible without reading
- * anything. The cards answer "what is actually on each day", and there is one
- * per day because this is the WEEK view: a week you have to tap through a day at
- * a time is a day view with extra steps.
+ * anything, and it always shows all seven, so an empty day is still visible as
+ * an empty column. The cards below answer "what is actually on each day", for
+ * every day that has anything: a week you have to tap through a day at a time is
+ * a day view with extra steps.
  *
  * It used to show a single card for whichever column you tapped. That made six
  * of the seven days invisible until you went looking for them, and the one day
@@ -37,8 +38,23 @@ export default function WeekView({
   onToggleNote: (note: Note) => void;
 }) {
   const Colors = useTheme();
+  const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
   const todayKey = getLocalDateString();
   const days = useMemo(() => eachDayOfRange(start, addDays(start, 6)), [start]);
+
+  // Only the days with something on them get a card. A card reading "Nothing on
+  // this day" costs a full box of vertical space to say the week strip above it
+  // has already said with an empty column — and on a quiet week it said it six
+  // times, pushing the days that DO have something off the screen.
+  //
+  // `items.length` is the test, not `countsTowardLoad`: a day holding only notes
+  // has something on it. See the note on countsTowardLoad in lib/calendarItems.
+  const busyDays = useMemo(
+    () => days
+      .map((dateKey) => ({ dateKey, items: itemsByDate.get(dateKey) ?? [] }))
+      .filter(({ items }) => items.length > 0),
+    [days, itemsByDate],
+  );
 
   return (
     <View>
@@ -128,27 +144,42 @@ export default function WeekView({
         })}
       </View>
 
-      {/* ── One card per day ──────────────────────────────────────────── */}
-      {days.map((dateKey) => (
+      {/* ── One card per day that has something on it ─────────────────── */}
+      {busyDays.map(({ dateKey, items }) => (
         <DayCard
           key={dateKey}
           dateKey={dateKey}
           isToday={dateKey === todayKey}
-          items={itemsByDate.get(dateKey) ?? []}
+          items={items}
           onDayPress={onDayPress}
           onToggleNote={onToggleNote}
         />
       ))}
+
+      {/* One line for a wholly empty week. Dropping the per-day cards must not
+          leave the section blank under a strip of seven empty columns — that
+          reads as a screen that failed to load rather than a free week. */}
+      {busyDays.length === 0 && (
+        <View style={{ paddingHorizontal: 16 }}>
+          <View style={styles.emptyBox}>
+            <Ionicons name="calendar-clear-outline" size={26} color={Colors.subtext} />
+            <Text style={{ color: Colors.subtext, marginTop: 6, fontSize: 13 }}>
+              Nothing planned this week. Tap a day to add something.
+            </Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
 
 /**
- * One day's detail.
+ * One day's detail. Only rendered for a day that has something on it, so this
+ * never has to draw an empty state — see `busyDays` above.
  *
  * Today gets an accent border and a primary-tinted glow — the same treatment the
  * home tab uses for a selected card — plus a TODAY chip, so it is findable in a
- * stack of seven without having to read the dates.
+ * stack of cards without having to read the dates.
  */
 function DayCard({
   dateKey,
@@ -195,7 +226,7 @@ function DayCard({
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={`${isToday ? 'Today, ' : ''}${day.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}, ${count} items. Open in Day view`}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: count > 0 ? 10 : 6 }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}
       >
         {isToday && (
           <View style={{
@@ -221,12 +252,6 @@ function DayCard({
         </Text>
         <Ionicons name="chevron-forward" size={13} color={Colors.subtext} />
       </TouchableOpacity>
-
-      {count === 0 && (
-        <Text style={{ color: Colors.subtext, fontSize: 12.5 }}>
-          Nothing on this day.
-        </Text>
-      )}
 
       {scheduled.map((item, idx) => {
         const range = itemTimeRange(item);
