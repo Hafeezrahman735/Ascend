@@ -401,6 +401,8 @@ export default function SettingsScreen() {
       publicProfile: s.publicProfile,
       showOnLeaderboard: s.showOnLeaderboard,
       shareFocusStats: s.shareFocusStats,
+      alarmSound: s.alarmSound,
+      alarmOverridesSilent: s.alarmOverridesSilent,
       load: s.load,
       update: s.update,
     })),
@@ -619,6 +621,7 @@ export default function SettingsScreen() {
         <SettingsCard>
           <SettingsRow
             label="Session Complete"
+            subtitle="Notify you when you're away from the app"
             rightComponent={
               <Switch
                 value={settings.notifySessionComplete}
@@ -628,6 +631,44 @@ export default function SettingsScreen() {
               />
             }
           />
+          <Divider />
+          {/* Deliberately separate from "Session Complete" above: that gates the
+              OS notification, for when you are away from the app. This gates the
+              sound for when you are in it. Two moments, two switches. */}
+          <SettingsRow
+            label="Alarm sound"
+            subtitle="Ring when the timer hits zero"
+            rightComponent={
+              <Switch
+                value={settings.alarmSound}
+                onValueChange={(v) => { if (user) settings.update(user.id, { alarmSound: v }); }}
+                trackColor={{ false: Colors.inactive, true: Colors.primary }}
+                thumbColor="white"
+              />
+            }
+          />
+          {/* iOS only: Android's media stream is already independent of the
+              ringer, so this would be a switch that changes nothing there.
+              Conditional rather than greyed — SettingsRow has no dimmed state,
+              and the Reminder Time row below sets the precedent for a dependent
+              row simply not being rendered. */}
+          {Platform.OS === 'ios' && settings.alarmSound ? (
+            <>
+              <Divider />
+              <SettingsRow
+                label="Play even on silent"
+                subtitle="Ring through the silent switch and Do Not Disturb"
+                rightComponent={
+                  <Switch
+                    value={settings.alarmOverridesSilent}
+                    onValueChange={(v) => { if (user) settings.update(user.id, { alarmOverridesSilent: v }); }}
+                    trackColor={{ false: Colors.inactive, true: Colors.primary }}
+                    thumbColor="white"
+                  />
+                }
+              />
+            </>
+          ) : null}
           <Divider />
           <SettingsRow
             label="Daily Reminder"

@@ -30,6 +30,26 @@ export interface SettingsData {
    * the backend, same as `theme` and `weekStartDay`.
    */
   remindFocusMode: boolean;
+  /**
+   * Play a sound in-app when the timer reaches zero.
+   *
+   * Separate from `notifySessionComplete`, which gates the OS NOTIFICATION — the
+   * signal for when you are away from the app. This gates the sound for when you
+   * are in it. Two different moments, two different switches.
+   *
+   * Local-only, like `remindFocusMode`: absent from PRIVACY_KEYS / NOTIF_KEYS /
+   * REMINDER_KEYS so `update()` never ships it to the backend. An alarm is a
+   * property of the device in your hand, not of your account — a tablet and a
+   * phone can honestly want different answers.
+   */
+  alarmSound: boolean;
+  /**
+   * Let the alarm through the iOS ringer switch and Do Not Disturb.
+   *
+   * iOS only; Android's media stream is already independent of the ringer, so
+   * the row is not rendered there rather than shown doing nothing.
+   */
+  alarmOverridesSilent: boolean;
 }
 
 interface UserSettingsState extends SettingsData {
@@ -53,6 +73,14 @@ const DEFAULTS: SettingsData = {
   theme: 'dark',
   // Off by default: an unprompted nudge on first session would read as nagging.
   remindFocusMode: false,
+  // On: a timer that finishes without making a noise has failed its one job.
+  alarmSound: true,
+  // Also on, and this is the more aggressive of the two, so it gets the argument:
+  // the person who silenced their phone in order to focus is precisely this app's
+  // user, and they are the one who most needs to be told the session ended.
+  // Overriding the switch they just flipped is a real imposition, which is why it
+  // is a setting rather than a hardcoded behaviour.
+  alarmOverridesSilent: true,
 };
 
 // Which keys belong to each backend surface.
@@ -62,6 +90,24 @@ const REMINDER_KEYS = ['notifyDailyReminder', 'dailyReminderHour', 'dailyReminde
 
 function hasAny<T extends string>(updates: Record<string, unknown>, keys: readonly T[]): boolean {
   return keys.some((k) => k in updates);
+}
+
+/**
+ * The shape written to AsyncStorage, derived from DEFAULTS rather than listed.
+ *
+ * This was a field-by-field object literal. A field added to `SettingsData` and
+ * `DEFAULTS` but missed in that literal was set in memory, silently dropped from
+ * the write, and reverted to its default on the next launch — a toggle that works
+ * until you restart the app, which manual QA does not catch. `DEFAULTS` is typed
+ * as `SettingsData`, so the compiler already guarantees it names every key;
+ * reading the key set off it makes the omission impossible rather than merely
+ * documented.
+ */
+function persistedSettings(state: SettingsData): SettingsData {
+  const keys = Object.keys(DEFAULTS) as (keyof SettingsData)[];
+  const out: Record<string, unknown> = {};
+  for (const key of keys) out[key] = state[key];
+  return out as unknown as SettingsData;
 }
 
 // Map our notification toggles to the backend notificationPrefs categories.
@@ -133,20 +179,7 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => ({
     set(updates);
     const state = get();
 
-    const data: SettingsData = {
-      publicProfile: state.publicProfile,
-      showOnLeaderboard: state.showOnLeaderboard,
-      shareFocusStats: state.shareFocusStats,
-      notifySessionComplete: state.notifySessionComplete,
-      notifyDailyReminder: state.notifyDailyReminder,
-      notifyFriendActivity: state.notifyFriendActivity,
-      notifyAchievements: state.notifyAchievements,
-      dailyReminderHour: state.dailyReminderHour,
-      dailyReminderMinute: state.dailyReminderMinute,
-      theme: state.theme,
-      weekStartDay: state.weekStartDay,
-      remindFocusMode: state.remindFocusMode,
-    };
+    const data = persistedSettings(state);
 
     // Persist locally first (offline-safe, instant).
     try {

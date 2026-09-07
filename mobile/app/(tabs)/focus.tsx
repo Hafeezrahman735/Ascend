@@ -15,6 +15,8 @@ import { getPhaseDuration } from '../../lib/phaseDuration';
 import { getSessionPlan } from '../../lib/sessionPlan';
 import { targetProgress } from '../../lib/dailyTarget';
 import { cancelAllTimerNotifications } from '../../services/notifications';
+import { playAlarm, stopAlarm } from '../../lib/alarm';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useAppForeground } from '../../hooks/useAppState';
@@ -258,27 +260,63 @@ export default function TimerScreen() {
       backgroundedDuringRunRef.current = false;
     }
 
+    /**
+     * Acknowledge a finished phase.
+     *
+     * `live` is the whole distinction: it is false when the app was backgrounded
+     * at any point during the run, which means the transition is being detected
+     * NOW, on return, from wall-clock anchors — possibly long after the timer
+     * actually ended.
+     *
+     * A live completion gets the alarm. A stale one gets the modal and haptic
+     * only: an alarm going off when you reopen the app forty minutes later is
+     * worse than silence. The modal still shows either way, which is the point
+     * of this branch — it used to show nothing at all on return, so anyone who
+     * missed the OS notification (Do Not Disturb, ringer off, permission denied)
+     * came back to a timer that had silently moved on.
+     */
+    const acknowledge = (haptic: () => void, title: string, body: string) => {
+      const live = !backgroundedDuringRunRef.current;
+      haptic();
+      const s = useUserSettingsStore.getState();
+      void playAlarm(
+        { enabled: s.alarmSound, overrideSilentSwitch: s.alarmOverridesSilent },
+        live,
+      );
+      // Dismissing the modal silences the alarm: the clip runs 8.62s and tapping
+      // OK is the user saying they have seen it. `onDismiss` covers Android's
+      // tap-outside, which never fires onPress — without it the alarm would keep
+      // playing to a user who has visibly acknowledged it.
+      Alert.alert(title, body, [{ text: 'OK', onPress: stopAlarm }], {
+        onDismiss: stopAlarm,
+      });
+      backgroundedDuringRunRef.current = false;
+    };
+
     // Focus session just completed: was running focus, now break idle
     if (prevStatus === 'running' && prevPhase === 'focus' && status === 'break') {
-      if (!backgroundedDuringRunRef.current) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert('Focus Complete! 🎯', 'Great work. Start your break when ready.');
-      }
-      backgroundedDuringRunRef.current = false;
+      acknowledge(
+        () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+        'Focus Complete! 🎯',
+        'Great work. Start your break when ready.',
+      );
     }
 
     // Break just completed: was running a break, now focus idle
     if (prevStatus === 'running' && prevPhase !== 'focus' && status === 'idle' && currentPhase === 'focus') {
-      if (!backgroundedDuringRunRef.current) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        Alert.alert('Break Over', 'Ready for another focus session?');
-      }
-      backgroundedDuringRunRef.current = false;
+      acknowledge(
+        () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium),
+        'Break Over',
+        'Ready for another focus session?',
+      );
     }
 
     prevStatusRef.current = status;
     prevPhaseRef.current = currentPhase;
   }, [status, currentPhase]);
+
+  // The alarm outlives this screen otherwise — the player is a module singleton.
+  useEffect(() => stopAlarm, []);
 
   const currentPhaseDuration = getPhaseDuration(currentPhase, settings, plannedFocusSeconds);
 
@@ -304,6 +342,10 @@ export default function TimerScreen() {
   });
 
   const handleStart = () => {
+    // Starting new work silences the old alarm. Without this the 8.62s clip plays
+    // over the first seconds of the next session — Start sits one tap away from
+    // the completion modal, well inside the clip's length.
+    stopAlarm();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     start();
   };
@@ -314,6 +356,7 @@ export default function TimerScreen() {
   };
 
   const handleResume = () => {
+    stopAlarm();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     resume();
   };
