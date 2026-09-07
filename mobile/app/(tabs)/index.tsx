@@ -27,7 +27,7 @@ import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
 import { AscendWordmark } from '../../components/AscendMark';
 import {
-  RecapCardShell, RecapCardHeader, RecapCardLabel, RecapStats, RecapLine,
+  RecapCardShell, RecapCardHeader, RecapCardLabel, RecapStats,
   type RecapStat,
 } from '../../components/recap/RecapCard';
 import { computeTodayRecap, isRecapEmpty, formatRecapDuration } from '../../lib/todayRecap';
@@ -369,10 +369,7 @@ function OwnRecapCard({ emoji, sessionCount, focusSeconds, tasksCompleted, strea
           </Pressable>
         </>
       ) : (
-        <>
-          <RecapStats stats={stats} />
-          <View style={{ marginTop: 11 }}><RecapLine /></View>
-        </>
+        <RecapStats stats={stats} />
       )}
     </RecapCardShell>
   );
@@ -548,12 +545,7 @@ function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
       {post.type === 'accountability'     && <AccountabilityBlock post={post} />}
       {post.type === 'free_post'          && <FreePostBlock post={post} />}
 
-      {stats.length > 0 && (
-        <>
-          <RecapStats stats={stats} />
-          <View style={{ marginTop: 11 }}><RecapLine /></View>
-        </>
-      )}
+      {stats.length > 0 && <RecapStats stats={stats} />}
 
       <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 11 }} />
 
