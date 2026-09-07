@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "npm start",
-    "preDeployCommand": ["npx prisma db push"],
+    "preDeployCommand": ["npx prisma db push --accept-data-loss"],
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
