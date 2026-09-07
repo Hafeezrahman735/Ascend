@@ -343,7 +343,7 @@ function OwnRecapCard({ emoji, sessionCount, focusSeconds, tasksCompleted, strea
 
   return (
     <RecapCardShell own>
-      <RecapCardLabel text="YOUR TRACE · TODAY" />
+      <RecapCardLabel text="YOUR RECAP · TODAY" />
       <RecapCardHeader
         emoji={emoji}
         name="You"

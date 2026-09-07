@@ -94,7 +94,7 @@ export function AscendWordmark({ size = 25, showTagline = false }: {
             letterSpacing: 1.3,
             marginTop: 5,
           }}>
-            SHOW UP. LEAVE A TRACE.
+            PLAN IT. LOCK IN. ASCEND.
           </Text>
         )}
       </View>

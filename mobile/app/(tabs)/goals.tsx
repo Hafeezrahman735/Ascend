@@ -652,7 +652,7 @@ function StreakSection({
   reduceMotion: boolean;
 }) {
   const Colors = useTheme();
-  const { AMBER, TRACE } = Colors;
+  const { AMBER } = Colors;
   const { currentStreak, longestStreak, studiedToday, thisWeekDays, streakAtRisk } = streakState;
   const isMilestone = STREAK_MILESTONES.has(currentStreak);
   const isPersonalBest = currentStreak > 0 && currentStreak >= longestStreak;
@@ -738,7 +738,7 @@ function StreakSection({
             borderWidth: 1, borderColor: Colors.border,
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <Text style={{ color: TRACE, fontSize: 22, fontWeight: '700', fontFamily: Font.mono }}>
+            <Text style={{ color: Colors.accent, fontSize: 22, fontWeight: '700', fontFamily: Font.mono }}>
               {longestStreak}
             </Text>
             <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 3, textAlign: 'center' }}>

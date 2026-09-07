@@ -18,7 +18,7 @@ import { Font } from '../../constants/typography';
 
 function AchievementItem({ achievement }: { achievement: OrderedAchievement }) {
   const Colors = useTheme();
-  const { GOLD, TRACE } = Colors;
+  const { GOLD } = Colors;
   const { isUnlocked, unlockedAt, progress, icon, name, description, isGold, threshold, currentValue } = achievement;
   const hasProgress = !isUnlocked && progress > 0;
 
@@ -60,7 +60,7 @@ function AchievementItem({ achievement }: { achievement: OrderedAchievement }) {
 
         {isUnlocked && (
           <Text style={{
-            color: isGold ? GOLD : TRACE,
+            color: isGold ? GOLD : Colors.accent,
             fontSize: 11, fontWeight: '600', marginTop: 10,
           }}>
             ✓ Earned · {fmtDate(unlockedAt)}

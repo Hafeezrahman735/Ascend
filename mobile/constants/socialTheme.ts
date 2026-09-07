@@ -13,7 +13,6 @@ export const darkSocialTheme = {
   ROSE_DIM:    '#3A0F20',
   GOLD:        '#FFD700',
   GOLD_DIM:    '#3A3000',
-  TRACE:        '#00E5C3',
 };
 
 export const lightSocialTheme: typeof darkSocialTheme = {
@@ -24,12 +23,11 @@ export const lightSocialTheme: typeof darkSocialTheme = {
   ROSE_DIM:    '#FEE8EF',
   GOLD:        '#B07010',
   GOLD_DIM:    '#FEF6D8',
-  TRACE:        '#2D8A6A',
 };
 
 // Standalone exports retained for any module-level/static use (default dark).
 export const {
-  BORDER_SOFT, AMBER, AMBER_DIM, ROSE, ROSE_DIM, GOLD, GOLD_DIM, TRACE,
+  BORDER_SOFT, AMBER, AMBER_DIM, ROSE, ROSE_DIM, GOLD, GOLD_DIM,
 } = darkSocialTheme;
 
 // ─── Post type badge metadata ─────────────────────────────────────────────────
