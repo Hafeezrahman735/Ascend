@@ -285,6 +285,21 @@ export default function CalendarScreen() {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={Colors.primary} />
         </View>
+      ) : viewMode === 'week' ? (
+        // Week view scrolls itself, so it sits OUTSIDE the shared ScrollView
+        // below. Its seven-column strip is pinned while the day cards scroll
+        // under it, and a header can only be pinned by the scroll container it
+        // is a sibling of — nested inside this one it would just scroll away.
+        // It takes the RefreshControl's props for the same reason: pull-to-
+        // refresh has to live on whichever ScrollView is being dragged.
+        <WeekView
+          start={weekStart}
+          itemsByDate={itemsByDate}
+          onDayPress={openDay}
+          onToggleNote={toggleNote}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
       ) : (
         <ScrollView
           contentContainerStyle={{ paddingBottom: 120 }}
@@ -295,14 +310,6 @@ export default function CalendarScreen() {
           {viewMode === 'month' && (
             <MonthView
               anchorDate={anchorDate}
-              itemsByDate={itemsByDate}
-              onDayPress={openDay}
-              onToggleNote={toggleNote}
-            />
-          )}
-          {viewMode === 'week' && (
-            <WeekView
-              start={weekStart}
               itemsByDate={itemsByDate}
               onDayPress={openDay}
               onToggleNote={toggleNote}

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem, Note } from '../../types';
@@ -10,16 +10,36 @@ import {
 } from './shared';
 
 /** Cards drawn in a column before it collapses into a "+N" line. */
-const MAX_COLUMN_CARDS = 3;
+const MAX_COLUMN_CARDS = 5;
 
 /**
- * Week as seven columns for comparison, then seven cards for detail.
+ * Share of the view the pinned strip occupies.
+ *
+ * A fixed band rather than height-to-content, and that is the point of it: the
+ * columns are a comparison, so they only compare if the space they are drawn in
+ * is the same every week. It also means how full a column looks IS the day's
+ * load, read against a constant, instead of against six neighbours that all
+ * shrank together on a quiet week.
+ *
+ * Under half so the list below still reads as the main content — a pane that
+ * takes exactly half looks like a split screen, not a header.
+ */
+const STRIP_HEIGHT = '46%';
+
+/**
+ * Week as seven pinned columns for comparison, then a scrolling card list.
  *
  * The strip answers "which day is emptiest" — load visible without reading
  * anything, and it always shows all seven, so an empty day is still visible as
  * an empty column. The cards below answer "what is actually on each day", for
  * every day that has anything: a week you have to tap through a day at a time is
  * a day view with extra steps.
+ *
+ * The strip stays put while those cards scroll, which is why this owns a
+ * ScrollView instead of sitting inside the calendar tab's shared one — a header
+ * can only be pinned by the scroll container it is a sibling of. That is also
+ * why pull-to-refresh is a prop: the RefreshControl has to live on whichever
+ * ScrollView the user is actually dragging.
  *
  * It used to show a single card for whichever column you tapped. That made six
  * of the seven days invisible until you went looking for them, and the one day
@@ -31,11 +51,15 @@ export default function WeekView({
   itemsByDate,
   onDayPress,
   onToggleNote,
+  refreshing,
+  onRefresh,
 }: {
   start: Date;
   itemsByDate: Map<string, CalendarItem[]>;
   onDayPress: (date: string) => void;
   onToggleNote: (note: Note) => void;
+  refreshing: boolean;
+  onRefresh: () => void;
 }) {
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
@@ -57,9 +81,20 @@ export default function WeekView({
   );
 
   return (
-    <View>
-      {/* ── Seven columns ─────────────────────────────────────────────── */}
-      <View style={{ flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingBottom: 18 }}>
+    <View style={{ flex: 1 }}>
+      {/* ── Seven pinned columns ──────────────────────────────────────── */}
+      <View style={{
+        height: STRIP_HEIGHT,
+        flexDirection: 'row',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingBottom: 12,
+        // The list scrolls under this, so the band needs an edge of its own or
+        // cards appear to slide out of nowhere.
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+        backgroundColor: Colors.bg,
+      }}>
         {days.map((dateKey) => {
           const dayItems = itemsByDate.get(dateKey) ?? [];
           // Commitments first, then what you wrote about the day. Notes were
@@ -72,6 +107,7 @@ export default function WeekView({
           const day = parseLocalDate(dateKey);
           const isToday = dateKey === todayKey;
           const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+          const hidden = cards.length - MAX_COLUMN_CARDS;
 
           return (
             <TouchableOpacity
@@ -94,49 +130,56 @@ export default function WeekView({
                   {day.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3).toUpperCase()}
                 </Text>
                 <Text style={{
-                  fontSize: 12, fontWeight: isToday ? '700' : '600', marginTop: 1,
+                  fontSize: 13, fontWeight: isToday ? '700' : '600', marginTop: 1,
                   color: isToday ? Colors.primarySoft : Colors.textBright,
                 }}>
                   {day.getDate()}
                 </Text>
               </View>
 
-              {cards.slice(0, MAX_COLUMN_CARDS).map((item, idx) => (
-                <View
-                  key={calendarItemKey(item)}
-                  style={{
-                    backgroundColor: Colors.surface,
-                    borderWidth: 1,
-                    borderColor: idx === 0 && isToday ? Colors.primary : Colors.border,
-                    borderRadius: 9,
-                    paddingHorizontal: 5, paddingVertical: 6,
-                    marginHorizontal: isToday ? 4 : 0,
-                    marginBottom: 5,
-                  }}
-                >
-                  <View style={{
-                    height: 3, borderRadius: 2, marginBottom: 4,
-                    backgroundColor: typeColor(item.type, Colors),
-                  }} />
-                  <Text
-                    numberOfLines={2}
+              {/* Cards take whatever the band has left, and clip rather than
+                  push. A phone short enough to cut the last card still gets a
+                  strip that ends where the band ends, which is the whole point
+                  of a fixed band — and the count below stays visible because it
+                  sits outside this box. */}
+              <View style={{ flex: 1, overflow: 'hidden' }}>
+                {cards.slice(0, MAX_COLUMN_CARDS).map((item, idx) => (
+                  <View
+                    key={calendarItemKey(item)}
                     style={{
-                      fontSize: 9, lineHeight: 11,
-                      color: itemIsDone(item) ? Colors.subtext : Colors.text,
-                      textDecorationLine: itemIsDone(item) ? 'line-through' : 'none',
+                      backgroundColor: Colors.surface,
+                      borderWidth: 1,
+                      borderColor: idx === 0 && isToday ? Colors.primary : Colors.border,
+                      borderRadius: 9,
+                      paddingHorizontal: 5, paddingVertical: 7,
+                      marginHorizontal: isToday ? 4 : 0,
+                      marginBottom: 5,
                     }}
                   >
-                    {itemTitle(item)}
-                  </Text>
-                </View>
-              ))}
+                    <View style={{
+                      height: 3, borderRadius: 2, marginBottom: 4,
+                      backgroundColor: typeColor(item.type, Colors),
+                    }} />
+                    <Text
+                      numberOfLines={2}
+                      style={{
+                        fontSize: 10, lineHeight: 12.5,
+                        color: itemIsDone(item) ? Colors.subtext : Colors.text,
+                        textDecorationLine: itemIsDone(item) ? 'line-through' : 'none',
+                      }}
+                    >
+                      {itemTitle(item)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
 
-              {cards.length > MAX_COLUMN_CARDS && (
+              {hidden > 0 && (
                 <Text style={{
                   fontSize: 9, textAlign: 'center', color: Colors.subtext,
-                  marginHorizontal: isToday ? 4 : 0,
+                  marginHorizontal: isToday ? 4 : 0, paddingTop: 2,
                 }}>
-                  +{cards.length - MAX_COLUMN_CARDS}
+                  +{hidden}
                 </Text>
               )}
             </TouchableOpacity>
@@ -144,31 +187,39 @@ export default function WeekView({
         })}
       </View>
 
-      {/* ── One card per day that has something on it ─────────────────── */}
-      {busyDays.map(({ dateKey, items }) => (
-        <DayCard
-          key={dateKey}
-          dateKey={dateKey}
-          isToday={dateKey === todayKey}
-          items={items}
-          onDayPress={onDayPress}
-          onToggleNote={onToggleNote}
-        />
-      ))}
+      {/* ── The scrolling half ────────────────────────────────────────── */}
+      <ScrollView
+        contentContainerStyle={{ paddingTop: 14, paddingBottom: 120 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+        }
+      >
+        {/* One card per day that has something on it. */}
+        {busyDays.map(({ dateKey, items }) => (
+          <DayCard
+            key={dateKey}
+            dateKey={dateKey}
+            isToday={dateKey === todayKey}
+            items={items}
+            onDayPress={onDayPress}
+            onToggleNote={onToggleNote}
+          />
+        ))}
 
       {/* One line for a wholly empty week. Dropping the per-day cards must not
           leave the section blank under a strip of seven empty columns — that
           reads as a screen that failed to load rather than a free week. */}
-      {busyDays.length === 0 && (
-        <View style={{ paddingHorizontal: 16 }}>
-          <View style={styles.emptyBox}>
-            <Ionicons name="calendar-clear-outline" size={26} color={Colors.subtext} />
-            <Text style={{ color: Colors.subtext, marginTop: 6, fontSize: 13 }}>
-              Nothing planned this week. Tap a day to add something.
-            </Text>
+        {busyDays.length === 0 && (
+          <View style={{ paddingHorizontal: 16 }}>
+            <View style={styles.emptyBox}>
+              <Ionicons name="calendar-clear-outline" size={26} color={Colors.subtext} />
+              <Text style={{ color: Colors.subtext, marginTop: 6, fontSize: 13 }}>
+                Nothing planned this week. Tap a day to add something.
+              </Text>
+            </View>
           </View>
-        </View>
-      )}
+        )}
+      </ScrollView>
     </View>
   );
 }
