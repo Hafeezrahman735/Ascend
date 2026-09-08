@@ -141,7 +141,13 @@ export default function RootLayout() {
     }
 
     setTimeout(() => { isNavigating.current = false; }, 500);
-  }, [isReady, user, isNewUser, segments]);
+    // sessionUnavailable is READ above but was missing here, which is a real stale
+    // closure and not a lint technicality: the guard is what decides between
+    // "signed out, send them to login" and "server unreachable, leave them on the
+    // retry screen". When that flag flipped, the guard did not re-run, so someone
+    // who came back online and turned out to be signed out stayed stranded on the
+    // retry screen until something unrelated re-triggered the effect.
+  }, [isReady, user, isNewUser, segments, sessionUnavailable, router]);
 
   // Bootstrap — loads data only, never touches the router.
   useEffect(() => {

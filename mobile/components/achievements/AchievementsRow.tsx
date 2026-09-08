@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -133,14 +133,28 @@ export default function AchievementsRow() {
   }, []);
 
   // Hold the rendered order steady across background refetches so tiles cannot
-  // reorder under a finger mid-scroll. Only a change in the SET reshuffles.
-  const renderedKeys = useRef<string[]>([]);
-  const ordered = useMemo(() => {
-    const fresh = orderAchievements(achievements);
-    const stable = stabilizeOrder(renderedKeys.current, fresh);
-    renderedKeys.current = stable.map((a) => a.key);
-    return stable;
-  }, [achievements]);
+  // reorder under a finger mid-scroll. Only a change in the SET reshuffles — the
+  // VALUES still update, because stabilizeOrder returns the fresh objects in the
+  // previous order.
+  //
+  // The remembered order lives in state and is adjusted during render (React's
+  // documented pattern for deriving state from changed props), not written into
+  // a ref inside useMemo. useMemo is a caching hint React is free to discard and
+  // recompute; a discarded pass had already overwritten the ref, so the next one
+  // stabilised against an order that never reached the screen — silently
+  // defeating the very reshuffle-protection this exists to provide.
+  //
+  // This converges in one extra pass: stabilizeOrder called with the order it
+  // just produced returns that same order, so the condition below goes false.
+  const [orderKeys, setOrderKeys] = useState<string[]>([]);
+  const ordered = useMemo(
+    () => stabilizeOrder(orderKeys, orderAchievements(achievements)),
+    [orderKeys, achievements],
+  );
+  const nextKeys = ordered.map((a) => a.key);
+  if (nextKeys.length !== orderKeys.length || nextKeys.some((k, i) => k !== orderKeys[i])) {
+    setOrderKeys(nextKeys);
+  }
 
   const { visible, remaining } = selectRowAchievements(ordered, VISIBLE_TILES);
   const openAll = () => router.push('/achievements');

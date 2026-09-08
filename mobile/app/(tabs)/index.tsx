@@ -266,11 +266,19 @@ function AchievementUnlockBlock({ post }: { post: SocialPost }) {
 function AccountabilityBlock({ post }: { post: SocialPost }) {
   const Colors = useTheme();
   const SURFACE = Colors.surface;
+  // Captured once on mount rather than read during render. Date.now() in a render
+  // body returns a different value on every re-render, so "3 days left" could
+  // disagree between two renders of the same frame — and React is free to render
+  // without committing. A feed card's countdown does not need to tick anyway: it
+  // means "as of when you opened the feed", which is what this now says.
+  //
+  // Above the early return below, because a hook has to run on every render.
+  const [now] = useState(() => Date.now());
   const ch = post.challenge;
   if (!ch) return null;
   const completed = Object.values(ch.memberProgress).reduce((a, b) => a + b, 0);
   const pct = ch.targetValue > 0 ? Math.min(100, Math.round((completed / ch.targetValue) * 100)) : 0;
-  const dl = Math.ceil((new Date(ch.deadline).getTime() - Date.now()) / 86400000);
+  const dl = Math.ceil((new Date(ch.deadline).getTime() - now) / 86400000);
   return (
     <View style={{
       backgroundColor: Colors.accentDim, borderRadius: 12, borderWidth: 1,

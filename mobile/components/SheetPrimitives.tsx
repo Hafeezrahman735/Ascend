@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, Modal, Dimensions, PanResponder,
   StyleSheet, TouchableWithoutFeedback,
@@ -44,11 +44,22 @@ export function BottomSheet({ visible, onClose, children, sheetHeight }: {
   const Colors = useTheme();
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
-  const panResponder = useRef(PanResponder.create({
+  // useMemo, not useRef(...).current: the ref form evaluates its argument on
+  // every render and throws the result away, so every re-render of an open sheet
+  // built a PanResponder for nothing. The handlers read onCloseRef at gesture
+  // time, so an empty dep list is correct — the responder never needs rebuilding.
+  //
+  // react-hooks/refs still warns here ("passing a ref to a function may read its
+  // value during render"). It is a false positive: PanResponder.create STORES
+  // these callbacks, it never invokes them, so onCloseRef is only read on a drag.
+  // Do not "fix" it by depending on [onClose] and dropping the ref — every call
+  // site forwards onClose down from a parent, so an inline arrow anywhere above
+  // would rebuild the responder on every render, which is the thing this avoids.
+  const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: (_, g) => g.dy > 5,
     onPanResponderRelease: (_, g) => { if (g.dy > 80 || g.vy > 0.5) onCloseRef.current(); },
-  })).current;
+  }), []);
   return (
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
       <View style={{ flex: 1 }}>
