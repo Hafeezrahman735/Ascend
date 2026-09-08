@@ -8,7 +8,17 @@
 // from App Store Connect, so re-check them in a private window after any Notion
 // permission change.
 
-export const SUPPORT_EMAIL = 'hafeezrahman735@gmail.com'
+/**
+ * The address users are told to write to, and the one the Terms name as the
+ * route for reports and appeals. A dedicated account rather than a personal one:
+ * it is published in the App Store listing and inside the app, and the Terms
+ * commit to answering reports sent here within 24 hours.
+ *
+ * Not the same thing as EMAIL_FROM on the backend, which is the verified sender
+ * that outbound mail leaves from, nor MODERATION_ALERT_TO, which is where report
+ * alerts land. Those are environment variables; this is what users see.
+ */
+export const SUPPORT_EMAIL = 'ascendproductivity.app@gmail.com'
 
 export const PRIVACY_POLICY_URL =
   'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
