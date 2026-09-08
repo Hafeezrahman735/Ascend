@@ -121,10 +121,29 @@ export default function RootLayout() {
     // guard sees a user inside (auth) and bounces them to the tabs, so the
     // emailed link simply appears broken.
     const onPasswordReset = currentScreen === 'reset-password' || currentScreen === 'forgot-password';
+    // The terms screens must render for a SIGNED-IN user: the gate is shown to
+    // one by definition, and the terms text is pushed from it. Without this
+    // escape needsApp would see a user inside (auth) and bounce them to the tabs
+    // the instant they arrived — the same trap onPasswordReset exists to avoid.
+    const onTerms = currentScreen === 'terms-gate' || currentScreen === 'terms';
+    const termsAccepted = !!user?.termsAcceptedAt;
+    // Accounts created before the terms existed have nothing recorded, and a
+    // returning user never passes through the signup form again — they bootstrap
+    // straight through /auth/me. This branch is the only thing that catches them,
+    // and it is what App Store Guideline 1.2 means by "or logging in".
+    //
+    // Gated on sessionUnavailable for the same reason needsAuth is: when the
+    // server cannot be reached the user object is stale or absent, and "no
+    // recorded consent" is indistinguishable from "we could not ask". Gating on
+    // an outage would lock out everyone at once.
+    const needsTerms = !!user && !termsAccepted && !sessionUnavailable && !onTerms;
     const needsAuth = !user && !inAuthGroup && !sessionUnavailable;
-    const needsApp = !!user && inAuthGroup && !onOnboarding && !onPasswordReset;
+    // (!onTerms || termsAccepted): someone still sitting on the gate stays put,
+    // but the moment they accept, this is what moves them into the app.
+    const needsApp =
+      !!user && inAuthGroup && !onOnboarding && !onPasswordReset && (!onTerms || termsAccepted);
 
-    if (!needsAuth && !needsApp) return;
+    if (!needsAuth && !needsTerms && !needsApp) return;
     if (isNavigating.current) return;
 
     isNavigating.current = true;
@@ -132,6 +151,12 @@ export default function RootLayout() {
     if (needsAuth) {
       log('[auth guard] no user — redirecting to login');
       router.replace('/(auth)/login');
+    } else if (needsTerms) {
+      // Ahead of the onboarding branch, but the two never both apply: a new
+      // account accepted the terms on the signup form and had them stamped by
+      // /auth/register, so it arrives here already accepted.
+      log('[auth guard] terms not accepted — redirecting to terms gate');
+      router.replace('/(auth)/terms-gate');
     } else if (isNewUser) {
       log('[auth guard] new user — redirecting to onboarding');
       router.replace('/(auth)/onboarding1');

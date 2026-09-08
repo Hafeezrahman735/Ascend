@@ -24,6 +24,7 @@ import { setupTimerRoutes } from './modules/timer/routes';
 import { handleSessionCompleted as handleAchievementsSession } from './modules/achievements/handler';
 import { handleAllNotifications } from './modules/notifications/handler';
 import { recordActivityEvent } from './lib/activityLog';
+import { isEmailConfigured } from './lib/email';
 
 // CORS allow-list. Native mobile apps send no Origin header (CORS is a browser
 // rule) so they are unaffected; this gates browser / Expo-web clients.
@@ -288,6 +289,21 @@ loadAchievementCatalogue().catch((err) => console.error('Achievement catalogue w
 if (process.env.NODE_ENV !== 'test') {
   server.listen(Number(config.PORT), () => {
     console.log(`Ascend backend running on port ${config.PORT}`);
+
+    // Deliberately loud, and deliberately at boot rather than at send time.
+    // Unconfigured SMTP is a supported state (see lib/email.ts), but it is a
+    // SILENT one: password reset still answers "if that account exists we sent a
+    // link" and content-report alerts still resolve, while no mail leaves the
+    // building. Two things then fail invisibly — users cannot recover accounts,
+    // and the 24-hour moderation commitment in the Terms has nothing behind it.
+    // This line is the only chance to notice before a user does.
+    if (!isEmailConfigured()) {
+      console.warn(
+        '[startup] SMTP is NOT configured. Password-reset emails and content-report ' +
+          'alerts will be silently dropped. Set SMTP_HOST, SMTP_USER, SMTP_PASS and ' +
+          'EMAIL_FROM to enable them.',
+      );
+    }
   });
 }
 

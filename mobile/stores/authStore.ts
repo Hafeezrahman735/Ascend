@@ -23,7 +23,19 @@ interface AuthState {
   sessionUnavailable: boolean;
 
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, username: string, password: string) => Promise<boolean>;
+  register: (
+    email: string,
+    username: string,
+    password: string,
+    acceptedTerms: boolean,
+  ) => Promise<boolean>;
+  /**
+   * Record acceptance of the current Terms for the signed-in user.
+   *
+   * Resolves false on any failure so the caller can show a retry rather than
+   * assuming it landed. See app/(auth)/terms-gate.tsx.
+   */
+  acceptTerms: () => Promise<boolean>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
   clearError: () => void;
@@ -73,14 +85,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  register: async (email: string, username: string, password: string) => {
+  register: async (
+    email: string,
+    username: string,
+    password: string,
+    acceptedTerms: boolean,
+  ) => {
     set({ isLoading: true, error: null });
     try {
       const response = await api.post<{
         user: User;
         accessToken: string;
         refreshToken: string;
-      }>('/auth/register', { email, username, password });
+      }>('/auth/register', { email, username, password, acceptedTerms });
 
       if (response.success && response.data) {
         setTokens(response.data.accessToken, response.data.refreshToken);
@@ -99,6 +116,35 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return false;
     } catch {
       set({ error: 'Network error', isLoading: false });
+      return false;
+    }
+  },
+
+  acceptTerms: async () => {
+    try {
+      const response = await api.post<{ termsAcceptedAt: string; termsVersion: string }>(
+        '/auth/accept-terms',
+        {},
+      );
+      if (!response.success || !response.data) return false;
+
+      // Update the cached user in place. The auth guard reads termsAcceptedAt
+      // off this object to decide whether to route to the gate, so leaving it
+      // stale would bounce the user straight back to the screen they just
+      // cleared. invalidateMe drops the /auth/me cache for the same reason.
+      const current = get().user;
+      if (current) {
+        set({
+          user: {
+            ...current,
+            termsAcceptedAt: response.data.termsAcceptedAt,
+            termsVersion: response.data.termsVersion,
+          },
+        });
+      }
+      invalidateMe();
+      return true;
+    } catch {
       return false;
     }
   },

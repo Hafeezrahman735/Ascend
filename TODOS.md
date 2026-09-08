@@ -229,3 +229,36 @@ check types. A shared schema (zod on both sides) would, and is the real fix.
       occurrences shading differently from spawned ones. Fine until long habits
       are common.
       Depends on: shipping, plus a month of real data.
+
+## From /plan-ceo-review — App Store rejection fixes (2026-09-08)
+
+- [ ] **Admin moderation panel.** The terms shipped with the 1.2 fix commit us in writing
+      to act on reports within 24 hours by removing the content and ejecting the user.
+      Nothing in `backend/src` can do either: `PostReport` and `UserBlock` only collect
+      data, there is no `isAdmin` field, no admin route, and the sole deletion path is
+      self-service `DELETE /auth/account`. Interim mechanism at resubmission is a
+      best-effort email to the support address on report creation. Start this branch
+      immediately after Apple approval.
+
+      Design settled during the review, so it does not need re-deriving:
+      - **Served by the Express backend as a web page, NOT in the app binary.** Moderation
+        UI only the developer can reach inside a shipped app is what guideline 2.3.1
+        (hidden features) targets; keeping it server-side removes that risk entirely, lets
+        it be fixed without an App Store review cycle, and means acting on a report happens
+        from a laptop rather than a phone.
+      - **Auth reuses the existing JWT** (`/auth/login` + a `requireAdmin` middleware
+        checking a new `User.isAdmin`), rather than an `ADMIN_TOKEN` env var. The bcrypt +
+        JWT + refresh-rotation path is already built and tested, and per-action
+        attribution comes free. `isAdmin` defaults false and gets flipped once by SQL.
+      - **Eject is a soft ban (`bannedAt`, `bannedReason`), not a hard delete.** Reversible,
+        and it preserves the evidence needed if a user appeals or Apple asks what was done.
+        Critical detail: banning must delete the user's refresh tokens and the refresh path
+        must reject banned users, or an ejected account keeps working until its access
+        token expires.
+      - Schema: `User.isAdmin/bannedAt/bannedReason`, `PostReport.status/reviewedAt/reviewedBy`.
+        All additive with defaults, so they push ahead of the code safely.
+      - Routes: `GET /admin/reports?status=open`, `POST /admin/posts/:id/remove`,
+        `POST /admin/users/:id/ban`, `POST /admin/users/:id/unban`,
+        `POST /admin/reports/:id/dismiss`. Integration test each, per the Testing Standard.
+      - The page is one static HTML file, vanilla fetch and a table. No build step, no
+        framework, no new dependency.
