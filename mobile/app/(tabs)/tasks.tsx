@@ -1303,12 +1303,15 @@ const DormantRecurringRow = memo(function DormantRecurringRow({ template, goals,
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message }: { message: string | null }) {
   const Colors = useTheme();
-  const opacity = useRef(new Animated.Value(0)).current;
+  // useMemo rather than useRef(...).current, which allocates a fresh
+  // Animated.Value on every render and discards it. Stable identity also lets it
+  // be an honest effect dependency.
+  const opacity = useMemo(() => new Animated.Value(0), []);
   useEffect(() => {
     if (message) {
       Animated.sequence([Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }), Animated.delay(1500), Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true })]).start();
     }
-  }, [message]);
+  }, [message, opacity]);
   if (!message) return null;
   return (
     <Animated.View style={{ position: 'absolute', bottom: 96, alignSelf: 'center', backgroundColor: Colors.accentDim, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20, borderWidth: 0.5, borderColor: Colors.accent, opacity }}>
