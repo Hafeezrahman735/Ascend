@@ -7,6 +7,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { Font } from '../../constants/typography';
 import { TermsConsentRow } from '../../components/auth/TermsConsentRow';
 import { AUTH_CONTENT_MAX_WIDTH } from '../../components/auth/authLayout';
+import { CURRENT_TERMS_VERSION } from '../../constants/legal';
 
 /**
  * One-time Terms acceptance for accounts that never gave it.
@@ -58,8 +59,20 @@ export default function TermsGateScreen() {
    * again on the next launch, so nothing is permanently skipped.
    */
   function handleContinueAnyway() {
+    // Sets the version as well as the timestamp. The auth guard compares against
+    // CURRENT_TERMS_VERSION, so a timestamp alone would leave termsAccepted false
+    // and bounce the user straight back here — an escape hatch that does not
+    // escape is worse than none.
     useAuthStore.setState((state) =>
-      state.user ? { user: { ...state.user, termsAcceptedAt: new Date().toISOString() } } : state,
+      state.user
+        ? {
+            user: {
+              ...state.user,
+              termsAcceptedAt: new Date().toISOString(),
+              termsVersion: CURRENT_TERMS_VERSION,
+            },
+          }
+        : state,
     );
   }
 

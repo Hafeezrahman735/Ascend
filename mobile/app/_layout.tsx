@@ -20,6 +20,7 @@ import { useNotificationListener } from '../hooks/useNotificationListener';
 import { useTimerNotifications } from '../hooks/useTimerNotifications';
 import { useTimerLiveActivity } from '../hooks/useTimerLiveActivity';
 import { log } from '../lib/log';
+import { CURRENT_TERMS_VERSION } from '../constants/legal';
 
 // Module-level flag prevents React Strict Mode from running bootstrap twice.
 let bootstrapRan = false;
@@ -126,7 +127,18 @@ export default function RootLayout() {
     // escape needsApp would see a user inside (auth) and bounce them to the tabs
     // the instant they arrived — the same trap onPasswordReset exists to avoid.
     const onTerms = currentScreen === 'terms-gate' || currentScreen === 'terms';
-    const termsAccepted = !!user?.termsAcceptedAt;
+    // Compared against the version THIS BINARY ships, not merely "has accepted
+    // something". Section 12 of the Terms promises that when they change
+    // materially we ask again on next open, and checking only for a non-null
+    // timestamp would quietly break that promise — an account that accepted the
+    // first version would never see the second.
+    //
+    // The client's constant is the right side of the comparison because the
+    // client is what renders the text: an older binary still showing v1 should
+    // keep accepting a stored v1, and only a binary that displays v2 should ask
+    // for v2.
+    const termsAccepted =
+      !!user?.termsAcceptedAt && user?.termsVersion === CURRENT_TERMS_VERSION;
     // Accounts created before the terms existed have nothing recorded, and a
     // returning user never passes through the signup form again — they bootstrap
     // straight through /auth/me. This branch is the only thing that catches them,

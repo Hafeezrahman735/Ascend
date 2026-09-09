@@ -16,11 +16,3 @@
  * Keep in step with mobile/constants/legal.ts and the hosted public copy.
  */
 export const CURRENT_TERMS_VERSION = '2026-09-08';
-
-/** True when the account has accepted the version this server is serving. */
-export function hasAcceptedCurrentTerms(user: {
-  termsAcceptedAt: Date | null;
-  termsVersion: string | null;
-}): boolean {
-  return user.termsAcceptedAt !== null && user.termsVersion === CURRENT_TERMS_VERSION;
-}

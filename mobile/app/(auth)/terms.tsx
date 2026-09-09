@@ -112,6 +112,23 @@ export default function TermsScreen() {
                 </Text>
               </View>
             ))}
+
+            {/* Paragraphs that belong AFTER the list — section 5 states the
+                prohibitions, then explains reporting, blocking and the 24-hour
+                enforcement commitment, and that order is the whole point of it. */}
+            {section.tail?.map((paragraph) => (
+              <Text
+                key={paragraph}
+                style={{
+                  color: Colors.text,
+                  fontSize: 14,
+                  lineHeight: 21,
+                  marginTop: 10,
+                }}
+              >
+                {paragraph}
+              </Text>
+            ))}
           </View>
         ))}
       </ScrollView>
