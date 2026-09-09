@@ -291,7 +291,7 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`Ascend backend running on port ${config.PORT}`);
 
     // Deliberately loud, and deliberately at boot rather than at send time.
-    // Unconfigured SMTP is a supported state (see lib/email.ts), but it is a
+    // Unconfigured email is a supported state (see lib/email.ts), but it is a
     // SILENT one: password reset still answers "if that account exists we sent a
     // link" and content-report alerts still resolve, while no mail leaves the
     // building. Two things then fail invisibly — users cannot recover accounts,
@@ -299,9 +299,8 @@ if (process.env.NODE_ENV !== 'test') {
     // This line is the only chance to notice before a user does.
     if (!isEmailConfigured()) {
       console.warn(
-        '[startup] SMTP is NOT configured. Password-reset emails and content-report ' +
-          'alerts will be silently dropped. Set SMTP_HOST, SMTP_USER, SMTP_PASS and ' +
-          'EMAIL_FROM to enable them.',
+        '[startup] Email is NOT configured. Password-reset emails and content-report ' +
+          'alerts will be silently dropped. Set BREVO_API_KEY and EMAIL_FROM to enable them.',
       );
     }
   });

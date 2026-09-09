@@ -1,47 +1,51 @@
-import nodemailer, { type Transporter } from 'nodemailer';
 import { config } from '../config';
 
 /**
- * Outbound transactional email.
+ * Outbound transactional email, over Brevo's HTTPS API.
  *
- * Plain SMTP rather than a provider SDK, deliberately. Every free tier worth
- * using — Brevo at 300/day, SendGrid, Mailgun, even a plain mailbox — speaks
- * SMTP, so the provider is five environment variables and never a code change.
- * Committing to one vendor's SDK would have meant a rewrite to switch, on a
- * decision driven entirely by whose free tier is best this year.
+ * ─── Why not SMTP ───────────────────────────────────────────────────────────
  *
- * It also means no domain is required: providers offering single-sender
- * verification let you send from one address you already own, which is what
- * makes this shippable at zero cost.
+ * This module used to speak plain SMTP through nodemailer, chosen deliberately
+ * so the provider was five environment variables and never a code change. That
+ * reasoning was sound and the hosting invalidated it: Railway disables outbound
+ * SMTP on Free, Trial and Hobby plans to prevent spam, so every connection sat
+ * there until nodemailer gave up.
  *
- * UNCONFIGURED IS A SUPPORTED STATE. With no SMTP_* variables set, sending
- * logs and resolves instead of throwing. That is not laziness — the alternative
- * is a password-reset route that 500s on a deploy where the variables have not
- * been filled in yet, and a reset flow that fails loudly at the wrong layer is
- * worse than one that is visibly switched off. `isEmailConfigured()` lets the
- * caller tell the difference when it matters.
+ *   [email] send failed: to=... subject="[Ascend] Post reported — priya_patel"
+ *   Error: Connection timeout
+ *       at SMTPConnection._formatError (nodemailer/lib/smtp-connection/index.js:814)
+ *
+ * It presented as a timeout rather than a refusal, which is what made it look
+ * like a misconfigured host or port. It was neither. Password resets and every
+ * content-report alert were silently going nowhere.
+ *
+ * HTTPS is not blocked on any plan, and Railway recommends an HTTPS email API
+ * even on the plans where SMTP works.
+ *
+ * ─── Why Brevo specifically ─────────────────────────────────────────────────
+ *
+ * Brevo verifies a SINGLE SENDER ADDRESS. Resend, Railway's own suggestion,
+ * requires a verified domain, and this project has none — the legal pages live
+ * on Notion and support is a Gmail address. Without a domain Resend only sends
+ * from onboarding@resend.dev, which delivers to the account owner and nobody
+ * else: fine for moderation alerts, useless for a password reset addressed to a
+ * real user. Brevo sends from an address you own with no DNS at all.
+ *
+ * UNCONFIGURED IS STILL A SUPPORTED STATE. With no BREVO_API_KEY, sending logs
+ * and resolves false instead of throwing — the same contract the SMTP version
+ * had, and what the password-reset integration tests rely on. `isEmailConfigured()`
+ * lets a caller tell the difference, and index.ts warns loudly at boot.
  */
 
-let cached: Transporter | null = null;
+const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
+
+/** A slow send must not pin a request; every caller is fire-and-forget anyway. */
+const SEND_TIMEOUT_MS = 10_000;
+
 let warned = false;
 
 export function isEmailConfigured(): boolean {
-  return !!(config.SMTP_HOST && config.SMTP_USER && config.SMTP_PASS && config.EMAIL_FROM);
-}
-
-function transport(): Transporter | null {
-  if (!isEmailConfigured()) return null;
-  if (cached) return cached;
-  cached = nodemailer.createTransport({
-    host: config.SMTP_HOST,
-    port: Number(config.SMTP_PORT ?? 587),
-    // 587 is STARTTLS (secure:false, upgraded after connect); 465 is implicit
-    // TLS. Getting this backwards is the single most common SMTP misconfig and
-    // it fails with a timeout rather than anything that names the cause.
-    secure: Number(config.SMTP_PORT ?? 587) === 465,
-    auth: { user: config.SMTP_USER, pass: config.SMTP_PASS },
-  });
-  return cached;
+  return !!(config.BREVO_API_KEY && config.EMAIL_FROM);
 }
 
 export interface Mail {
@@ -52,33 +56,87 @@ export interface Mail {
 }
 
 /**
- * Sends, or logs and moves on when unconfigured.
+ * Brevo wants the sender split into name and address. EMAIL_FROM is written in
+ * the usual header form, `Ascend <you@example.com>`, so it is parsed rather than
+ * adding a second variable that could disagree with the first.
+ */
+function parseSender(from: string): { name?: string; email: string } {
+  const match = from.match(/^\s*(.*?)\s*<\s*([^>]+)\s*>\s*$/);
+  if (match) {
+    const name = match[1].replace(/^"|"$/g, '').trim();
+    return name ? { name, email: match[2] } : { email: match[2] };
+  }
+  return { email: from.trim() };
+}
+
+/** Recipients are written the same way, so the address has to come back out. */
+function parseRecipient(to: string): { email: string } {
+  return { email: parseSender(to).email };
+}
+
+/**
+ * Sends, or logs and moves on when unconfigured or failing.
  *
  * Never throws. Every caller is on a path where the user has already been told
- * something generic and non-committal, and turning an SMTP hiccup into a 500
- * would both break that promise and leak whether the address existed.
+ * something generic and non-committal, and turning a provider hiccup into a 500
+ * would both break that promise and, for password reset, leak whether the
+ * address existed.
  *
  * The RECIPIENT is logged; the body is not. Bodies carry reset links, and the
  * whole point of hashing the token in the database is defeated by printing the
  * raw one into a log aggregator.
  */
 export async function sendEmail(mail: Mail): Promise<boolean> {
-  const t = transport();
-  if (!t) {
+  if (!isEmailConfigured()) {
     if (!warned) {
-      console.warn('[email] SMTP is not configured — mail is being dropped. Set SMTP_HOST, SMTP_USER, SMTP_PASS and EMAIL_FROM to enable it.');
+      console.warn(
+        '[email] Brevo is not configured — mail is being dropped. Set BREVO_API_KEY and EMAIL_FROM to enable it.',
+      );
       warned = true;
     }
     console.warn(`[email] dropped: to=${mail.to} subject="${mail.subject}"`);
     return false;
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+
   try {
-    await t.sendMail({ from: config.EMAIL_FROM, ...mail });
+    const response = await fetch(BREVO_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'api-key': config.BREVO_API_KEY as string,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sender: parseSender(config.EMAIL_FROM as string),
+        to: [parseRecipient(mail.to)],
+        subject: mail.subject,
+        textContent: mail.text,
+        htmlContent: mail.html,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      // Brevo answers 4xx with a JSON body naming the cause — an unverified
+      // sender, a bad key, the daily cap. Worth printing: these are all
+      // operator errors with a specific fix, and the alternative is a silent
+      // failure that looks identical to success.
+      const detail = await response.text().catch(() => '(no body)');
+      console.error(
+        `[email] send failed (${response.status}): to=${mail.to} subject="${mail.subject}" ${detail.slice(0, 500)}`,
+      );
+      return false;
+    }
+
     return true;
   } catch (err) {
-    // Logged without the body for the reason above.
-    console.error(`[email] send failed: to=${mail.to} subject="${mail.subject}"`, err);
+    const reason = err instanceof Error && err.name === 'AbortError' ? 'timed out' : 'errored';
+    console.error(`[email] send ${reason}: to=${mail.to} subject="${mail.subject}"`, err);
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
