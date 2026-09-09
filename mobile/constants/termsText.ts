@@ -1,7 +1,7 @@
 import { SUPPORT_EMAIL, PRIVACY_POLICY_URL } from './legal'
 
 // ─── Terms of Service, bundled ────────────────────────────────────────────────
-// The CANONICAL source. The page published at TERMS_OF_USE_URL is generated from
+// The CANONICAL source. The page published at TERMS_OF_SERVICE_URL is generated from
 // this file rather than written separately — two hand-maintained copies of a
 // legal document diverge, and the last time they did, the hosted copy described
 // a Report button on user profiles that does not exist.

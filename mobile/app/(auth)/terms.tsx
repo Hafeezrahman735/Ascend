@@ -9,7 +9,7 @@ import { CURRENT_TERMS_VERSION } from '../../constants/legal';
 import { AUTH_CONTENT_MAX_WIDTH } from '../../components/auth/authLayout';
 
 /**
- * The Terms of Use, read-only.
+ * The Terms of Service, read-only.
  *
  * Lives in the (auth) group because it must be reachable BEFORE anyone has an
  * account: App Store Guideline 1.2 requires the agreement be presented before
@@ -21,7 +21,7 @@ import { AUTH_CONTENT_MAX_WIDTH } from '../../components/auth/authLayout';
  * terms must be able to read what they are agreeing to with no network; App
  * Review should never be sent out of the app mid-signup to a page that could
  * change under them; and a hosted page that 404s would turn the consent gate
- * into a dead end. The public copy at TERMS_OF_USE_URL exists for App Store
+ * into a dead end. The public copy at TERMS_OF_SERVICE_URL exists for App Store
  * Connect, not for this screen.
  *
  * Purely presentational — accepting happens on the signup form and on the terms
@@ -62,7 +62,7 @@ export default function TermsScreen() {
             marginBottom: 6,
           }}
         >
-          Terms of Use
+          Terms of Service
         </Text>
         <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 20 }}>
           Version {CURRENT_TERMS_VERSION} · Last updated {TERMS_EFFECTIVE_DATE}

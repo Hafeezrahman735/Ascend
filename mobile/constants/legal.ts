@@ -24,21 +24,18 @@ export const PRIVACY_POLICY_URL =
   'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
 
 /**
- * Public copy of the same text bundled in app/(auth)/terms.tsx.
+ * Public copy of the text bundled in constants/termsText.ts.
  *
  * The in-app screen is the one a user actually agrees to — it is bundled, so it
  * renders offline and App Review never has to leave the app to read it. This URL
  * exists because App Store Connect requires a licence-agreement link, and because
  * a user who has deleted the app still needs somewhere to read what they agreed
- * to. Keep the two in sync: if you edit one, edit the other and bump
- * CURRENT_TERMS_VERSION.
+ * to. It is GENERATED from constants/termsText.ts, never hand-edited: two
+ * hand-maintained copies is how the published page came to describe features the
+ * app does not have.
  */
-// TODO(before submitting): this page does not exist yet. Publish the text from
-// constants/termsText.ts at a public URL, put that URL here, and paste it into
-// the App Store Connect licence-agreement field. Nothing in the consent flow
-// depends on it — the terms a user agrees to are bundled and shown in-app — but
-// the Settings > Terms of Use row opens this, and App Review will follow it.
-export const TERMS_OF_USE_URL = 'https://striped-anger-f6d.notion.site/ascend-terms-of-use'
+export const TERMS_OF_SERVICE_URL =
+  'https://striped-anger-f6d.notion.site/Ascend-Terms-of-Service-3d554567a17b802aa87bffe0ceea228b'
 
 /**
  * The version of the Terms a user is agreeing to right now.

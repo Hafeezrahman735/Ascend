@@ -6,7 +6,7 @@ import { PRIVACY_POLICY_URL } from '../../constants/legal';
 import { openExternal } from '../../lib/openExternal';
 
 /**
- * "I agree to the Terms of Use and Privacy Policy", with a real checkbox.
+ * "I agree to the Terms of Service and Privacy Policy", with a real checkbox.
  *
  * Shared by the signup form and the terms gate so the wording a user consents to
  * is identical in both places — which matters when the thing being recorded is
@@ -38,7 +38,7 @@ export function TermsConsentRow({
         onPress={() => onToggle(!checked)}
         accessibilityRole="checkbox"
         accessibilityState={{ checked }}
-        accessibilityLabel="I agree to the Terms of Use and Privacy Policy"
+        accessibilityLabel="I agree to the Terms of Service and Privacy Policy"
         // The box is 22pt but the target is 44 — the iOS minimum. Without the
         // hitSlop this is one of the easiest controls in the app to miss, and
         // missing it looks like the signup button being broken.
@@ -71,7 +71,7 @@ export function TermsConsentRow({
           accessibilityRole="link"
           style={{ color: Colors.primarySoft, fontWeight: '600' }}
         >
-          Terms of Use
+          Terms of Service
         </Text>{' '}
         and{' '}
         <Text

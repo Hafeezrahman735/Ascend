@@ -13,7 +13,7 @@ import { useTheme } from '../hooks/useTheme';
 import {
   SUPPORT_EMAIL,
   PRIVACY_POLICY_URL,
-  TERMS_OF_USE_URL,
+  TERMS_OF_SERVICE_URL,
 } from '../constants/legal';
 import { openExternal } from '../lib/openExternal';
 import { useAuthStore } from '../stores/authStore';
@@ -812,8 +812,8 @@ export default function SettingsScreen() {
               in the auth group, and the root guard bounces a signed-in user out
               of it. Same text, different audience. */}
           <SettingsRow
-            label="Terms of Use"
-            onPress={() => openExternal(TERMS_OF_USE_URL)}
+            label="Terms of Service"
+            onPress={() => openExternal(TERMS_OF_SERVICE_URL)}
           />
           <Divider />
           <SettingsRow
