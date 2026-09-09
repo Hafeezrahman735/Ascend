@@ -13,6 +13,8 @@ import PasswordField from '../../components/PasswordField';
 import { AscendMark } from '../../components/AscendMark';
 import { Font } from '../../constants/typography';
 import { validateNewPassword } from '../../lib/passwordRules';
+import { TermsConsentRow } from '../../components/auth/TermsConsentRow';
+import { AUTH_CONTENT_MAX_WIDTH } from '../../components/auth/authLayout';
 
 type Mode = 'login' | 'register';
 
@@ -35,11 +37,17 @@ export default function AuthScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   function switchMode(m: Mode) {
     setMode(m);
     setLocalError(null);
     clearError();
+    // Consent is reset on every mode switch. A box ticked, then a trip through
+    // the Log in tab, then back, would otherwise submit consent the user gave to
+    // a form they have since left — and consent is the one thing here that must
+    // be unambiguous.
+    setAcceptedTerms(false);
   }
 
   async function handleSubmit() {
@@ -63,7 +71,13 @@ export default function AuthScreen() {
         setLocalError(passwordError);
         return;
       }
-      const success = await register(email, username, password);
+      if (!acceptedTerms) {
+        // Belt and braces: the button is disabled without this, but the check is
+        // cheap and the alternative is an account created without consent.
+        setLocalError('Please agree to the Terms of Use to continue');
+        return;
+      }
+      const success = await register(email, username, password, acceptedTerms);
       if (success) {
         useTaskStore.getState().fetchTasks(true);
       }
@@ -71,6 +85,9 @@ export default function AuthScreen() {
   }
 
   const displayError = localError || error;
+  // Only the signup tab is gated; logging in has its own consent step (the terms
+  // gate) for accounts that predate the terms.
+  const submitBlocked = mode === 'register' && !acceptedTerms;
 
   return (
     <KeyboardAvoidingView
@@ -79,7 +96,10 @@ export default function AuthScreen() {
     >
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 40 }}
+          contentContainerStyle={{
+            flexGrow: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 40,
+            width: '100%', maxWidth: AUTH_CONTENT_MAX_WIDTH, alignSelf: 'center',
+          }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -217,14 +237,22 @@ export default function AuthScreen() {
               </TouchableOpacity>
             )}
 
+            {mode === 'register' && (
+              <View style={{ marginTop: 4 }}>
+                <TermsConsentRow checked={acceptedTerms} onToggle={setAcceptedTerms} />
+              </View>
+            )}
+
             <TouchableOpacity
               style={{
                 backgroundColor: Colors.primary, borderRadius: 14,
                 paddingVertical: 15, alignItems: 'center', marginTop: 6,
-                opacity: isLoading ? 0.7 : 1,
+                opacity: isLoading || submitBlocked ? 0.5 : 1,
               }}
               onPress={handleSubmit}
-              disabled={isLoading}
+              disabled={isLoading || submitBlocked}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isLoading || submitBlocked }}
             >
               {isLoading ? (
                 <ActivityIndicator color="white" />
@@ -234,6 +262,14 @@ export default function AuthScreen() {
                 </Text>
               )}
             </TouchableOpacity>
+
+            {/* A disabled button with no stated reason is the classic dead end —
+                especially for anyone who has not noticed the checkbox above it. */}
+            {submitBlocked && (
+              <Text style={{ color: Colors.subtext, fontSize: 12, textAlign: 'center', marginTop: -2 }}>
+                Agree to the terms to continue
+              </Text>
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>

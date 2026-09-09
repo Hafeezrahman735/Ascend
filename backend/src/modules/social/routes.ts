@@ -7,6 +7,7 @@ import { getRankTitle } from '../../lib/rank';
 import { handleAuthError, handleZodError } from '../../lib/errors';
 import { resolveProfileAccess } from '../../services/profileAccess';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
+import { notifyContentReported } from '../../lib/moderationAlert';
 
 export const socialRouter = Router();
 
@@ -512,15 +513,58 @@ socialRouter.post('/social/posts/:id/report', async (req: Request, res: Response
     const schema = z.object({ reason: z.string().max(500).nullable().optional() });
     const { reason } = schema.parse(req.body);
 
-    const post = await prisma.socialPost.findUnique({ where: { id }, select: { id: true } });
+    const post = await prisma.socialPost.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        caption: true,
+        authorId: true,
+        author: { select: { username: true } },
+      },
+    });
     if (!post) {
       res.status(404).json({ success: false, error: 'Post not found' });
       return;
     }
 
-    await prisma.postReport.create({
-      data: { postId: id, reportedBy: userId, reason: reason ?? null },
-    });
+    // create + swallow P2002, rather than upsert. The unique index on
+    // (postId, reportedBy) makes a repeat report a no-op either way, but upsert
+    // will not tell you which branch it took — so every re-tap of the flag icon
+    // would fire another alert email. Catching the constraint violation is what
+    // distinguishes a NEW report, which is the only kind worth paging about.
+    let isNewReport = true;
+    try {
+      await prisma.postReport.create({
+        data: { postId: id, reportedBy: userId, reason: reason ?? null },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        isNewReport = false;
+      } else {
+        throw err;
+      }
+    }
+
+    if (isNewReport) {
+      const reporter = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { username: true },
+      });
+      notifyContentReported({
+        postId: post.id,
+        postCaption: post.caption,
+        authorId: post.authorId,
+        authorUsername: post.author.username,
+        reporterId: userId,
+        reporterUsername: reporter?.username ?? '(unknown)',
+        reason: reason ?? null,
+      });
+    }
+
+    // The response is identical whether or not this was a duplicate. A user who
+    // taps the flag twice should be told it worked both times; revealing that
+    // they had already reported it tells them nothing useful and makes the
+    // endpoint's answers vary with hidden state.
     res.json({ success: true, data: { reported: true } });
   } catch (error) {
     if (handleZodError(res, error)) return;

@@ -18,6 +18,13 @@ model User {
   pushToken             String?                      @map("push_token")
   createdAt             DateTime                     @default(now()) @map("created_at")
   updatedAt             DateTime                     @updatedAt @map("updated_at")
+  /// When this account accepted the Terms of Use, and which version it accepted.
+  /// Null means never accepted: the auth guard routes those accounts to the
+  /// terms gate before the app, which is how accounts created before the terms
+  /// existed get caught. Bumping CURRENT_TERMS_VERSION re-prompts everyone, so
+  /// it is not a value to change casually.
+  termsAcceptedAt       DateTime?                    @map("terms_accepted_at")
+  termsVersion          String?                      @map("terms_version")
   notificationPrefs     String?                      @map("notification_prefs")
   publicProfile         Boolean                      @default(true) @map("public_profile")
   showOnLeaderboard     Boolean                      @default(true) @map("show_on_leaderboard")
@@ -460,7 +467,12 @@ model PostReport {
   reason     String?
   createdAt  DateTime @default(now()) @map("created_at")
 
-  @@index([postId])
+  /// One report per user per post. Without this a single user could report the
+  /// same post unboundedly, which inflates the queue and would let one account
+  /// bury any post the moment moderation acts on report counts. This index also
+  /// serves lookups filtering on postId alone (leftmost prefix), so the
+  /// standalone @@index([postId]) it replaced was pure write cost.
+  @@unique([postId, reportedBy])
   @@map("post_reports")
 }
 

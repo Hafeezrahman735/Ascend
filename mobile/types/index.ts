@@ -5,6 +5,17 @@ export interface User {
   avatarUrl: string | null;
   privacySetting?: string;
   createdAt?: string;
+  /**
+   * Terms of Use consent. Null/absent means this account has never accepted —
+   * true for every account created before the terms existed — and the auth guard
+   * in app/_layout.tsx routes those to the terms gate before the app.
+   *
+   * Optional rather than required because an older backend that predates these
+   * fields simply omits them, and a client that treated "absent" as a type error
+   * would break against it.
+   */
+  termsAcceptedAt?: string | null;
+  termsVersion?: string | null;
 }
 
 export interface Session {

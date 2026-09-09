@@ -39,6 +39,18 @@ const envSchema = z.object({
   /** The From header, e.g. 'Ascend <you@gmail.com>'. Must be an address the provider has verified. */
   EMAIL_FROM: z.string().optional(),
 
+  /**
+   * Where content-report alerts go. Falls back to EMAIL_FROM, which is already an
+   * address the operator owns and the provider has verified, so the common case
+   * needs no extra variable.
+   *
+   * These alerts are what makes the Terms of Use commitment ("we act on every
+   * report within 24 hours") observable rather than aspirational. If SMTP is
+   * unconfigured they are dropped like any other mail — index.ts warns loudly at
+   * boot for exactly that reason.
+   */
+  MODERATION_ALERT_TO: z.string().optional(),
+
   TOKEN_ENCRYPTION_KEY: z.string()
     .regex(/^[0-9a-fA-F]{64}$/, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (openssl rand -hex 32)')
     .optional(),

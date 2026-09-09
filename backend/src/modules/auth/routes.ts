@@ -16,6 +16,7 @@ import {
   RESET_TOKEN_TTL_MINUTES,
 } from '../../lib/resetToken';
 import { config } from '../../config';
+import { CURRENT_TERMS_VERSION } from '../../lib/terms';
 export const authRouter = Router();
 
 // Email is stored and matched lowercase. Without this, signing up as
@@ -29,6 +30,16 @@ const registerSchema = z.object({
   email: z.string().trim().email().transform(normalizeEmail),
   username: z.string().trim().min(3).max(50),
   password: z.string().min(8).max(100),
+  // OPTIONAL on purpose. Builds released before the terms existed post without
+  // this field, and they must keep registering successfully — the backend
+  // deploys before the new binary clears App Review, so for a window the only
+  // clients calling this route are old ones. Accounts created without consent
+  // are caught by the terms gate on their next launch instead.
+  //
+  // Note it carries no version: the client says only THAT the user accepted,
+  // and the server stamps WHICH version from its own constant. A version string
+  // supplied by the client would be a consent record the client controls.
+  acceptedTerms: z.boolean().optional(),
 });
 
 const loginSchema = z.object({
@@ -42,7 +53,7 @@ const refreshSchema = z.object({
 
 authRouter.post('/auth/register', async (req: Request, res: Response) => {
   try {
-    const { email, username, password } = registerSchema.parse(req.body);
+    const { email, username, password, acceptedTerms } = registerSchema.parse(req.body);
 
     // Username is matched case-insensitively so "Admin" and "admin" can't coexist
     // as separate accounts — in a social feed that reads as impersonation. The
@@ -62,7 +73,18 @@ authRouter.post('/auth/register', async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await prisma.user.create({
-      data: { email, username, passwordHash },
+      data: {
+        email,
+        username,
+        passwordHash,
+        // Stamped here rather than leaving every new account to the terms gate:
+        // the signup form already blocked submission until the box was ticked,
+        // so re-prompting immediately after would be asking twice for the same
+        // consent — and would race the isNewUser redirect to onboarding.
+        ...(acceptedTerms
+          ? { termsAcceptedAt: new Date(), termsVersion: CURRENT_TERMS_VERSION }
+          : {}),
+      },
     });
 
     const accessToken = signAccessToken({ userId: user.id, username: user.username });
@@ -87,6 +109,11 @@ authRouter.post('/auth/register', async (req: Request, res: Response) => {
           avatarUrl: user.avatarUrl,
           privacySetting: user.privacySetting,
           createdAt: user.createdAt,
+          // The client's auth guard reads these to decide whether to route to
+          // the terms gate. Omitting them here would leave a just-logged-in user
+          // ungated until the next /auth/me.
+          termsAcceptedAt: user.termsAcceptedAt,
+          termsVersion: user.termsVersion,
         },
         accessToken,
         refreshToken,
@@ -152,6 +179,11 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
           avatarUrl: user.avatarUrl,
           privacySetting: user.privacySetting,
           createdAt: user.createdAt,
+          // The client's auth guard reads these to decide whether to route to
+          // the terms gate. Omitting them here would leave a just-logged-in user
+          // ungated until the next /auth/me.
+          termsAcceptedAt: user.termsAcceptedAt,
+          termsVersion: user.termsVersion,
         },
         accessToken,
         refreshToken,
@@ -324,6 +356,8 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
           publicProfile: user.publicProfile,
           showOnLeaderboard: user.showOnLeaderboard,
           shareFocusStats: user.shareFocusStats,
+          termsAcceptedAt: user.termsAcceptedAt,
+          termsVersion: user.termsVersion,
         },
       });
     } catch (error) {
@@ -332,6 +366,38 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
       res.status(500).json({ success: false, error: 'Internal server error' });
     }
   });
+
+/**
+ * Record that the signed-in user accepted the current Terms of Use.
+ *
+ * This is the LOGIN half of App Store Guideline 1.2's "before registering or
+ * logging in". Registration records consent inline (see /auth/register), but
+ * every account that existed before the terms did has termsAcceptedAt null, and
+ * a returning user never calls /auth/register again — they bootstrap straight
+ * through /auth/me. The client's auth guard routes those accounts here.
+ *
+ * Idempotent: accepting twice simply restamps. The client may retry freely
+ * after a network failure without needing to know whether the first call landed.
+ */
+authRouter.post('/auth/accept-terms', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+
+    // The version is NOT taken from the request. The client says only that the
+    // user accepted; which text that was is whatever this server is serving.
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { termsAcceptedAt: new Date(), termsVersion: CURRENT_TERMS_VERSION },
+      select: { termsAcceptedAt: true, termsVersion: true },
+    });
+
+    res.json({ success: true, data: user });
+  } catch (error) {
+    if (handleAuthError(res, error)) return;
+    console.error('Accept terms error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
 
 authRouter.delete('/auth/account', async (req: Request, res: Response) => {
   try {

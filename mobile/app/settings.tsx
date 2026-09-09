@@ -8,7 +8,14 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useTheme } from '../hooks/useTheme';
+import {
+  SUPPORT_EMAIL,
+  PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
+} from '../constants/legal';
+import { openExternal } from '../lib/openExternal';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../services/api';
 import { useGamificationStore } from '../stores/gamificationStore';
@@ -28,11 +35,19 @@ import {
   type DeviceCalendar,
 } from '../services/appleCalendar';
 
-// Published values, used by the Support and Privacy rows below. Both are live:
-// the privacy URL is what App Review follows, so it must stay publicly reachable
-// (check it in a private window after any Notion permission change).
-const SUPPORT_EMAIL = 'hafeezrahman735@gmail.com'
-const PRIVACY_POLICY_URL = 'https://striped-anger-f6d.notion.site/38554567a17b800099fae40ddaf740b9?source=copy_link'
+// Legal constants moved to constants/legal.ts — the auth flow needs the same
+// URLs before a user is signed in, and a copy-pasted URL goes stale in one place
+// only.
+
+/**
+ * Shown on the App row. Read from the manifest rather than typed, because the
+ * literal that used to live here said 1.0.0 while the app shipped 2.0.0 — a
+ * screen App Review opens, quietly contradicting the build it is reviewing. The
+ * build number rides along so a tester can confirm which binary they are on.
+ */
+const APP_VERSION = Constants.expoConfig?.version ?? 'unknown'
+const BUILD_NUMBER =
+  Constants.expoConfig?.ios?.buildNumber ?? Constants.expoConfig?.android?.versionCode ?? null
 
 const AVATAR_EMOJIS = [
   '🦊', '🐸', '🦁', '🐳', '🦉', '🐰',
@@ -141,6 +156,11 @@ function CalendarSyncRows() {
       } else {
         Alert.alert('Google Calendar', res.error ?? 'Could not start the connection.');
       }
+    } catch {
+      // openURL rejects when no browser can handle the URL. Previously this
+      // escaped as an unhandled rejection and the button simply un-busied, which
+      // reads as the feature being broken rather than the handoff failing.
+      Alert.alert('Google Calendar', 'Could not open the browser to finish connecting.');
     } finally {
       setBusy(false);
     }
@@ -788,21 +808,32 @@ export default function SettingsScreen() {
         {/* Legal & Support */}
         <SectionTitle title="Legal & Support" />
         <SettingsCard>
+          {/* The hosted copy, not the in-app (auth)/terms screen: that one lives
+              in the auth group, and the root guard bounces a signed-in user out
+              of it. Same text, different audience. */}
+          <SettingsRow
+            label="Terms of Service"
+            onPress={() => openExternal(TERMS_OF_SERVICE_URL)}
+          />
+          <Divider />
           <SettingsRow
             label="Privacy Policy"
-            onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+            onPress={() => openExternal(PRIVACY_POLICY_URL)}
           />
           <Divider />
           <SettingsRow
             label="Support"
             value={SUPPORT_EMAIL}
-            onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)}
+            onPress={() => openExternal(`mailto:${SUPPORT_EMAIL}`)}
           />
         </SettingsCard>
 
         <SectionTitle title="App" />
         <SettingsCard>
-          <SettingsRow label="Version" value="1.0.0" />
+          <SettingsRow
+            label="Version"
+            value={BUILD_NUMBER ? `${APP_VERSION} (${BUILD_NUMBER})` : APP_VERSION}
+          />
         </SettingsCard>
 
         {/* Account Actions */}
