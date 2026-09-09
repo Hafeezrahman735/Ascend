@@ -148,22 +148,50 @@ Before proposing a merge to `main`:
 
 ## Schema changes ship BEFORE the code that needs them
 
-Railway's build runs `prisma generate && tsc`. It does **not** push the schema. So
-if code that writes a new column deploys before that column exists, every write
-through that path 500s — and that is not a screen failing to render, it is user
-data failing to save.
+Railway runs `npx prisma db push` as a **pre-deploy command**, on both the staging
+and production services. Verified against the live service config; it is set in
+`backend/railway.json` alongside the build command
+(`npm install && npx prisma generate && npm run build`) and the start command
+(`npm start`).
 
-When a change includes a Prisma schema change, the order is:
+Pre-deploy runs after the build and before the new version takes traffic, so an
+additive schema change does land before the code that needs it. That is a safety
+net, not a licence to ignore ordering — and it has one sharp edge:
 
-1. `prisma db push` against the staging database
+**The pre-deploy push carries no `--accept-data-loss` flag.** Prisma refuses,
+non-interactively, for any change it classifies as potentially lossy — dropping a
+column, and also *adding a unique constraint*, which it flags whether or not
+duplicate rows actually exist:
+
+```
+⚠️  A unique constraint covering the columns [post_id,reported_by] on the table
+   post_reports will be added. If there are existing duplicate values, this will fail.
+Error: Use the --accept-data-loss flag to ignore the data loss warnings
+```
+
+When that happens the pre-deploy step fails and the deployment is abandoned. That
+fails safe — the previous version keeps serving — but the release does not land.
+
+So for any schema change beyond adding nullable columns, apply it by hand first
+and let the pre-deploy push confirm it is already in sync:
+
+1. `prisma db push --accept-data-loss` against the target database, having first
+   checked whatever the warning names. For a unique constraint that means querying
+   for duplicate rows and resolving them; never pass the flag without reading what
+   it is agreeing to.
 2. confirm it landed:
    `prisma migrate diff --from-url $DATABASE_URL --to-schema-datamodel prisma/schema.prisma --script`
    — an empty migration means in sync
 3. run any backfill, `--dry-run` first, and read the counts before the real run
 4. only then push the code
 
-Additive, nullable columns are safe to push ahead of the code: the older code
-still running simply ignores them. The reverse order is not safe.
+Do this against staging before pushing to `staging`, and against production before
+merging to `main`. The two databases are separate and both are named `railway`, so
+confirm which one `DATABASE_URL` points at in every shell you use —
+`backend/.env` points at **staging**.
+
+Additive, nullable columns are safe either way: the pre-deploy push applies them
+without complaint, and older code still running simply ignores them.
 
 Schema is applied with `prisma db push`. Migration history is untracked in this
 project — never run `prisma migrate deploy`.
