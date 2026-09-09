@@ -40,16 +40,38 @@ export function shouldSoundAlarm(prefs: AlarmPreferences, live: boolean): boolea
 export interface AlarmAudioMode {
   playsInSilentMode: boolean;
   /**
-   * `duckOthers`, not `mixWithOthers`: this app's users have music or a podcast
+   * `duckOthers` where iOS permits it: this app's users have music or a podcast
    * running during a session, and an alarm mixed underneath at equal volume is
    * inaudible in exactly the case it exists for.
+   *
+   * It is not always permitted — see alarmAudioMode.
    */
-  interruptionMode: 'duckOthers';
+  interruptionMode: 'duckOthers' | 'mixWithOthers';
 }
 
+/**
+ * The audio session to request before sounding the alarm.
+ *
+ * THE PAIRING IS NOT FREE. expo-audio rejects one combination outright:
+ *
+ *   ios/AudioUtils.swift:179
+ *     if !mode.playsInSilentMode && mode.interruptionMode == .duckOthers {
+ *       throw InvalidAudioModeException(...)
+ *     }
+ *
+ * playsInSilentMode false maps to the AVAudioSession `ambient` category, which
+ * is inherently mixable and cannot duck anything. Asking for both threw, and the
+ * throw silenced the alarm entirely for every user who had "Play even on silent"
+ * turned off — the alarm only worked with BOTH switches on, which is not a
+ * relationship either switch claims to have.
+ *
+ * So ducking is requested only when the session is allowed to duck. Someone with
+ * the override off and music playing gets a quieter alarm than they otherwise
+ * would; they used to get no alarm at all.
+ */
 export function alarmAudioMode(prefs: AlarmPreferences): AlarmAudioMode {
   return {
     playsInSilentMode: prefs.overrideSilentSwitch,
-    interruptionMode: 'duckOthers',
+    interruptionMode: prefs.overrideSilentSwitch ? 'duckOthers' : 'mixWithOthers',
   };
 }
