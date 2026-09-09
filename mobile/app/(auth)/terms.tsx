@@ -1,136 +1,114 @@
+import { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
-import { Font } from '../../constants/typography';
-import { TERMS_SECTIONS, TERMS_INTRO, TERMS_EFFECTIVE_DATE } from '../../constants/termsText';
-import { CURRENT_TERMS_VERSION } from '../../constants/legal';
+import { TermsDocument } from '../../components/auth/TermsDocument';
+import { TermsConsentRow } from '../../components/auth/TermsConsentRow';
 import { AUTH_CONTENT_MAX_WIDTH } from '../../components/auth/authLayout';
+import { useTermsConsentStore } from '../../stores/termsConsentStore';
 
 /**
- * The Terms of Service, read-only.
+ * Read and accept the Terms, for someone creating an account.
  *
- * Lives in the (auth) group because it must be reachable BEFORE anyone has an
- * account: App Store Guideline 1.2 requires the agreement be presented before
- * registering or logging in, and the root auth guard sends any signed-out user
- * outside this group back to login.
+ * The whole document on one scrollable page, with the checkbox at the foot of
+ * it. That ordering is the design: the signup form previously carried a
+ * checkbox next to a link, so the path of least resistance was to tick it
+ * without ever opening the terms. Consent collected that way is consent in name
+ * only, and App Store Guideline 1.2 asks for the agreement to be PRESENTED, not
+ * merely available. Now the only way to reach the checkbox is to scroll past
+ * the clauses it refers to.
  *
- * The text is bundled (constants/termsText.ts) rather than fetched or opened in
- * a browser. Three reasons, in order of how much they matter: a user agreeing to
- * terms must be able to read what they are agreeing to with no network; App
- * Review should never be sent out of the app mid-signup to a page that could
- * change under them; and a hosted page that 404s would turn the consent gate
- * into a dead end. The public copy at TERMS_OF_SERVICE_URL exists for App Store
- * Connect, not for this screen.
+ * Lives in the (auth) group because it must be reachable before anyone has an
+ * account — the root guard sends any signed-out user outside this group back to
+ * login.
  *
- * Purely presentational — accepting happens on the signup form and on the terms
- * gate, never here. This screen is pushed from both and simply pops back.
+ * The answer travels back to the form through termsConsentStore, because router
+ * params cannot carry a value backwards. Leaving without agreeing clears it, so
+ * backing out is never mistaken for consent.
  */
 export default function TermsScreen() {
   const Colors = useTheme();
   const router = useRouter();
+
+  const storeAccepted = useTermsConsentStore((s) => s.accepted);
+  const setAccepted = useTermsConsentStore((s) => s.setAccepted);
+  const [checked, setChecked] = useState(storeAccepted);
+
+  function handleAgree() {
+    setAccepted(true);
+    router.back();
+  }
+
+  function handleBack() {
+    // Backing out is not consent. If they had previously agreed and have now
+    // returned and unticked, that must stick too.
+    setAccepted(false);
+    router.back();
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
       <ScrollView
         contentContainerStyle={{
           padding: 24,
-          paddingBottom: 48,
+          paddingBottom: 40,
           width: '100%',
           maxWidth: AUTH_CONTENT_MAX_WIDTH,
           alignSelf: 'center',
         }}
       >
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={handleBack}
           accessibilityRole="button"
-          accessibilityLabel="Back"
+          accessibilityLabel="Back without agreeing"
           hitSlop={12}
           style={{ marginBottom: 20, alignSelf: 'flex-start' }}
         >
           <Ionicons name="chevron-back" size={24} color={Colors.text} />
         </TouchableOpacity>
 
-        <Text
-          accessibilityRole="header"
+        <TermsDocument />
+
+        {/* The consent block closes the document, inside the same scroll. */}
+        <View
           style={{
-            color: Colors.textBright,
-            fontFamily: Font.display,
-            fontSize: 26,
-            letterSpacing: -0.6,
-            marginBottom: 6,
+            borderTopWidth: 1,
+            borderTopColor: Colors.border,
+            paddingTop: 20,
+            marginTop: 4,
           }}
         >
-          Terms of Service
-        </Text>
-        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 20 }}>
-          Version {CURRENT_TERMS_VERSION} · Last updated {TERMS_EFFECTIVE_DATE}
-        </Text>
+          <TermsConsentRow checked={checked} onToggle={setChecked} />
 
-        <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 21, marginBottom: 26 }}>
-          {TERMS_INTRO}
-        </Text>
-
-        {TERMS_SECTIONS.map((section) => (
-          <View key={section.heading} style={{ marginBottom: 24 }}>
-            <Text
-              accessibilityRole="header"
-              style={{
-                color: Colors.textBright,
-                fontSize: 15,
-                fontWeight: '700',
-                marginBottom: 8,
-              }}
-            >
-              {section.heading}
+          <TouchableOpacity
+            onPress={handleAgree}
+            disabled={!checked}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !checked }}
+            style={{
+              backgroundColor: Colors.primary,
+              borderRadius: 14,
+              paddingVertical: 15,
+              alignItems: 'center',
+              marginTop: 20,
+              opacity: checked ? 1 : 0.5,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+              Agree and continue
             </Text>
+          </TouchableOpacity>
 
-            {section.body.map((paragraph, i) => (
-              <Text
-                key={paragraph}
-                style={{
-                  color: Colors.text,
-                  fontSize: 14,
-                  lineHeight: 21,
-                  marginBottom: 8,
-                  // The zero-tolerance and 24-hour clauses lead with the
-                  // sentence App Review is looking for; weighting it stops it
-                  // reading as one more line of boilerplate.
-                  fontWeight: section.emphasise && i === 0 ? '700' : '400',
-                }}
-              >
-                {paragraph}
-              </Text>
-            ))}
-
-            {section.bullets?.map((bullet) => (
-              <View key={bullet} style={{ flexDirection: 'row', marginBottom: 6, paddingLeft: 4 }}>
-                <Text style={{ color: Colors.subtext, fontSize: 14, lineHeight: 21 }}>•  </Text>
-                <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 21, flex: 1 }}>
-                  {bullet}
-                </Text>
-              </View>
-            ))}
-
-            {/* Paragraphs that belong AFTER the list — section 5 states the
-                prohibitions, then explains reporting, blocking and the 24-hour
-                enforcement commitment, and that order is the whole point of it. */}
-            {section.tail?.map((paragraph) => (
-              <Text
-                key={paragraph}
-                style={{
-                  color: Colors.text,
-                  fontSize: 14,
-                  lineHeight: 21,
-                  marginTop: 10,
-                }}
-              >
-                {paragraph}
-              </Text>
-            ))}
-          </View>
-        ))}
+          {!checked && (
+            <Text
+              style={{ color: Colors.subtext, fontSize: 12, textAlign: 'center', marginTop: 10 }}
+            >
+              Tick the box above to continue
+            </Text>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

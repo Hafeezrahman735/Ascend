@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator, Pressable, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '../../stores/authStore';
 import { useTaskStore } from '../../stores/taskStore';
@@ -13,7 +14,7 @@ import PasswordField from '../../components/PasswordField';
 import { AscendMark } from '../../components/AscendMark';
 import { Font } from '../../constants/typography';
 import { validateNewPassword } from '../../lib/passwordRules';
-import { TermsConsentRow } from '../../components/auth/TermsConsentRow';
+import { useTermsConsentStore } from '../../stores/termsConsentStore';
 import { AUTH_CONTENT_MAX_WIDTH } from '../../components/auth/authLayout';
 
 type Mode = 'login' | 'register';
@@ -37,7 +38,9 @@ export default function AuthScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  // Set at the foot of (auth)/terms, not here — see termsConsentStore.
+  const acceptedTerms = useTermsConsentStore((s) => s.accepted);
+  const resetConsent = useTermsConsentStore((s) => s.reset);
 
   function switchMode(m: Mode) {
     setMode(m);
@@ -47,7 +50,7 @@ export default function AuthScreen() {
     // the Log in tab, then back, would otherwise submit consent the user gave to
     // a form they have since left — and consent is the one thing here that must
     // be unambiguous.
-    setAcceptedTerms(false);
+    resetConsent();
   }
 
   async function handleSubmit() {
@@ -78,6 +81,11 @@ export default function AuthScreen() {
         return;
       }
       const success = await register(email, username, password, acceptedTerms);
+      // The consent has been recorded on the user row by now, so the transient
+      // copy has done its job. Clearing it means a yes can never outlive the
+      // signup it belonged to — the one failure mode that would put an account
+      // through without the document being opened.
+      if (success) resetConsent();
       if (success) {
         useTaskStore.getState().fetchTasks(true);
       }
@@ -238,9 +246,47 @@ export default function AuthScreen() {
             )}
 
             {mode === 'register' && (
-              <View style={{ marginTop: 4 }}>
-                <TermsConsentRow checked={acceptedTerms} onToggle={setAcceptedTerms} />
-              </View>
+              /* Opens the terms; the checkbox is at the foot of that screen, not
+                 here. A checkbox beside a link gets ticked without the document
+                 ever being opened, which is consent in name only. */
+              <TouchableOpacity
+                onPress={() => router.push('/(auth)/terms')}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  acceptedTerms
+                    ? 'Terms of Service accepted. Tap to review again.'
+                    : 'Read and accept the Terms of Service'
+                }
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                  marginTop: 4,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: acceptedTerms ? Colors.primary : Colors.border,
+                  backgroundColor: Colors.surface,
+                }}
+              >
+                <Ionicons
+                  name={acceptedTerms ? 'checkmark-circle' : 'document-text-outline'}
+                  size={20}
+                  color={acceptedTerms ? Colors.primary : Colors.subtext}
+                />
+                <Text
+                  style={{
+                    color: acceptedTerms ? Colors.textBright : Colors.text,
+                    fontSize: 13,
+                    fontWeight: '600',
+                    flex: 1,
+                  }}
+                >
+                  {acceptedTerms ? 'Terms of Service accepted' : 'Read and accept the Terms of Service'}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={Colors.subtext} />
+              </TouchableOpacity>
             )}
 
             <TouchableOpacity
@@ -267,7 +313,7 @@ export default function AuthScreen() {
                 especially for anyone who has not noticed the checkbox above it. */}
             {submitBlocked && (
               <Text style={{ color: Colors.subtext, fontSize: 12, textAlign: 'center', marginTop: -2 }}>
-                Agree to the terms to continue
+                Read and accept the Terms of Service to continue
               </Text>
             )}
           </View>
