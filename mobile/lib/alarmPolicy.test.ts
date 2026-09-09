@@ -38,10 +38,33 @@ describe('alarmAudioMode', () => {
     expect(alarmAudioMode({ ...ON, overrideSilentSwitch: false }).playsInSilentMode).toBe(false);
   });
 
-  it('always ducks other audio', () => {
+  it('ducks other audio when the session is allowed to', () => {
     // A focus app's users are listening to something. Mixing at equal volume
-    // makes the alarm inaudible in the one case it exists for.
+    // makes the alarm inaudible in the one case it exists for — so duck where
+    // iOS permits it.
     expect(alarmAudioMode(ON).interruptionMode).toBe('duckOthers');
-    expect(alarmAudioMode({ enabled: true, overrideSilentSwitch: false }).interruptionMode).toBe('duckOthers');
+  });
+
+  it('never pairs duckOthers with playsInSilentMode false', () => {
+    // REGRESSION. expo-audio throws on exactly this combination
+    // (ios/AudioUtils.swift:179 — "playsInSilentMode == false and duckOthers ==
+    // true cannot be set on iOS"). playAlarm awaited setAudioModeAsync before
+    // play(), inside one try/catch, so the throw skipped playback entirely: the
+    // alarm was silent for every user who had "Play even on silent" off, and
+    // rang only when BOTH switches were on.
+    //
+    // This test fails against the previous implementation, which returned
+    // 'duckOthers' unconditionally.
+    const mode = alarmAudioMode({ enabled: true, overrideSilentSwitch: false });
+    expect(mode.playsInSilentMode).toBe(false);
+    expect(mode.interruptionMode).toBe('mixWithOthers');
+  });
+
+  it('produces a combination iOS accepts for every preference pairing', () => {
+    for (const overrideSilentSwitch of [true, false]) {
+      const mode = alarmAudioMode({ enabled: true, overrideSilentSwitch });
+      const rejectedByIOS = !mode.playsInSilentMode && mode.interruptionMode === 'duckOthers';
+      expect(rejectedByIOS).toBe(false);
+    }
   });
 });

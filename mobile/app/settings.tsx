@@ -677,7 +677,7 @@ export default function SettingsScreen() {
               <Divider />
               <SettingsRow
                 label="Play even on silent"
-                subtitle="Ring through the silent switch and Do Not Disturb"
+                subtitle="Ring even when your phone is set to silent"
                 rightComponent={
                   <Switch
                     value={settings.alarmOverridesSilent}

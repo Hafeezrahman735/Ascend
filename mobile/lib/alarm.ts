@@ -61,17 +61,32 @@ let player: AudioPlayer | null = null;
 export async function playAlarm(prefs: AlarmPreferences, live: boolean): Promise<void> {
   if (!shouldSoundAlarm(prefs, live)) return;
 
+  // Two try blocks, not one, and that is the whole point. Configuring the audio
+  // session is an OPTIMISATION — it decides whether the alarm beats the silent
+  // switch and whether it ducks music. Playing the sound is the JOB. Sharing one
+  // catch meant a rejected audio mode skipped straight past play(), so the alarm
+  // went silent to fix the volume of a sound it then never made.
+  //
+  // That is not hypothetical: expo-audio throws on
+  // (playsInSilentMode: false, duckOthers), which is what this function asked for
+  // whenever "Play even on silent" was off. alarmAudioMode no longer produces
+  // that pairing, and this split means the next invalid combination costs the
+  // session settings rather than the alarm.
   try {
     await setAudioModeAsync(alarmAudioMode(prefs));
+  } catch (err) {
+    // console.warn, not lib/log: log is stripped in release, and an alarm that
+    // misbehaved on a real device is exactly what a device log needs.
+    console.warn('[alarm] could not set audio mode, playing anyway:', err);
+  }
 
+  try {
     if (!player) player = createAudioPlayer(ALARM_ASSET);
     // Rewind first — a second completion inside the clip's length would
     // otherwise resume from wherever the last one stopped.
     await player.seekTo(0);
     player.play();
   } catch (err) {
-    // console.warn, not lib/log: log is stripped in release, and an alarm that
-    // silently failed on a real device is exactly what a device log needs.
     console.warn('[alarm] playback failed:', err);
   }
 }
