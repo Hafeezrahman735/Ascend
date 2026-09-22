@@ -1,10 +1,33 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+.next/
+.turbo/
+
+# Environment / secrets — never commit.
+# Only the *.example templates belong in the repo.
 .env
 .env.local
-*.log
-.DS_Store
-coverage/
-.turbo/
-.next/
+.env.test
+.env.*.local
+
+# Editor / tooling — local to one machine
+.vscode/
+.idea/
+
+# Expo scratch state, regenerated on every run
+.expo/
 expo-env.d.ts
+
+# One-off operational scripts. These are throwaway checks written against a
+# live database; they are never part of the app and must not be published.
+.check-*.cjs
+.check-*.ts
+
+# Logs, coverage, OS noise
+*.log
+coverage/
+.DS_Store
+Thumbs.db

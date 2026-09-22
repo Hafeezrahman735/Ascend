@@ -69,9 +69,9 @@ Delete `schema.transition.prisma` after step 5. It must not outlive this release
 - [ ] Take a production database snapshot. Railway → the Postgres service →
       Backups. Step 5 is irreversible without one.
 - [ ] Confirm which Railway environment `DATABASE_URL` points at in each shell
-      you use. `backend/.env` currently points at **staging**
-      (`reseau.proxy.rlwy.net:40366`), and both databases are named `railway`,
-      so the URL alone will not tell you them apart. Getting this wrong in step 5
+      you use. `backend/.env` currently points at **staging**, and both
+      databases are named `railway`, so the URL alone will not tell them apart —
+      compare the host against the Railway dashboard, not against memory. Getting this wrong in step 5
       drops production tables from a shell you thought was staging.
 
 ### Step 1 — additive-only push to production
