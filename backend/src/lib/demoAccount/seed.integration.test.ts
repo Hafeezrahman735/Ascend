@@ -16,7 +16,9 @@ import { dateKeyIn } from './time';
  * up here first rather than on a phone.
  */
 
-const EMAIL = `demo+screenshots${DEMO_EMAIL_DOMAIN}`;
+// An ordinary, easy-to-type address: the main account is found by its
+// username, so its email does not need the demo domain.
+const EMAIL = 'test@ascend.com';
 const PASSWORD = 'demo-password-123';
 
 /**
@@ -50,7 +52,10 @@ async function seed() {
 }
 
 async function demoCounts() {
-  const users = await prisma.user.findMany({ where: { email: { endsWith: DEMO_EMAIL_DOMAIN } }, select: { id: true } });
+  const users = await prisma.user.findMany({
+    where: { OR: [{ email: { endsWith: DEMO_EMAIL_DOMAIN } }, { username: MAIN_USERNAME }] },
+    select: { id: true },
+  });
   const ids = users.map((u) => u.id);
   const [sessions, posts, tasks, follows, groups] = await Promise.all([
     prisma.session.count({ where: { userId: { in: ids } } }),
@@ -240,11 +245,16 @@ describe('seedDemoAccount — re-running and tearing down', () => {
     expect(await prisma.user.count({ where: { id: real.id } })).toBe(1);
   });
 
-  it('refuses an email the teardown could not find, and writes nothing', async () => {
+  it('refuses an email that belongs to a real account, and touches nothing', async () => {
+    await seed();
+    const before = await demoCounts();
+    const real = await createUser({ email: 'taken@example.com' });
+
     await expect(
-      seedDemoAccount(prisma, { email: 'someone@example.com', password: PASSWORD, timeZone: daytimeZone(new Date()) }),
-    ).rejects.toThrow(DEMO_EMAIL_DOMAIN);
-    expect(await demoCounts()).toMatchObject({ users: 0 });
+      seedDemoAccount(prisma, { email: 'Taken@Example.com', password: PASSWORD, timeZone: daytimeZone(new Date()) }),
+    ).rejects.toThrow('not the demo account');
+    expect(await demoCounts()).toEqual(before);
+    expect(await prisma.user.count({ where: { id: real.id } })).toBe(1);
   });
 
   it('leaves the previous seed untouched when a run fails part-way', async () => {

@@ -99,12 +99,12 @@ date is relative to when it runs. All the content lives in `src/lib/demoAccount/
 
 ```bash
 cd backend
-export DEMO_ACCOUNT_EMAIL=you+demo@ascend.invalid   # must end in @ascend.invalid
+export DEMO_ACCOUNT_EMAIL=test@ascend.com          # the login; must not belong to another account
 export DEMO_ACCOUNT_PASSWORD='...'                  # 8+ characters; this is the login
 export DEMO_TIMEZONE=America/Chicago                # the phone's zone (default: this machine's)
 export DEMO_SEED_HOST=<staging db host>             # required for any non-local database
 npm run seed:demo-account                           # wipe + rebuild; safe to re-run
-npm run teardown:demo-account                       # remove every @ascend.invalid account
+npm run teardown:demo-account                       # remove test_user_1 and every @ascend.invalid account
 ```
 
 - The run refuses any remote database whose host doesn't match `DEMO_SEED_HOST`

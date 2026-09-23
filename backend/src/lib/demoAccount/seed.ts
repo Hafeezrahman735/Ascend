@@ -1,8 +1,8 @@
 /**
  * Writes (and removes) the marketing demo account and the people around it.
  *
- * Idempotent by teardown: every run first deletes every account on
- * DEMO_EMAIL_DOMAIN, then writes the whole set again inside one transaction.
+ * Idempotent by teardown: every run first deletes every demo account (see
+ * DEMO_ACCOUNTS), then writes the whole set again inside one transaction.
  * A failed run therefore leaves the previous data exactly as it was, and a
  * successful one never duplicates anything.
  *
@@ -65,13 +65,21 @@ export function friendEmail(username: string): string {
 // ── Teardown ────────────────────────────────────────────────────────────────
 
 /**
- * Removes every account on DEMO_EMAIL_DOMAIN and everything they own. Mirrors
+ * Which accounts belong to the seed: the friends, by their reserved email
+ * domain, and the main account by its username. The main account's email is
+ * whatever is easy to type on a phone, so it cannot carry the tag itself; the
+ * username can, because the seed is what creates it.
+ */
+const DEMO_ACCOUNTS = { OR: [{ email: { endsWith: DEMO_EMAIL_DOMAIN } }, { username: MAIN_USERNAME }] };
+
+/**
+ * Removes every demo account and everything they own. Mirrors
  * DELETE /auth/account: the two tables without foreign keys are cleared by
  * hand, and the rest cascades from the User relations.
  */
 export async function removeDemoAccounts(tx: Tx): Promise<string[]> {
   const users = await tx.user.findMany({
-    where: { email: { endsWith: DEMO_EMAIL_DOMAIN } },
+    where: DEMO_ACCOUNTS,
     select: { id: true, username: true },
   });
   if (users.length === 0) return [];
@@ -124,8 +132,12 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
   const now = options.now ?? new Date();
   const serverTimeZone = options.serverTimeZone ?? 'UTC';
 
-  if (!email.toLowerCase().endsWith(DEMO_EMAIL_DOMAIN)) {
-    throw new Error(`The demo account email must end in ${DEMO_EMAIL_DOMAIN}, so the teardown can find it.`);
+  // An existing account on this email that is not the demo account belongs to
+  // someone. Refuse before the teardown runs, rather than fail on the unique
+  // constraint after it — the rollback would cover it, but the message would not.
+  const owner = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { username: true } });
+  if (owner && owner.username !== MAIN_USERNAME) {
+    throw new Error(`${email} already belongs to "${owner.username}", which is not the demo account. Pick another email.`);
   }
 
   // ── Plan everything before touching the database ─────────────────────────

@@ -7,7 +7,7 @@
  * the app before re-running and back in after: each run creates fresh ids.
  *
  * Run:  npm run seed:demo-account
- * Env:  DEMO_ACCOUNT_EMAIL     login email, must end in @ascend.invalid
+ * Env:  DEMO_ACCOUNT_EMAIL     login email (must not belong to another account)
  *       DEMO_ACCOUNT_PASSWORD  login password (8+ characters)
  *       DEMO_SEED_HOST         the database host, required for any remote DB
  *       DEMO_TIMEZONE          the phone's IANA zone (default: this machine's)

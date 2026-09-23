@@ -1,6 +1,7 @@
 /**
- * Removes everything prisma/seed-demo-account.ts created: every account on
- * @ascend.invalid and all it owns, plus any reactions they left on real posts.
+ * Removes everything prisma/seed-demo-account.ts created: test_user_1, every
+ * account on @ascend.invalid, all they own, and any reactions they left on
+ * real posts.
  *
  * Run:  npm run teardown:demo-account
  * Env:  DEMO_SEED_HOST  the database host, required for any remote DB
