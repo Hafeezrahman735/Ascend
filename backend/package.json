@@ -14,6 +14,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:demo": "tsx prisma/seed-demo-users.ts",
+    "seed:demo-account": "tsx prisma/seed-demo-account.ts",
+    "teardown:demo-account": "tsx prisma/teardown-demo-account.ts",
     "postinstall": "prisma generate",
     "lint:fix": "eslint src/ prisma/ --fix",
     "typecheck": "tsc --noEmit",

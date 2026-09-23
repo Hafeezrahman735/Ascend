@@ -89,6 +89,34 @@ npm run dev                     # expo start --dev-client
 Schema is applied with `prisma db push`, not `migrate deploy` — the committed
 migrations are history, and `schema.prisma` is the source of truth.
 
+### Demo account for screenshots (staging only)
+
+`npm run seed:demo-account` builds `test_user_1`: a developer's last four weeks
+of work, with a 12-day streak, 3 sessions today, tasks, goals, habits and notes.
+It also adds seven followed accounts with recaps, reactions and a private group.
+Every number a screen shows is derived from the session rows it writes, and every
+date is relative to when it runs. All the content lives in `src/lib/demoAccount/`.
+
+```bash
+cd backend
+export DEMO_ACCOUNT_EMAIL=you+demo@ascend.invalid   # must end in @ascend.invalid
+export DEMO_ACCOUNT_PASSWORD='...'                  # 8+ characters; this is the login
+export DEMO_TIMEZONE=America/Chicago                # the phone's zone (default: this machine's)
+export DEMO_SEED_HOST=<staging db host>             # required for any non-local database
+npm run seed:demo-account                           # wipe + rebuild; safe to re-run
+npm run teardown:demo-account                       # remove every @ascend.invalid account
+```
+
+- The run refuses any remote database whose host doesn't match `DEMO_SEED_HOST`
+  exactly. Check which database `DATABASE_URL` points at before setting it.
+  **Never run it against production.**
+- Each run creates fresh IDs, so sign out in the app before re-seeding and sign
+  back in afterwards.
+- After signing in, set the daily goal to 3h and tap the Live Activity task. Both
+  are stored on the phone, so no seed can set them.
+- Run it after about 05:00 local time, because today's sessions have to fit
+  before "now".
+
 ## Project layout
 
 ```
