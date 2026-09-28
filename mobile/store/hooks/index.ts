@@ -40,6 +40,7 @@ export function useTaskActions() {
       selectTask: s.selectTask,
       incrementTaskSession: s.incrementTaskSession,
       toggleComplete: s.toggleComplete,
+      refreshRecurring: s.refreshRecurring,
     })),
   );
 }

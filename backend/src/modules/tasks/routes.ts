@@ -277,7 +277,11 @@ export function setupTaskRoutes(router: Router): void {
           userId,
           isRecurring: true,
           isArchived: false,
-          NOT: { lastSpawnedDate: today },
+          // The null branch is load-bearing. `NOT (lastSpawnedDate = today)` is
+          // NULL in SQL for a template that has never spawned, so on its own it
+          // skipped every habit created on an unscheduled day, and every task
+          // switched to recurring, forever.
+          OR: [{ lastSpawnedDate: null }, { NOT: { lastSpawnedDate: today } }],
         },
       });
 
@@ -650,6 +654,17 @@ export function setupTaskRoutes(router: Router): void {
         where: { id },
         data: { isArchived: true },
       });
+
+      // Deleting a recurring task ends the habit, so its live instance goes too.
+      // The spawner only archives instances of templates it still selects, so an
+      // instance left here would sit in the list indefinitely. Their sessions
+      // are kept: that focus time happened.
+      if (existing.isRecurring) {
+        await prisma.task.updateMany({
+          where: { userId, parentTaskId: id, isArchived: false },
+          data: { isArchived: true },
+        });
+      }
 
       res.json({ success: true, data: { removedSeconds, removedCount } });
     } catch (err) {

@@ -169,12 +169,6 @@ export function compactDuration(seconds: number): string {
   return hours >= 10 ? `${Math.round(hours)}h` : `${hours.toFixed(1)}h`;
 }
 
-// How many not-scheduled-today recurring rows to show before collapsing behind
-// "Show N more". Three keeps the tail short for someone with many habits.
-// The main tab's Tasks zone holds four rows total: three real tasks plus up to
-// one recurring, so a habit is visible without opening the drill-down and today's
-// work still leads.
-
 // ─── Date helpers for hero card / pill strip ─────────────────────────────────
 export function isYesterdayLocal(ts: number): boolean {
   const d = new Date(ts); const y = new Date(); y.setDate(y.getDate() - 1);

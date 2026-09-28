@@ -42,7 +42,7 @@ import { calendarItemKey, itemIsDone, itemTitle } from './calendarItems';
  * and they stay Late until done.
  */
 
-const PRIORITY_RANK: Record<Task['priority'], number> = {
+export const PRIORITY_RANK: Record<Task['priority'], number> = {
   urgent: 0,
   high: 1,
   medium: 2,

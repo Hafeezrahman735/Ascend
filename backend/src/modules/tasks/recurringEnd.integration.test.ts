@@ -44,13 +44,8 @@ async function makeHabit(user: TestUser, endsOn: string | null) {
       dueDate: endsOn ? new Date(`${endsOn}T00:00:00.000Z`) : null,
       // Backdated so the createdAt lower bound never masks what is being tested.
       createdAt: new Date(Date.now() - 30 * 86_400_000),
-      // Set on purpose, and not optional. The spawner selects templates with
-      // `NOT: { lastSpawnedDate: today }`, and in SQL `NOT (NULL = 'x')` is
-      // NULL rather than true — so a template with a null lastSpawnedDate is
-      // silently skipped. Real templates never have one: POST /tasks spawns the
-      // first instance on create and stamps the column (routes.ts:183). A test
-      // that builds the row directly has to do the same or nothing spawns and
-      // every assertion expecting zero passes for the wrong reason.
+      // Yesterday, so the row looks like a habit that has been running. The
+      // never-spawned (null) case is covered in recurringVisibility.
       lastSpawnedDate: dayOffset(-1),
     },
   });

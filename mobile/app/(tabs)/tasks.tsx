@@ -1,7 +1,7 @@
 import React, { memo, useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  View, Text, TouchableOpacity, ScrollView, FlatList, Modal, TextInput,
+  View, Text, TouchableOpacity, ScrollView, SectionList, Modal, TextInput,
   Alert, Platform, Animated,
   StyleSheet, KeyboardAvoidingView, ActivityIndicator, Switch,
   useWindowDimensions,
@@ -19,9 +19,8 @@ import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '..
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
 import { urgentTasks } from '../../lib/heroCard';
-import {
-  composeTaskList, nextOccurrenceLabel, type RecurringTemplate,
-} from '../../lib/recurringDisplay';
+import { nextOccurrenceLabel, type RecurringTemplate } from '../../lib/recurringDisplay';
+import { buildTaskBoard, topTasks, type BoardItem } from '../../lib/taskBoard';
 import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import RecentActivity from '../../components/RecentActivity';
@@ -41,7 +40,7 @@ import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '
 import { api } from '../../services/api';
 import { priorityColor, priorityLabel } from '../../utils/priority';
 import {
-  daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
+  daysUntilLocalDate, formatDeadlineLabel,
   parseLocalDate, pickerAcceptsValue, pickerMinimumDate,
 } from '../../utils/date';
 import {
@@ -70,9 +69,8 @@ const PRIORITIES = [
   { value: 'urgent', label: 'Urgent' },
 ] as const;
 const ALL_DAYS: DayOfWeek[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-const DORMANT_VISIBLE = 3;
-const ZONE_TASK_SLOTS = 3;
-const ZONE_DORMANT_SLOTS = 1;
+// How many open tasks the main tab leads with before "See more".
+const TOP_TASK_COUNT = 3;
 
 
 // ─── ZoneHeader ───────────────────────────────────────────────────────────────
@@ -411,9 +409,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   useEffect(() => {
     if (visible) {
       setTitle(task?.title ?? ''); setDescription(task?.description ?? '');
-      // New tasks default to today so they land on the calendar straight away.
-      // Editing is left alone — silently dating an existing undated task on open
-      // would reschedule it just for being looked at.
+      // New tasks start with no due date: a date is a commitment the user picks,
+      // not a default. Pre-filling today made every task look due today, and a
+      // task left on that default read as overdue the next morning.
       // substring, because dueDate is a Prisma DateTime and arrives as a full ISO
       // string, while everything downstream here — parseLocalDate, the date
       // picker, the label below — expects 'YYYY-MM-DD'. Without it parseLocalDate
@@ -421,7 +419,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       // Date, which rendered as the literal text "Invalid Date" and was handed
       // straight to the native picker. GoalFormModal has always guarded this;
       // the task form never did.
-      setDueDate(task?.dueDate?.substring(0, 10) ?? getLocalDateString()); setTags(task?.tags ?? []);
+      setDueDate(task?.dueDate?.substring(0, 10) ?? ''); setTags(task?.tags ?? []);
       setEstimatedMinutes(task?.estimatedMinutes ?? 0); setPriority(task?.priority ?? 'medium');
       setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTagEditorOpen(false); setTitleError(false);
       // Recurring lives on the template; an instance carries it via parentTaskId.
@@ -1276,12 +1274,12 @@ const TaskRow = memo(function TaskRow({ task, isActive, goals, onTap, onEdit, on
 });
 
 /**
- * A recurring task on a day it is not scheduled.
+ * A recurring task with no instance today, shown through its template.
  *
- * No Swipeable, so it cannot be completed by gesture. Tapping opens the template
- * editor rather than the stats modal, which exposes both completion and
- * selectTask - and a template id in selectedTaskId leaves the Active filter
- * empty and the focus tab holding a dangling id.
+ * No Swipeable, so it cannot be completed by gesture: there is no row for today
+ * to complete. Tapping opens the template editor rather than the stats modal,
+ * which exposes both completion and selectTask, and a template id in
+ * selectedTaskId would leave the focus tab holding a dangling id.
  */
 const DormantRecurringRow = memo(function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag }: {
   template: Task; goals: TaskGoal[]; subtitle: string;
@@ -2057,12 +2055,10 @@ export default function TasksScreen() {
   const AMBER = Colors.warning;
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const tasks = useTasksList();
+  // Recurring templates, so a habit with no instance today still has a row.
+  // GET /tasks omits templates and spawn-recurring archives every instance not
+  // due today; without these a habit vanished on its unscheduled days.
   const recurringTemplates = useTaskStore((s) => s.recurringTemplates);
-
-  // Recurring tasks with no live instance today. GET /tasks omits templates and
-  // spawn-recurring archives every instance not due today, so on a day the
-  // template is not scheduled for, the task had no representation anywhere and
-  // silently vanished from the app.
   const selectedTaskId = useSelectedTaskId();
   const taskActions = useTaskActions();
   const settings = useSettings();
@@ -2094,8 +2090,6 @@ export default function TasksScreen() {
   // One period for both the summary card and the full report, so "See more"
   // always opens the period you were already looking at.
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('month');
-  const [taskFilter, setTaskFilter] = useState<'all' | 'active' | 'pending' | 'done'>('all');
-  const [showAllDormant, setShowAllDormant] = useState(false);
   const [statsTask, setStatsTask] = useState<Task | null>(null);
   // Held as an ID, not the goal object: GoalStatsModal reads the goal live from
   // the store so it cannot show numbers that went stale while it was open, or
@@ -2222,8 +2216,6 @@ export default function TasksScreen() {
 
   // ── Task groups ──
   const nonArchived = useMemo(() => tasks.filter((t) => !t.isArchived), [tasks]);
-  const activeTask = useMemo(() => nonArchived.find((t) => t.id === selectedTaskId && !t.isCompleted) ?? null, [nonArchived, selectedTaskId]);
-  const pendingTasks = useMemo(() => nonArchived.filter((t) => !t.isCompleted && t.id !== selectedTaskId), [nonArchived, selectedTaskId]);
   const doneTasks = useMemo(() => nonArchived.filter((t) => t.isCompleted), [nonArchived]);
   const existingTags = useMemo(() => { const s = new Set<string>(); for (const t of tasks) t.tags.forEach((tag) => s.add(tag)); return Array.from(s); }, [tasks]);
 
@@ -2242,38 +2234,28 @@ export default function TasksScreen() {
   const goToFocus = useCallback(() => router.push('/(tabs)/focus'), [router]);
   const selectAndFocus = useCallback((id: string) => { taskActions.selectTask(id); router.push('/(tabs)/focus'); }, [taskActions, router]);
 
-  // ── Filtered tasks for detail view ──
-  const filteredTasks = useMemo(() => {
-    if (taskFilter === 'active') return activeTask ? [activeTask] : [];
-    if (taskFilter === 'pending') return pendingTasks;
-    if (taskFilter === 'done') return doneTasks;
-    return nonArchived;
-  }, [taskFilter, activeTask, pendingTasks, doneTasks, nonArchived]);
-
-  // Composed for rendering only. Deliberately NOT merged into `nonArchived`:
-  // that array feeds totalActiveTasks and the PillStrip denominator, and adding
-  // habits there would show a completion count the user can never reach.
-  const listForFilter = useMemo(
-    () => composeTaskList({
-      tasks: filteredTasks,
-      templates: recurringTemplates as RecurringTemplate[],
-      filter: taskFilter,
-      limitDormant: showAllDormant ? undefined : DORMANT_VISIBLE,
-    }),
-    [filteredTasks, recurringTemplates, taskFilter, showAllDormant],
+  // ── Task board ──
+  // The main tab's top tasks and the See-more sections both come from here.
+  // Deliberately kept apart from `nonArchived`: that array feeds
+  // totalActiveTasks and the PillStrip denominator, and counting recurring
+  // templates there would show a completion total the user can never reach.
+  const board = useMemo(
+    () => buildTaskBoard({ tasks, templates: recurringTemplates as RecurringTemplate[], now }),
+    [tasks, recurringTemplates, now],
   );
-
-  // The main tab reserves two slots so a recurring task is visible without
-  // opening the drill-down; the zone is capped at four rows total.
-  const zoneDormant = useMemo(
-    () => composeTaskList({
-      tasks: [],
-      templates: recurringTemplates as RecurringTemplate[],
-      filter: 'all',
-      limitDormant: ZONE_DORMANT_SLOTS,
-    }),
-    [recurringTemplates],
-  );
+  const topOpenTasks = useMemo(() => topTasks(nonArchived, now, TOP_TASK_COUNT), [nonArchived, now]);
+  const hiddenOpenCount = board.notStarted.length + board.inProgress.length - topOpenTasks.length;
+  // All three sections always render so the categories stay put; an empty
+  // section says what would put something there. With nothing at all, no
+  // sections, so the list's own empty state shows instead.
+  const boardSections = useMemo(() => {
+    const sections = [
+      { key: 'not_started', title: 'Not started', dotColor: Colors.subtext, data: board.notStarted, emptyText: 'Nothing waiting to be started.' },
+      { key: 'in_progress', title: 'In progress', dotColor: Colors.primary, data: board.inProgress, emptyText: 'Run a focus session on a task and it moves here.' },
+      { key: 'completed', title: 'Completed', dotColor: Colors.accent, data: board.completed, emptyText: 'Nothing finished yet. The first one counts most.' },
+    ];
+    return sections.some((section) => section.data.length > 0) ? sections : [];
+  }, [board, Colors]);
 
   // ── Handlers ──
   /**
@@ -2299,9 +2281,22 @@ export default function TasksScreen() {
   const openCreate = useCallback(() => { setFormTask(null); setShowFormModal(true); }, []);
   const openEdit = useCallback((task: Task) => { setFormTask(task); setShowFormModal(true); }, []);
 
+  // A failed create is said out loud, with the same task one tap from a retry.
+  const createTaskWithRetry = useCallback(async function attempt(data: FormSaveData): Promise<void> {
+    const { error } = await taskActions.createTask(data);
+    if (!error) return;
+    Alert.alert('Task not saved', error, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Try again', onPress: () => { void attempt(data); } },
+    ]);
+  }, [taskActions]);
+
   const handleFormSave = useCallback(async (data: FormSaveData) => {
     setShowFormModal(false);
     const { isRecurring, recurringDays, ...rest } = data;
+    // Any edit that touches a habit can change what represents it today: a new
+    // instance, the template standing in, or neither.
+    const touchesRecurring = !!formTask && (!!isRecurring || formTask.isRecurring || !!formTask.parentTaskId);
     if (formTask) {
       if (formTask.parentTaskId) {
         // Editing a recurring instance: recurring settings live on the template.
@@ -2326,19 +2321,27 @@ export default function TasksScreen() {
       }
     } else {
       // No cast: taskGoalId must survive to the server, and the types now say so.
-      await taskActions.createTask(data);
+      await createTaskWithRetry(data);
     }
+    if (touchesRecurring) await taskActions.refreshRecurring();
     setFormTask(null);
-  }, [formTask, taskActions]);
+  }, [formTask, taskActions, createTaskWithRetry]);
 
-  const handleDeleteById = useCallback((taskId: string) => {
+  const handleDeleteTask = useCallback((task: Task) => {
+    // A recurring instance is one day of a habit; deleting it used to archive
+    // that day alone, and the spawner would not replace it until tomorrow, so
+    // the habit vanished for the rest of the day. Delete means the habit.
+    const templateId = task.parentTaskId ?? (task.isRecurring ? task.id : null);
+    const [title, message] = templateId
+      ? ['Delete recurring task?', "This stops the task repeating and removes it from your list. Focus time you've already logged on it is kept. This can't be undone."]
+      : ['Delete task?', "This permanently deletes the task and all of its focus sessions. That time is removed from your total focus time and the time tracker. This can't be undone."];
     Alert.alert(
-      'Delete task?',
-      "This permanently deletes the task and all of its focus sessions. That time is removed from your total focus time and the time tracker. This can't be undone.",
+      title,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: async () => {
-            await taskActions.deleteTask(taskId);
+            await taskActions.deleteTask(templateId ?? task.id);
             setShowFormModal(false); setFormTask(null);
             // Refresh the local tracker history and server-backed totals.
             loadSessionHistory();
@@ -2359,22 +2362,32 @@ export default function TasksScreen() {
   /**
    * Stable renderItem for the All Tasks list.
    *
-   * Defined once rather than inline so FlatList is not handed a new function on
-   * every render — which would defeat the memo on TaskRow it exists to serve.
+   * Defined once rather than inline so SectionList is not handed a new function
+   * on every render — which would defeat the memo on TaskRow it exists to serve.
    * Every handler it passes is already a stable reference (useState setters and
    * useCallback'd handlers), so a row only re-renders when its own task,
    * selection or the goals list actually changes.
    */
-  const renderTaskRow = useCallback(({ item }: { item: Task }) => (
-    <TaskRow
-      task={item}
-      isActive={item.id === selectedTaskId}
-      goals={goals}
-      onTap={setStatsTask}
-      onEdit={openEdit}
-      onComplete={handleComplete}
-      onLongPressTag={setOverrideTag}
-    />
+  const renderBoardItem = useCallback(({ item }: { item: BoardItem }) => (
+    item.kind === 'task' ? (
+      <TaskRow
+        task={item.task}
+        isActive={item.task.id === selectedTaskId}
+        goals={goals}
+        onTap={setStatsTask}
+        onEdit={openEdit}
+        onComplete={handleComplete}
+        onLongPressTag={setOverrideTag}
+      />
+    ) : (
+      <DormantRecurringRow
+        template={item.template}
+        goals={goals}
+        subtitle={nextOccurrenceLabel(item.template)}
+        onEdit={openEdit}
+        onLongPressTag={setOverrideTag}
+      />
+    )
   ), [selectedTaskId, goals, openEdit, handleComplete]);
 
   const handleGoalDelete = useCallback(() => {
@@ -2556,7 +2569,6 @@ export default function TasksScreen() {
   }
 
   if (activeView === 'task-list') {
-    const FILTERS: { key: typeof taskFilter; label: string }[] = [{ key: 'all', label: 'All' }, { key: 'active', label: 'Active' }, { key: 'pending', label: 'Pending' }, { key: 'done', label: 'Done' }];
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
@@ -2566,101 +2578,34 @@ export default function TasksScreen() {
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
         </View>
-        {/* The wrapper View is load-bearing. A horizontal ScrollView placed
-            DIRECTLY in this flex column has no height cap, so it expands to
-            fill the leftover vertical space — and its content container's
-            default alignItems:'stretch' then stretches every chip to that whole
-            height, turning four filter pills into full-height bars and
-            squeezing the task list underneath to nothing. Wrapping it in a
-            plain, flex-less View bounds it to its content, which is how the
-            identical chip row in index.tsx:1346 has always behaved. flexGrow:0
-            names the cause so a future edit cannot quietly reintroduce it.
-            marginBottom also moved off contentContainerStyle, where a margin on
-            a horizontal content container does nothing useful. */}
-        <View style={{ paddingBottom: 12 }}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ flexGrow: 0 }}
-            contentContainerStyle={{ paddingHorizontal: 20, alignItems: 'center' }}
-          >
-            {FILTERS.map(({ key, label }) => (
-              <TouchableOpacity
-                key={key}
-                onPress={() => setTaskFilter(key)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: taskFilter === key }}
-                style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: taskFilter === key ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: taskFilter === key ? Colors.primary : Colors.border }}
-              >
-                <Text style={{ color: taskFilter === key ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '600' }}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* Virtualised. This rendered EVERY filtered task into a plain ScrollView,
-            so a few hundred tasks meant a few hundred mounted rows, each one
-            recomputing its due chip and goal lookup on any parent render. The
-            dashboard list elsewhere on this screen is capped with slice(); this
-            one is the whole list, which is exactly where windowing matters. */}
-        <FlatList
-          data={filteredTasks}
-          keyExtractor={(task) => task.id}
+        {/* Grouped by progress, read from session stats: no sessions is Not
+            started, sessions without a tick is In progress. Every recurring
+            task appears once — through today's instance when it has one, else
+            as its template in Not started, labelled with when it next fires.
+            Virtualised, since this is the whole list rather than a capped one. */}
+        <SectionList
+          sections={boardSections}
+          keyExtractor={(item) => (item.kind === 'task' ? item.task.id : `recurring-${item.template.id}`)}
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}
-          renderItem={renderTaskRow}
-          /* Empty state stays keyed on REAL tasks: someone whose only items
-             are unscheduled habits still needs the path to create something.
-
-             The copy answers the FILTER that is on. "Nothing planned yet" is
-             true with no tasks at all, and misleading the moment you filter to
-             Done and simply have not finished anything — it reads as though the
-             app lost your work. */
+          renderItem={renderBoardItem}
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) => (
+            <View style={{ marginTop: section.key === 'not_started' ? 0 : 16 }}>
+              <GroupHeader dotColor={section.dotColor} label={section.title} count={section.data.length} />
+            </View>
+          )}
+          renderSectionFooter={({ section }) => (section.data.length === 0 ? (
+            <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 4 }}>{section.emptyText}</Text>
+          ) : null)}
           ListEmptyComponent={
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
               <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
-                {taskFilter === 'done' ? 'Nothing finished yet. The first one counts most.'
-                  : taskFilter === 'active' ? 'No task is loaded in the timer right now.'
-                  : taskFilter === 'pending' ? 'Nothing outstanding. Everything you added is done.'
-                  : 'Nothing planned yet. What has to move today?'}
+                Nothing planned yet. What has to move today?
               </Text>
             </View>
           }
           ListFooterComponent={
             <>
-              {/* Recurring tasks on a day they are not scheduled. Below a labelled
-                  divider so the All filter visibly holds a second class of thing
-                  rather than silently miscounting. */}
-              {listForFilter.dormantTotal > 0 && (
-              <View style={{ marginTop: 20 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
-                  <Text style={{ color: Colors.subtext, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
-                    Not scheduled today · {listForFilter.dormantTotal}
-                  </Text>
-                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
-                </View>
-                {listForFilter.items.map((item) => (
-                  item.kind === 'dormant' ? (
-                    <DormantRecurringRow
-                      key={item.template.id}
-                      template={item.template}
-                      goals={goals}
-                      subtitle={nextOccurrenceLabel(item.template)}
-                      onEdit={openEdit}
-                      onLongPressTag={setOverrideTag}
-                    />
-                  ) : null
-                ))}
-                {listForFilter.dormantHidden > 0 && (
-                  <TouchableOpacity onPress={() => setShowAllDormant(true)} style={{ paddingVertical: 8, alignItems: 'center' }}>
-                    <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>
-                      Show {listForFilter.dormantHidden} more →
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              )}
-
             {/* This Week — the same shape the Goals drill-down uses, counting what
                 this screen is about. Goals plots focus SECONDS per day; here the
                 bars are tasks FINISHED per day, because that is the unit the list
@@ -2701,7 +2646,7 @@ export default function TasksScreen() {
           }
         />
         {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
-        <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
+        <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteTask(formTask) : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
         <Toast message={toast} />
       </SafeAreaView>
@@ -2774,44 +2719,23 @@ export default function TasksScreen() {
         {/* Zone 2 — Task List */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
           <ZoneHeader title="Tasks" onSeeMore={() => setActiveView('task-list')} />
-          {nonArchived.length === 0 && zoneDormant.items.length === 0 ? (
+          {nonArchived.length === 0 && recurringTemplates.length === 0 ? (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36 }]}>
               <Ionicons name="checkbox-outline" size={32} color={Colors.subtext} />
               <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 10 }}>Nothing planned yet. What has to move today?</Text>
             </View>
           ) : (<>
-            {(() => {
-              const combined = activeTask ? [activeTask, ...pendingTasks] : pendingTasks;
-              const dormant = zoneDormant.items;
-              if (combined.length === 0 && dormant.length === 0) return null;
-              // Reserved slots: a recurring task stays visible here even when
-              // there are more than enough real tasks to fill the zone. Sorting
-              // it to the bottom of a four-row cap would have kept it invisible
-              // on the screen the user actually opens, which is the bug.
-              const taskSlots = dormant.length > 0 ? ZONE_TASK_SLOTS : ZONE_TASK_SLOTS + ZONE_DORMANT_SLOTS;
-              const shownTasks = combined.slice(0, taskSlots);
-              const overflow = combined.length - shownTasks.length;
-              return (
-                <View style={{ marginBottom: 12 }}>
-                  {shownTasks.map((task) => (
-                    <TaskRow key={task.id} task={task} isActive={task.id === activeTask?.id} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />
-                  ))}
-                  {dormant.map((item) => (
-                    item.kind === 'dormant' ? (
-                      <DormantRecurringRow
-                        key={item.template.id}
-                        template={item.template}
-                        goals={goals}
-                        subtitle={nextOccurrenceLabel(item.template)}
-                        onEdit={() => openEdit(item.template)}
-                        onLongPressTag={setOverrideTag}
-                      />
-                    ) : null
-                  ))}
-                  {(overflow > 0 || zoneDormant.dormantHidden > 0) && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{overflow + zoneDormant.dormantHidden} more →</Text></TouchableOpacity>}
-                </View>
-              );
-            })()}
+            {/* The most pressing open tasks: priority first, then the closest
+                due date. Everything else, recurring tasks not due today
+                included, is one tap away in See more. */}
+            {(topOpenTasks.length > 0 || hiddenOpenCount > 0) && (
+              <View style={{ marginBottom: 12 }}>
+                {topOpenTasks.map((task) => (
+                  <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />
+                ))}
+                {hiddenOpenCount > 0 && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{hiddenOpenCount} more →</Text></TouchableOpacity>}
+              </View>
+            )}
             {doneTasks.slice(0, 2).length > 0 && <View>
               <GroupHeader dotColor={Colors.accent} label="Done" count={doneTasks.length} />
               {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />)}
@@ -2884,7 +2808,7 @@ export default function TasksScreen() {
           if (g) { setFormGoal(g); setShowGoalForm(true); }
         }}
       />
-      <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteById(formTask.id) : undefined} />
+      <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteTask(formTask) : undefined} />
       <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
       <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
       <Toast message={toast} />

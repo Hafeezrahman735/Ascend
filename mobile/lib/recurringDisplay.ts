@@ -8,11 +8,10 @@ import type { Task } from '../types';
  * due today, so on days a template is not scheduled it had no representation at
  * all and vanished from the app.
  *
- * Whether a template is scheduled today is answered by the SERVER
- * (`scheduledToday` on GET /tasks/recurring). The client used to infer it from
- * the absence of an instance row, which is also what a failed spawn, a
- * cold-start race and a deleted instance look like — in those states it showed
- * today's habit dimmed and uncompletable while labelling it "Due today".
+ * When a template has no instance to stand in for it, the list shows the
+ * template itself, labelled with when it next fires (`nextOccurrence`, answered
+ * by the server on GET /tasks/recurring). How those rows are bucketed lives in
+ * lib/taskBoard.ts.
  *
  * Pure and free of react-native imports so it can be unit-tested; component
  * rendering is out of scope in this project (see mobile/vitest.config.mts), so
@@ -26,32 +25,23 @@ export type RecurringTemplate = Task & {
   nextOccurrence?: string | null;
 };
 
-export type ListItem =
-  | { kind: 'task'; task: Task }
-  | { kind: 'dormant'; template: RecurringTemplate };
-
 /**
- * Templates to show as "not scheduled today".
+ * Templates with no live instance today, which the list must show on their own.
  *
- * Only templates the server says are NOT due today. A template that IS due but
- * has no instance yet is pending-spawn, not dormant — showing it here is what
- * produced an uncompletable row labelled "Due today".
+ * Every recurring task has to appear somewhere. This used to also drop templates
+ * the server said were scheduled today, on the theory that their instance was
+ * only moments from spawning. In practice the spawner could skip a habit for
+ * good (a never-spawned template was invisible to its query), and dropping it
+ * here is exactly how a recurring task vanished from the app with no trace.
  */
-export function dormantTemplates(
+export function templatesWithoutInstance(
   templates: RecurringTemplate[],
   tasks: Task[],
 ): RecurringTemplate[] {
   const withLiveInstance = new Set(
     tasks.filter((t) => !!t.parentTaskId && !t.isArchived).map((t) => t.parentTaskId as string),
   );
-
-  return templates.filter((t) => {
-    if (t.isArchived) return false;
-    // Undefined means an older server that does not send the field. Treat it as
-    // scheduled so nothing is wrongly greyed out and made uncompletable.
-    if (t.scheduledToday !== false) return false;
-    return !withLiveInstance.has(t.id);
-  });
+  return templates.filter((t) => !t.isArchived && !withLiveInstance.has(t.id));
 }
 
 /** Whole days from today to an ISO date, 0 = today. Null if absent. */
@@ -87,42 +77,4 @@ export function nextOccurrenceLabel(
   if (days === 1) return 'Next: tomorrow';
   const target = new Date(`${template.nextOccurrence}T00:00:00.000Z`);
   return `Next: ${WEEKDAY[target.getUTCDay()]}`;
-}
-
-/**
- * The list the Tasks tab renders: real tasks first, dormant recurring last.
- *
- * Dormant rows appear under the `all` filter only. `pending` means work owed
- * today and a Wednesday habit on a Monday is not owed; `done` would be untrue;
- * `active` is the single focused task. The caller keeps its empty state keyed on
- * real tasks so "Nothing planned yet" is still reachable for someone whose only
- * items are unscheduled habits.
- */
-export function composeTaskList(params: {
-  tasks: Task[];
-  templates: RecurringTemplate[];
-  filter: 'all' | 'active' | 'pending' | 'done';
-  from?: Date;
-  limitDormant?: number;
-}): { items: ListItem[]; dormantTotal: number; dormantHidden: number } {
-  const { tasks, templates, filter, from = new Date(), limitDormant } = params;
-
-  const items: ListItem[] = tasks.map((task) => ({ kind: 'task', task }));
-
-  if (filter !== 'all') return { items, dormantTotal: 0, dormantHidden: 0 };
-
-  const dormant = dormantTemplates(templates, tasks).sort((a, b) => {
-    const da = daysUntil(a.nextOccurrence, from) ?? Number.MAX_SAFE_INTEGER;
-    const db = daysUntil(b.nextOccurrence, from) ?? Number.MAX_SAFE_INTEGER;
-    if (da !== db) return da - db;
-    return a.title.localeCompare(b.title);
-  });
-
-  const shown = typeof limitDormant === 'number' ? dormant.slice(0, limitDormant) : dormant;
-
-  return {
-    items: [...items, ...shown.map((template) => ({ kind: 'dormant' as const, template }))],
-    dormantTotal: dormant.length,
-    dormantHidden: dormant.length - shown.length,
-  };
 }

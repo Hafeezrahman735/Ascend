@@ -127,6 +127,21 @@ function isTempId(id: string): boolean {
   return id.startsWith('temp-');
 }
 
+/**
+ * A recurring TEMPLATE: the habit's definition, never a row in the task list.
+ * GET /tasks already excludes these; the client has to apply the same rule to
+ * rows it merges in itself, or a task just switched to recurring lingers.
+ */
+function isTemplate(t: Task): boolean {
+  return t.isRecurring && !t.parentTaskId;
+}
+
+export interface CreateTaskResult {
+  task: Task | null;
+  /** Why the task was not saved, fit to show the user. Null on success. */
+  error: string | null;
+}
+
 interface TaskStoreState {
   tasks: Task[];
   recurringTemplates: Task[];
@@ -136,7 +151,7 @@ interface TaskStoreState {
 
   hydrateTasks: (userId: string) => Promise<void>;
   fetchTasks: (silent?: boolean) => Promise<void>;
-  createTask: (data: TaskCreateInput) => Promise<Task | null>;
+  createTask: (data: TaskCreateInput) => Promise<CreateTaskResult>;
   updateTask: (id: string, data: TaskUpdateInput) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   selectTask: (id: string | null) => void;
@@ -145,6 +160,7 @@ interface TaskStoreState {
   clearTasks: (userId?: string) => Promise<void>;
   spawnRecurringTasks: () => Promise<void>;
   fetchRecurringTemplates: () => Promise<void>;
+  refreshRecurring: () => Promise<void>;
 }
 
 export const useTaskStore = create<TaskStoreState>((set, get) => ({
@@ -239,41 +255,51 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     set({ tasks: withTemp });
     persistTasks(withTemp, userId); // Survive an app kill during the POST
 
+    // A failed save must not look like a successful one. The temp row used to
+    // stay on screen "for the next session", but hydrateTasks strips temp rows
+    // on launch, so the task silently vanished the next time the app opened.
+    const discardTemp = (): void => {
+      const withoutTemp = get().tasks.filter((t) => t.id !== tempId);
+      set({ tasks: withoutTemp });
+      persistTasks(withoutTemp, userId);
+    };
+
     try {
       const res = await api.post<Task>('/tasks', { ...data, localDate: getLocalDateString() });
-      if (res.success && res.data) {
-        const confirmed = normalizeTask(res.data);
-        // Recurring tasks: the POST returns the TEMPLATE, which must never appear in
-        // the list. Drop the temp task and refetch — the backend already spawned
-        // today's instance, so fetchTasks pulls it in (templates are filtered out).
-        if (confirmed.isRecurring) {
-          const withoutTemp = get().tasks.filter((t) => t.id !== tempId);
-          set({ tasks: withoutTemp });
-          persistTasks(withoutTemp, userId);
-          await get().fetchTasks(true);
-          return confirmed;
-        }
-        // fetchTasks may have run while the POST was in flight, evicting the temp task.
-        const current = get().tasks;
-        const hasTemp = current.some((t) => t.id === tempId);
-        const hasReal = current.some((t) => t.id === confirmed.id);
-        const next = hasTemp
-          ? current.map((t) => (t.id === tempId ? confirmed : t))
-          : hasReal
-          ? current
-          : [confirmed, ...current];
-        set({ tasks: next });
-        persistTasks(next, userId);
-        // A task created into a goal changes that goal's linked count.
-        if (confirmed.taskGoalId) refreshGoals();
-        invalidateCalendar();
-        return confirmed;
+      if (!res.success || !res.data) {
+        discardTemp();
+        return { task: null, error: res.error || 'The task could not be saved.' };
       }
-      // Server rejected — temp task stays visible; next fetchTasks will reconcile.
-      return tempTask;
-    } catch {
-      // Network failure — temp task stays in store and cache for the next session.
-      return tempTask;
+      const confirmed = normalizeTask(res.data);
+      // Recurring tasks: the POST returns the TEMPLATE, which must never appear in
+      // the list. Drop the temp task and pull in whatever now represents the
+      // habit: today's instance if it is scheduled today, else the template
+      // itself via the recurring list.
+      if (isTemplate(confirmed)) {
+        discardTemp();
+        await get().refreshRecurring();
+        if (confirmed.taskGoalId) refreshGoals();
+        return { task: confirmed, error: null };
+      }
+      // fetchTasks may have run while the POST was in flight, evicting the temp task.
+      const current = get().tasks;
+      const hasTemp = current.some((t) => t.id === tempId);
+      const hasReal = current.some((t) => t.id === confirmed.id);
+      const next = hasTemp
+        ? current.map((t) => (t.id === tempId ? confirmed : t))
+        : hasReal
+        ? current
+        : [confirmed, ...current];
+      set({ tasks: next });
+      persistTasks(next, userId);
+      // A task created into a goal changes that goal's linked count.
+      if (confirmed.taskGoalId) refreshGoals();
+      invalidateCalendar();
+      return { task: confirmed, error: null };
+    } catch (err) {
+      console.warn('[tasks] createTask failed:', err);
+      discardTemp();
+      return { task: null, error: 'The task could not be saved. Check your connection and try again.' };
     }
   },
 
@@ -286,7 +312,13 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     try {
       const res = await api.patch<Task>(`/tasks/${id}`, data);
       if (res.success && res.data) {
-        const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...res.data } : t));
+        const saved = normalizeTask(res.data);
+        // Switched to recurring: the row is a template now and leaves the list.
+        // Its instance, or the template standing in for it, comes back through
+        // the recurring refresh the screen runs after any recurring edit.
+        const tasks = isTemplate(saved)
+          ? get().tasks.filter((t) => t.id !== id)
+          : get().tasks.map((t) => (t.id === id ? { ...t, ...saved } : t));
         set({ tasks });
         persistTasks(tasks, userId);
         // Completion or a goal re-link both move goal progress server-side.
@@ -306,15 +338,27 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   deleteTask: async (id) => {
     const userId = useAuthStore.getState().user?.id;
     const previous = get().tasks;
+    const previousTemplates = get().recurringTemplates;
     const previousSelectedId = get().selectedTaskId;
-    const tasks = previous.filter((t) => t.id !== id);
-    set({ tasks, selectedTaskId: previousSelectedId === id ? null : previousSelectedId });
+    // Deleting a recurring template ends the habit, and the server archives its
+    // live instance along with it — so it leaves the list here too.
+    const removed = (t: Task) => t.id === id || t.parentTaskId === id;
+    const tasks = previous.filter((t) => !removed(t));
+    const selectedStillExists = tasks.some((t) => t.id === previousSelectedId);
+    set({
+      tasks,
+      recurringTemplates: previousTemplates.filter((t) => t.id !== id),
+      selectedTaskId: selectedStillExists ? previousSelectedId : null,
+    });
     persistTasks(tasks, userId);
+    const restore = (): void => {
+      set({ tasks: previous, recurringTemplates: previousTemplates, selectedTaskId: previousSelectedId });
+      persistTasks(previous, userId);
+    };
     try {
       const res = await api.delete(`/tasks/${id}`);
       if (!res.success) {
-        set({ tasks: previous, selectedTaskId: previousSelectedId });
-        persistTasks(previous, userId);
+        restore();
       } else {
         // The task's focus sessions were deleted server-side — drop them from the
         // local time-tracker cache too so its stats update without a full reconcile.
@@ -323,8 +367,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       }
     } catch (err) {
       console.warn('[tasks] deleteTask failed:', err);
-      set({ tasks: previous, selectedTaskId: previousSelectedId });
-      persistTasks(previous, userId);
+      restore();
     }
   },
 
@@ -431,6 +474,15 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     } catch (err) {
       console.warn('[taskStore] fetchRecurringTemplates failed:', err);
     }
+  },
+
+  // After anything that changes a habit — creating one, switching a task to
+  // recurring, editing its days or its template — so the list shows whatever
+  // now represents it without waiting for the next app foreground. Spawning
+  // first means a habit that became due today gets its instance straight away.
+  refreshRecurring: async () => {
+    await get().spawnRecurringTasks();
+    await Promise.all([get().fetchTasks(true), get().fetchRecurringTemplates()]);
   },
 }));
 

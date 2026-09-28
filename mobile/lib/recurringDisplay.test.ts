@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  dormantTemplates, daysUntil, nextOccurrenceLabel, composeTaskList,
+  templatesWithoutInstance, daysUntil, nextOccurrenceLabel,
   type RecurringTemplate,
 } from './recurringDisplay';
 import type { Task } from '../types';
@@ -22,48 +22,40 @@ const template = (
 // 2026-08-18 is a Tuesday.
 const TODAY = new Date('2026-08-18T12:00:00');
 
-describe('dormantTemplates', () => {
+describe('templatesWithoutInstance', () => {
   it('shows a template the server says is not scheduled today', () => {
     const t = template({ id: 'mw', scheduledToday: false });
-    expect(dormantTemplates([t], []).map((x) => x.id)).toEqual(['mw']);
+    expect(templatesWithoutInstance([t], []).map((x) => x.id)).toEqual(['mw']);
   });
 
-  it('NEVER shows a template that IS scheduled today, even with no instance', () => {
-    // The bug this prevents: a failed spawn, a cold-start race or a deleted
-    // instance all leave a due-today habit with no row. Treating that as dormant
-    // rendered the one habit you must do today as dimmed and uncompletable,
-    // labelled "Due today".
+  it('shows a template scheduled today that has no instance', () => {
+    // Dropping these is how recurring tasks vanished: a habit the spawner
+    // skipped had no instance and was filtered out here too, so it showed
+    // nowhere at all.
     const dueButUnspawned = template({ id: 'daily', scheduledToday: true });
-    expect(dormantTemplates([dueButUnspawned], [])).toEqual([]);
-  });
-
-  it('treats a missing scheduledToday as scheduled, not dormant', () => {
-    // Older server without the field: fail safe, never grey out a habit.
-    const legacy = template({ id: 'legacy' });
-    expect(dormantTemplates([legacy], [])).toEqual([]);
+    expect(templatesWithoutInstance([dueButUnspawned], []).map((x) => x.id)).toEqual(['daily']);
   });
 
   it('hides a template that already has a live instance', () => {
     const t = template({ id: 'daily', scheduledToday: false });
-    expect(dormantTemplates([t], [task({ id: 'i', parentTaskId: 'daily' })])).toEqual([]);
+    expect(templatesWithoutInstance([t], [task({ id: 'i', parentTaskId: 'daily' })])).toEqual([]);
   });
 
   it('treats an archived instance as absent', () => {
     const t = template({ id: 'daily', scheduledToday: false });
     const archived = task({ id: 'i', parentTaskId: 'daily', isArchived: true });
-    expect(dormantTemplates([t], [archived]).map((x) => x.id)).toEqual(['daily']);
+    expect(templatesWithoutInstance([t], [archived]).map((x) => x.id)).toEqual(['daily']);
   });
 
-  it('keeps showing a template whose instance is completed but still live', () => {
-    // Completion does not archive, so the template must not reappear as dormant
-    // and double-list itself.
+  it('does not double-list a habit whose instance is completed but still live', () => {
+    // Completion does not archive, so the instance still stands in for it.
     const t = template({ id: 'daily', scheduledToday: true });
     const done = task({ id: 'i', parentTaskId: 'daily', isCompleted: true });
-    expect(dormantTemplates([t], [done])).toEqual([]);
+    expect(templatesWithoutInstance([t], [done])).toEqual([]);
   });
 
   it('ignores archived templates', () => {
-    expect(dormantTemplates([template({ id: 'x', scheduledToday: false, isArchived: true })], []))
+    expect(templatesWithoutInstance([template({ id: 'x', scheduledToday: false, isArchived: true })], []))
       .toEqual([]);
   });
 });
@@ -96,60 +88,6 @@ describe('nextOccurrenceLabel', () => {
   it('says so when no valid day is set', () => {
     expect(nextOccurrenceLabel(template({ id: 'a', nextOccurrence: null }), TODAY))
       .toBe('No days selected');
-  });
-});
-
-describe('composeTaskList', () => {
-  const tasks = [task({ id: 't1' }), task({ id: 't2' })];
-  const dormant = [
-    template({ id: 'far', scheduledToday: false, nextOccurrence: '2026-08-22' }),
-    template({ id: 'soon', scheduledToday: false, nextOccurrence: '2026-08-19' }),
-  ];
-
-  it('puts real tasks first and dormant last', () => {
-    const { items } = composeTaskList({ tasks, templates: dormant, filter: 'all', from: TODAY });
-    expect(items.map((i) => i.kind)).toEqual(['task', 'task', 'dormant', 'dormant']);
-  });
-
-  it('orders dormant by soonest next occurrence', () => {
-    const { items } = composeTaskList({ tasks: [], templates: dormant, filter: 'all', from: TODAY });
-    expect(items.map((i) => (i.kind === 'dormant' ? i.template.id : ''))).toEqual(['soon', 'far']);
-  });
-
-  it('shows dormant under the all filter only', () => {
-    for (const filter of ['active', 'pending', 'done'] as const) {
-      const { items } = composeTaskList({ tasks, templates: dormant, filter, from: TODAY });
-      expect(items.every((i) => i.kind === 'task')).toBe(true);
-    }
-  });
-
-  it('caps dormant and reports how many are hidden', () => {
-    const { items, dormantTotal, dormantHidden } = composeTaskList({
-      tasks: [], templates: dormant, filter: 'all', from: TODAY, limitDormant: 1,
-    });
-    expect(items).toHaveLength(1);
-    expect(dormantTotal).toBe(2);
-    expect(dormantHidden).toBe(1);
-  });
-
-  it('reports zero hidden when everything fits', () => {
-    const { dormantHidden } = composeTaskList({
-      tasks: [], templates: dormant, filter: 'all', from: TODAY, limitDormant: 10,
-    });
-    expect(dormantHidden).toBe(0);
-  });
-
-  it('returns only real tasks when there are no templates', () => {
-    const { items, dormantTotal } = composeTaskList({
-      tasks, templates: [], filter: 'all', from: TODAY,
-    });
-    expect(items).toHaveLength(2);
-    expect(dormantTotal).toBe(0);
-  });
-
-  it('is empty for no tasks and no templates', () => {
-    const { items } = composeTaskList({ tasks: [], templates: [], filter: 'all', from: TODAY });
-    expect(items).toEqual([]);
   });
 });
 
