@@ -5,6 +5,7 @@ import { api } from './api';
 import { log } from '../lib/log';
 import type { TaskGoal } from '../types';
 import { goalRemindersToSchedule, isGoalReminderId } from '../lib/goalReminders';
+import type { TimerChannel, TimerNotificationSound } from '../lib/alarmPolicy';
 
 // Expo Go (SDK 53+) no longer supports push notifications and warns on local
 // ones, so we disable all notification behavior there. Dev builds (expo-dev-client)
@@ -26,6 +27,25 @@ const ANDROID_CHANNEL = 'ascend-timer';
 // nothing on any device that already has it. Reminders deliberately stay off
 // this channel; a goal nudge must not ring through silent.
 const ANDROID_ALARM_CHANNEL = 'ascend-timer-alarm';
+
+// Timer completion with "Alarm sound" off: the banner, no sound.
+const ANDROID_SILENT_CHANNEL = 'ascend-timer-silent';
+
+// "Play even on silent" off uses the ordinary channel, whose sound the ringer
+// switch mutes like any other notification.
+const TIMER_CHANNEL_IDS: Record<TimerChannel, string> = {
+  alarm: ANDROID_ALARM_CHANNEL,
+  standard: ANDROID_CHANNEL,
+  silent: ANDROID_SILENT_CHANNEL,
+};
+
+/** The sound fields of a timer notification's content, per the user's switches. */
+function timerSoundContent(sound: TimerNotificationSound) {
+  return {
+    sound: sound.playsSound ? ALARM_SOUND : false,
+    ...(Platform.OS === 'android' && { channelId: TIMER_CHANNEL_IDS[sound.androidChannel] }),
+  };
+}
 
 // EAS project id — required for getExpoPushTokenAsync. Mirrors app.json
 // (extra.eas.projectId); it's a public identifier.
@@ -114,6 +134,14 @@ export async function setupAndroidChannels(): Promise<void> {
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     bypassDnd: false,
   }).catch((err) => console.warn('[notifications] alarm channel setup failed:', err));
+
+  await Notifications.setNotificationChannelAsync(ANDROID_SILENT_CHANNEL, {
+    name: 'Timer finished (silent)',
+    importance: Notifications.AndroidImportance.HIGH,
+    sound: null,
+    enableVibrate: false,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  }).catch((err) => console.warn('[notifications] silent channel setup failed:', err));
 }
 
 /**
@@ -212,8 +240,12 @@ function timeIntervalTrigger(seconds: number): Notifications.NotificationTrigger
  *
  * @param remainingSeconds - seconds LEFT in the current session (the timer store's
  *   `timeLeft`, which is accurate after pauses/resumes). NOT the total duration.
+ * @param sound - from timerNotificationSound, so the alarm switches apply here too.
  */
-export async function scheduleFocusDoneNotification(remainingSeconds: number): Promise<void> {
+export async function scheduleFocusDoneNotification(
+  remainingSeconds: number,
+  sound: TimerNotificationSound,
+): Promise<void> {
   if (isExpoGo) return;
   const seconds = Math.max(1, Math.round(remainingSeconds));
   try {
@@ -223,9 +255,8 @@ export async function scheduleFocusDoneNotification(remainingSeconds: number): P
       content: {
         title: 'Session done',
         body: 'Take the break. It is part of the work.',
-        sound: ALARM_SOUND,
         data: { type: 'focus_complete' },
-        ...(Platform.OS === 'android' && { channelId: ANDROID_ALARM_CHANNEL }),
+        ...timerSoundContent(sound),
       },
       trigger: timeIntervalTrigger(seconds),
     });
@@ -244,6 +275,7 @@ export async function scheduleFocusDoneNotification(remainingSeconds: number): P
 export async function scheduleBreakEndNotification(
   remainingSeconds: number,
   isLongBreak: boolean,
+  sound: TimerNotificationSound,
 ): Promise<void> {
   if (isExpoGo) return;
   const seconds = Math.max(1, Math.round(remainingSeconds));
@@ -254,9 +286,8 @@ export async function scheduleBreakEndNotification(
       content: {
         title: isLongBreak ? 'Long break over' : 'Break time is up',
         body: 'Break is over. What is next?',
-        sound: ALARM_SOUND,
         data: { type: 'break_complete' },
-        ...(Platform.OS === 'android' && { channelId: ANDROID_ALARM_CHANNEL }),
+        ...timerSoundContent(sound),
       },
       trigger: timeIntervalTrigger(seconds),
     });

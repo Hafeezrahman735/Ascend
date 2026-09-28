@@ -46,8 +46,9 @@ export interface SettingsData {
   /**
    * Let the alarm through the iOS ringer switch and Do Not Disturb.
    *
-   * iOS only; Android's media stream is already independent of the ringer, so
-   * the row is not rendered there rather than shown doing nothing.
+   * Also chooses the Android notification channel: the alarm stream when on,
+   * an ordinary notification sound the ringer can mute when off. See
+   * timerNotificationSound in lib/alarmPolicy.ts.
    */
   alarmOverridesSilent: boolean;
 }

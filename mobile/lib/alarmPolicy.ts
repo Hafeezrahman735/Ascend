@@ -14,8 +14,11 @@ export interface AlarmPreferences {
   /** Settings → Notifications → "Alarm sound". */
   enabled: boolean;
   /**
-   * Settings → Notifications → "Play even on silent". iOS only; Android's media
-   * stream is already independent of the ringer.
+   * Settings → Notifications → "Play even on silent". Governs the iOS audio
+   * session in-app and the Android notification channel (timerNotificationSound).
+   * Known gap: the in-app player on Android plays on the media stream, which
+   * the ringer does not mute, so on Android the in-app sound rings on silent
+   * whatever this says.
    */
   overrideSilentSwitch: boolean;
 }
@@ -88,4 +91,45 @@ export function alarmAudioMode(prefs: AlarmPreferences): AlarmAudioMode {
  */
 export function leftTheAppDuringRun(next: 'active' | 'inactive' | 'background' | string): boolean {
   return next === 'background';
+}
+
+/**
+ * Which Android channel a timer notification posts to. Android decides a
+ * notification's sound from its CHANNEL, not its content, and freezes each
+ * channel's sound when it is first created — so each sound behaviour needs a
+ * channel of its own.
+ */
+export type TimerChannel = 'alarm' | 'standard' | 'silent';
+
+export interface TimerNotificationSound {
+  /** iOS: whether the notification carries the alarm sound at all. */
+  playsSound: boolean;
+  /** Android: the channel whose sound matches the preferences. */
+  androidChannel: TimerChannel;
+}
+
+/**
+ * How the OS notification for a finished timer should sound — the alarm for
+ * when the app is not on screen.
+ *
+ * The same two switches that govern the in-app alarm govern this one. Before,
+ * the notification ignored both: turning "Alarm sound" off still rang from a
+ * locked phone, and on Android the timer rang through silent with no way to
+ * stop it.
+ *
+ *  - Alarm sound off         → no sound anywhere; the banner still shows.
+ *  - Play even on silent on  → Android alarm stream, rings on silent.
+ *  - Play even on silent off → an ordinary notification sound, which the
+ *                              ringer switch silences like any other.
+ *
+ * iOS cannot ring a notification through silent without AlarmKit, so there the
+ * override has no effect on this path until that lands; playsSound is all iOS
+ * reads.
+ */
+export function timerNotificationSound(prefs: AlarmPreferences): TimerNotificationSound {
+  if (!prefs.enabled) return { playsSound: false, androidChannel: 'silent' };
+  return {
+    playsSound: true,
+    androidChannel: prefs.overrideSilentSwitch ? 'alarm' : 'standard',
+  };
 }

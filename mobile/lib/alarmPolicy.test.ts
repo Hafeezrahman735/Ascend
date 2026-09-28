@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldSoundAlarm, alarmAudioMode, leftTheAppDuringRun, type AlarmPreferences } from './alarmPolicy';
+import { shouldSoundAlarm, alarmAudioMode, leftTheAppDuringRun, timerNotificationSound, type AlarmPreferences } from './alarmPolicy';
 
 const ON: AlarmPreferences = { enabled: true, overrideSilentSwitch: true };
 
@@ -86,5 +86,27 @@ describe('leftTheAppDuringRun', () => {
 
   it('does not count coming back', () => {
     expect(leftTheAppDuringRun('active')).toBe(false);
+  });
+});
+
+describe('timerNotificationSound', () => {
+  it('rings on the alarm stream when both switches are on', () => {
+    expect(timerNotificationSound({ enabled: true, overrideSilentSwitch: true }))
+      .toEqual({ playsSound: true, androidChannel: 'alarm' });
+  });
+
+  it('uses an ordinary sound the silent switch can mute when the override is off', () => {
+    // The rule: "Play even on silent" off means a phone on silent does not ring.
+    // The alarm channel ignores the ringer, so it must not be used here.
+    expect(timerNotificationSound({ enabled: true, overrideSilentSwitch: false }))
+      .toEqual({ playsSound: true, androidChannel: 'standard' });
+  });
+
+  it('makes no sound at all when the alarm is off, whatever the override says', () => {
+    // Regression: the notification used to ring regardless of "Alarm sound".
+    for (const overrideSilentSwitch of [true, false]) {
+      expect(timerNotificationSound({ enabled: false, overrideSilentSwitch }))
+        .toEqual({ playsSound: false, androidChannel: 'silent' });
+    }
   });
 });

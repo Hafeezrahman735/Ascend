@@ -6,6 +6,7 @@ import {
   scheduleBreakEndNotification,
   cancelAllTimerNotifications,
 } from '../services/notifications';
+import { timerNotificationSound } from '../lib/alarmPolicy';
 
 /**
  * Subscribes to the timer store and schedules / cancels local notifications as
@@ -48,14 +49,22 @@ export function useTimerNotifications(): void {
 
       if (enteredRunningSegment) {
         // Respect the user's "Session Complete" notification toggle.
-        if (!useUserSettingsStore.getState().notifySessionComplete) return;
+        const settings = useUserSettingsStore.getState();
+        if (!settings.notifySessionComplete) return;
+        // The alarm switches apply to the notification as well as the in-app
+        // sound. Read at segment start, like timeLeft: a change mid-segment
+        // takes effect from the next start or resume.
+        const sound = timerNotificationSound({
+          enabled: settings.alarmSound,
+          overrideSilentSwitch: settings.alarmOverridesSilent,
+        });
 
         // timeLeft is the authoritative remaining seconds at segment start.
         const remainingSeconds = Math.max(1, state.timeLeft);
         if (state.currentPhase === 'focus') {
-          scheduleFocusDoneNotification(remainingSeconds);
+          scheduleFocusDoneNotification(remainingSeconds, sound);
         } else {
-          scheduleBreakEndNotification(remainingSeconds, state.currentPhase === 'longBreak');
+          scheduleBreakEndNotification(remainingSeconds, state.currentPhase === 'longBreak', sound);
         }
       }
     });

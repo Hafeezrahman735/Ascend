@@ -667,12 +667,11 @@ export default function SettingsScreen() {
               />
             }
           />
-          {/* iOS only: Android's media stream is already independent of the
-              ringer, so this would be a switch that changes nothing there.
-              Conditional rather than greyed — SettingsRow has no dimmed state,
-              and the Reminder Time row below sets the precedent for a dependent
-              row simply not being rendered. */}
-          {Platform.OS === 'ios' && settings.alarmSound ? (
+          {/* Both platforms now: on Android it picks between the alarm stream,
+              which rings on silent, and an ordinary notification sound. It is
+              shown only while the alarm is on, since it tunes a sound that
+              otherwise does not exist. */}
+          {settings.alarmSound ? (
             <>
               <Divider />
               <SettingsRow
