@@ -16,7 +16,16 @@ export const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.
 const ALARM_SOUND = 'timer_complete.wav';
 
 // Android channel id — created in setupAndroidChannels, referenced in content.
+// Reminders (daily, goal) use this one: they sound like an ordinary notification.
 const ANDROID_CHANNEL = 'ascend-timer';
+
+// The timer's own completion alarm, on the ALARM audio stream so it rings with
+// the phone on silent or vibrate, the way a kitchen timer would. A new id rather
+// than an edit to the channel above: Android freezes a channel's sound and audio
+// attributes the first time it is created, so changing them in place does
+// nothing on any device that already has it. Reminders deliberately stay off
+// this channel; a goal nudge must not ring through silent.
+const ANDROID_ALARM_CHANNEL = 'ascend-timer-alarm';
 
 // EAS project id — required for getExpoPushTokenAsync. Mirrors app.json
 // (extra.eas.projectId); it's a public identifier.
@@ -91,6 +100,20 @@ export async function setupAndroidChannels(): Promise<void> {
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     bypassDnd: false,
   }).catch(() => {});
+
+  await Notifications.setNotificationChannelAsync(ANDROID_ALARM_CHANNEL, {
+    name: 'Timer finished',
+    importance: Notifications.AndroidImportance.MAX,
+    sound: ALARM_SOUND,
+    audioAttributes: {
+      usage: Notifications.AndroidAudioUsage.ALARM,
+      contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+    },
+    vibrationPattern: [0, 500, 200, 500, 200, 500],
+    enableVibrate: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+  }).catch((err) => console.warn('[notifications] alarm channel setup failed:', err));
 }
 
 /**
@@ -202,7 +225,7 @@ export async function scheduleFocusDoneNotification(remainingSeconds: number): P
         body: 'Take the break. It is part of the work.',
         sound: ALARM_SOUND,
         data: { type: 'focus_complete' },
-        ...(Platform.OS === 'android' && { channelId: ANDROID_CHANNEL }),
+        ...(Platform.OS === 'android' && { channelId: ANDROID_ALARM_CHANNEL }),
       },
       trigger: timeIntervalTrigger(seconds),
     });
@@ -233,7 +256,7 @@ export async function scheduleBreakEndNotification(
         body: 'Break is over. What is next?',
         sound: ALARM_SOUND,
         data: { type: 'break_complete' },
-        ...(Platform.OS === 'android' && { channelId: ANDROID_CHANNEL }),
+        ...(Platform.OS === 'android' && { channelId: ANDROID_ALARM_CHANNEL }),
       },
       trigger: timeIntervalTrigger(seconds),
     });

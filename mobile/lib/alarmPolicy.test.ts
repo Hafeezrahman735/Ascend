@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldSoundAlarm, alarmAudioMode, type AlarmPreferences } from './alarmPolicy';
+import { shouldSoundAlarm, alarmAudioMode, leftTheAppDuringRun, type AlarmPreferences } from './alarmPolicy';
 
 const ON: AlarmPreferences = { enabled: true, overrideSilentSwitch: true };
 
@@ -66,5 +66,25 @@ describe('alarmAudioMode', () => {
       const rejectedByIOS = !mode.playsInSilentMode && mode.interruptionMode === 'duckOthers';
       expect(rejectedByIOS).toBe(false);
     }
+  });
+});
+
+describe('leftTheAppDuringRun', () => {
+  it('counts a real trip to the background', () => {
+    // Locking the phone or switching apps suspends JS; the OS notification is
+    // the alarm for that run, so the in-app sound must stand down.
+    expect(leftTheAppDuringRun('background')).toBe(true);
+  });
+
+  it('does NOT count a momentary inactive state', () => {
+    // THE regression. Pulling down Control Center, the notification shade, the
+    // app switcher, a Face ID prompt or a call banner all pass through
+    // 'inactive' while JS keeps running and the timer completes live. Counting
+    // them silenced the alarm for the rest of that session.
+    expect(leftTheAppDuringRun('inactive')).toBe(false);
+  });
+
+  it('does not count coming back', () => {
+    expect(leftTheAppDuringRun('active')).toBe(false);
   });
 });

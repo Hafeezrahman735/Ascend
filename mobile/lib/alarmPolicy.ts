@@ -75,3 +75,17 @@ export function alarmAudioMode(prefs: AlarmPreferences): AlarmAudioMode {
     interruptionMode: prefs.overrideSilentSwitch ? 'duckOthers' : 'mixWithOthers',
   };
 }
+
+/**
+ * Whether an AppState change means the app really left the foreground during a
+ * running segment, so the completion will not be live.
+ *
+ * Only 'background' counts. iOS reports 'inactive' for Control Center, the
+ * notification shade, the app switcher, Face ID and call banners. JS keeps
+ * running through all of them and the timer completes on time, but treating
+ * them as leaving marked the run stale and silenced its alarm. Locking the
+ * phone still counts: it goes inactive, then background.
+ */
+export function leftTheAppDuringRun(next: 'active' | 'inactive' | 'background' | string): boolean {
+  return next === 'background';
+}

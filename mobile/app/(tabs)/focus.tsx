@@ -16,6 +16,7 @@ import { getSessionPlan } from '../../lib/sessionPlan';
 import { targetProgress } from '../../lib/dailyTarget';
 import { cancelAllTimerNotifications } from '../../services/notifications';
 import { playAlarm, stopAlarm } from '../../lib/alarm';
+import { leftTheAppDuringRun } from '../../lib/alarmPolicy';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -218,7 +219,7 @@ export default function TimerScreen() {
   const backgroundedDuringRunRef = useRef(false);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      if (next !== 'active' && useTimerStore.getState().status === 'running') {
+      if (leftTheAppDuringRun(next) && useTimerStore.getState().status === 'running') {
         backgroundedDuringRunRef.current = true;
       }
     });
