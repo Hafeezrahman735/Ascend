@@ -4,6 +4,7 @@ import { setTokens, clearTokens, api, setOnAuthExpired } from '../services/api';
 import { fetchMe, invalidateMe } from '../services/me';
 import { reconnectTimerSocket, disconnectTimerSocket } from '../services/socket';
 import { clearSessionHistory } from '../store/sync';
+import { stopSessionOutboxRetries } from '../services/sessionOutbox';
 import { useGamificationStore } from './gamificationStore';
 import { useTimerStore } from './timerStore';
 import { log } from '../lib/log';
@@ -158,6 +159,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
     } finally {
       disconnectTimerSocket();
+      // Unsent sessions stay queued under this account's id and go out at its
+      // next sign-in; only the retry timer, which would send them tokenless, stops.
+      stopSessionOutboxRetries();
       clearTokens();
       invalidateMe();
       await clearSessionHistory();

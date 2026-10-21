@@ -20,7 +20,12 @@ export function updateStreak(
 ): { streak: number; longestStreak: number; isNewDay: boolean } {
   const lastActive = lastActiveDate ? toLocalDateStr(lastActiveDate) : null;
 
-  if (lastActive === localDate) {
+  // Same day, or a session from an EARLIER day arriving late — the app's outbox
+  // replays sessions that finished offline, and another device may already
+  // have recorded a later day. A day the streak has already moved past can
+  // neither extend it nor break it, and must not drag lastActiveDate backwards.
+  // YYYY-MM-DD strings order the same way the dates do.
+  if (lastActive !== null && localDate <= lastActive) {
     return { streak: currentStreak, longestStreak, isNewDay: false };
   }
 

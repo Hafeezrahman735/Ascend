@@ -8,7 +8,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useGamificationStore } from '../stores/gamificationStore';
 import { useTaskStore, initTaskStore } from '../stores/taskStore';
 import { pruneLegacyDailyAggregates } from '../store/sync';
-import { useTimerStore, initTimerStore } from '../stores/timerStore';
+import { useTimerStore, initTimerStore, syncQueuedSessions } from '../stores/timerStore';
 import { useSocialStore } from '../stores/socialStore';
 import { useGoalStore } from '../stores/goalStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -19,6 +19,7 @@ import { setupNotifications, configureNotificationHandler } from '../services/no
 import { useNotificationListener } from '../hooks/useNotificationListener';
 import { useTimerNotifications } from '../hooks/useTimerNotifications';
 import { useTimerLiveActivity } from '../hooks/useTimerLiveActivity';
+import { useAppForeground } from '../hooks/useAppState';
 import { log } from '../lib/log';
 import { CURRENT_TERMS_VERSION } from '../constants/legal';
 
@@ -234,6 +235,18 @@ export default function RootLayout() {
 
     bootstrap();
   }, []);
+
+  // Send any focus sessions that finished while the server was unreachable.
+  // Keyed on the user id so it runs at launch, after sign-in, and after a
+  // successful connection retry; the foreground hook covers coming back online
+  // while the app was in the background.
+  const userId = user?.id;
+  useEffect(() => {
+    if (userId) syncQueuedSessions();
+  }, [userId]);
+  useAppForeground(() => {
+    if (useAuthStore.getState().user) syncQueuedSessions();
+  });
 
   // Request notification permission once a user is logged in — not on the cold
   // launch splash. iOS only shows the system prompt once, so timing matters.

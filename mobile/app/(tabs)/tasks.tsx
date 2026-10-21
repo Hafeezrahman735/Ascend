@@ -34,10 +34,11 @@ import TimeReportSummary from '../../components/timeReport/TimeReportSummary';
 import type { ReportPeriod } from '../../hooks/useTimeReport';
 import { lastSessionOnGoal, sortGoalsByUrgency, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
-import { useTimerStore } from '../../stores/timerStore';
+import { useTimerStore, syncQueuedSessions } from '../../stores/timerStore';
 import { useGamificationStore } from '../../stores/gamificationStore';
 import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
 import { api } from '../../services/api';
+import { getQueuedSessionIds } from '../../services/sessionOutbox';
 import { priorityColor, priorityLabel } from '../../utils/priority';
 import {
   daysUntilLocalDate, formatDeadlineLabel,
@@ -2130,9 +2131,13 @@ export default function TasksScreen() {
     try {
       const hist = await getSessionHistory();
       setSessionHistory(hist);
+      // Deliver anything queued first, so the server list below already has it.
+      await syncQueuedSessions();
+      const userId = useAuthStore.getState().user?.id;
       const res = await api.get<{ sessions: { id: string; completedAt: string; durationSeconds: number; taskId: string | null; taskLabel: string | null; clientSessionId: string | null }[] }>('/timer/sessions');
       if (res.success && res.data?.sessions) {
-        await mergeWithServerSessions(res.data.sessions);
+        const queued = userId ? await getQueuedSessionIds(userId) : new Set<string>();
+        await mergeWithServerSessions(res.data.sessions, queued);
         setSessionHistory(await getSessionHistory());
       }
     } catch { /* non-critical */ }

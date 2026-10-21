@@ -6,7 +6,17 @@ import { useAuthStore } from './authStore';
 import { useGamificationStore } from './gamificationStore';
 import { recordCompletedSession, generateSessionId } from '../store/sync';
 import { getLocalDateString, getDeviceTimeZone } from '../utils/date';
-import type { SessionReward } from '../types';
+import { invalidateMe } from '../services/me';
+import {
+  enqueueSessionCompletion,
+  flushSessionOutbox,
+  getQueuedCompletions,
+  isAlreadyProcessed,
+  setSessionDeliveredHandler,
+  type CompletionResult,
+  type FlushResult,
+  type SessionCompletion,
+} from '../services/sessionOutbox';
 import { elapsedInPhase, remainingInPhase, type TimerPhase } from '../lib/phaseDuration';
 import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
 import { creditableSessionSeconds, MAX_SESSION_SECONDS } from '../lib/sessionCredit';
@@ -315,37 +325,16 @@ export const useTimerStore = create<TimerState>((set, get) => ({
           useTaskStore.getState().incrementTaskSession(selectedTaskId, sessionDuration);
         }
 
-        recordCompletedSession({
-          sessionId,
-          completedAt: Date.now(),
-          durationSeconds: sessionDuration,
-          taskLabel,
-          taskId: selectedTaskId ?? null,
-          type: 'focus',
-        });
-
-        api.post<SessionReward>('/timer/complete', {
+        submitSessionCompletion({
+          clientSessionId: sessionId,
           completedAt: Date.now(),
           localDate: getTodayString(),
           tz: getDeviceTimeZone(),
           actualElapsedSeconds: sessionDuration,
+          plannedDurationSeconds: plannedDuration,
           taskId: selectedTaskId ?? null,
           taskLabel,
-          clientSessionId: sessionId,
-          plannedDurationSeconds: plannedDuration,
-        })
-        .then((res) => {
-          if (res.success && res.data) {
-            useGamificationStore.getState().applySessionReward(res.data, sessionDuration);
-          } else {
-            // Local stats have already moved; the server's have not. Silence here
-            // is what made the old stopwatch overflow invisible.
-            console.warn('[timer] session rejected by server:', res.error);
-          }
-          // Refresh week dots so today's dot fills in immediately
-          get().fetchWeekSessions();
-        })
-        .catch((err) => console.warn('[timer] complete sync failed:', err));
+        });
       }
     } else {
       // Break completed — return to focus idle, no stats update.
@@ -721,36 +710,79 @@ function recordFocusSession(elapsedSeconds: number): number {
     useTaskStore.getState().incrementTaskSession(selectedTaskId, sessionDuration);
   }
 
-  recordCompletedSession({
-    sessionId,
-    completedAt: Date.now(),
-    durationSeconds: sessionDuration,
-    taskLabel,
-    taskId: selectedTaskId ?? null,
-    type: 'focus',
-  });
-
-  api.post<SessionReward>('/timer/complete', {
+  submitSessionCompletion({
+    clientSessionId: sessionId,
     completedAt: Date.now(),
     localDate: today,
     tz: getDeviceTimeZone(),
     actualElapsedSeconds: sessionDuration,
+    plannedDurationSeconds: null,
     taskId: selectedTaskId ?? null,
     taskLabel,
-    clientSessionId: sessionId,
-    plannedDurationSeconds: null,
-  })
-  .then((res) => {
-    if (res.success && res.data) {
-      useGamificationStore.getState().applySessionReward(res.data, sessionDuration);
-    } else {
-      console.warn('[timer] stopwatch session rejected by server:', res.error);
-    }
-    useTimerStore.getState().fetchWeekSessions();
-  })
-  .catch((err) => console.warn('[timer] stopwatch complete sync failed:', err));
+  });
 
   return sessionDuration;
+}
+
+/**
+ * Records a finished focus session locally and hands it to the outbox, which
+ * owns getting it to the server — now or, if offline, on a later flush.
+ *
+ * The local history record and the server payload share one completedAt so the
+ * reconcile in store/sync.ts can match them.
+ */
+function submitSessionCompletion(completion: SessionCompletion): void {
+  recordCompletedSession({
+    sessionId: completion.clientSessionId,
+    completedAt: completion.completedAt,
+    durationSeconds: completion.actualElapsedSeconds,
+    taskLabel: completion.taskLabel,
+    taskId: completion.taskId,
+    type: 'focus',
+  });
+
+  const userId = useAuthStore.getState().user?.id;
+  if (!userId) {
+    console.warn('[timer] complete: no userId — session cannot be queued for sync');
+    return;
+  }
+  enqueueSessionCompletion(userId, completion)
+    .then(() => flushSessionOutbox(userId))
+    .catch((err) => console.warn('[timer] queueing session failed:', err));
+}
+
+/**
+ * Follow-up for every session the server accepts, whether it was sent the
+ * moment it finished or replayed from the outbox later.
+ */
+function onSessionDelivered(completion: SessionCompletion, result: CompletionResult | undefined): void {
+  const gamification = useGamificationStore.getState();
+  if (result && !isAlreadyProcessed(result)) {
+    gamification.applySessionReward(result, completion.actualElapsedSeconds);
+  } else {
+    // A replay of a session the server already had — its reward was applied
+    // when it first landed, so read the totals back instead of adding again.
+    invalidateMe();
+    gamification.fetchProfile();
+  }
+  // Refresh week dots so the session's day fills in.
+  useTimerStore.getState().fetchWeekSessions();
+}
+
+/**
+ * Sends any focus sessions still waiting from an earlier failure. Safe to call
+ * often: the outbox is single-flight and does nothing when empty.
+ */
+export function syncQueuedSessions(): Promise<FlushResult> {
+  const userId = useAuthStore.getState().user?.id;
+  if (!userId) return Promise.resolve({ delivered: 0, rejected: 0, pending: 0 });
+  return flushSessionOutbox(userId).catch(async (err) => {
+    console.warn('[timer] syncing queued sessions failed:', err);
+    // Report what is really still queued: callers decide on it (see
+    // gamificationStore.checkAndResetDayStreak), so a guessed 0 would be a lie.
+    const queued = await getQueuedCompletions(userId).catch(() => []);
+    return { delivered: 0, rejected: 0, pending: queued.length };
+  });
 }
 
 /**
@@ -906,6 +938,7 @@ function reconstructSession(snap: PersistedSession, settings: Settings): Partial
 // Keeping this out of module scope breaks the circular import crash:
 //   timerStore → taskStore → authStore → timerStore
 export function initTimerStore(): void {
+  setSessionDeliveredHandler(onSessionDelivered);
   useTaskStore.subscribe((state, prevState) => {
     if (state.selectedTaskId !== prevState.selectedTaskId) {
       const { status, settings } = useTimerStore.getState();

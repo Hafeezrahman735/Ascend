@@ -88,6 +88,15 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
   // on boot/foreground alongside spawnRecurringTasks; never throws.
   checkAndResetDayStreak: async () => {
     try {
+      // A session finished offline yesterday is the very thing that keeps the
+      // streak alive, and it may still be sitting in the outbox. Deliver it
+      // first; if it cannot be delivered yet, do not reset — the check runs
+      // again on the next launch or foreground. Lazy import keeps the timer
+      // store out of this store's static dependency graph (it imports us).
+      const { syncQueuedSessions } = await import('./timerStore');
+      const { pending } = await syncQueuedSessions();
+      if (pending > 0) return;
+
       // Moves currentStreak on the user row, so the shared /auth/me result is
       // stale the moment this returns.
       invalidateMe();

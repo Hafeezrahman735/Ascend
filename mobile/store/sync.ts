@@ -116,8 +116,9 @@ const PENDING_SYNC_GRACE_MS = 15 * 60 * 1000;
 
 // Reconciles local session history against the server, which is the source of
 // truth. The server list replaces local history wholesale; the only local records
-// kept are ones completed within the grace window that the server hasn't confirmed
-// yet (a session the user just finished). This guarantees local history can never
+// kept are ones the server hasn't confirmed yet: those still in the outbox
+// (services/sessionOutbox.ts), however old, and anything completed within the
+// grace window (a session the user just finished). This guarantees local history can never
 // silently diverge from the server — stale records from a previous backend, a
 // deleted task, or a failed sync are pruned on the next successful fetch rather
 // than lingering in the time tracker forever.
@@ -131,6 +132,12 @@ export async function mergeWithServerSessions(
     clientSessionId?: string | null;
     primaryTag?: string | null;
   }[],
+  /**
+   * Sessions waiting in the outbox. They are kept regardless of age: one that
+   * finished offline hours ago is still on its way, and dropping it here is
+   * what used to make it vanish from the tracker for good.
+   */
+  queuedSessionIds: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   try {
     const local = await getSessionHistory();
@@ -154,9 +161,10 @@ export async function mergeWithServerSessions(
 
     const now = Date.now();
     const pendingLocal = local.filter((s) => {
-      // Only keep recent, not-yet-confirmed local sessions awaiting their POST.
-      if (now - s.completedAt > PENDING_SYNC_GRACE_MS) return false;
+      // Only keep not-yet-confirmed local sessions awaiting their POST.
       if (s.sessionId && serverClientIds.has(s.sessionId)) return false;
+      if (s.sessionId && queuedSessionIds.has(s.sessionId)) return true;
+      if (now - s.completedAt > PENDING_SYNC_GRACE_MS) return false;
       if (serverKeys.has(`${s.completedAt}:${s.durationSeconds}:${s.taskId || ''}`)) return false;
       return true;
     });

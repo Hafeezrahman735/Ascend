@@ -213,3 +213,60 @@ describe('POST /timer/complete — idempotency', () => {
     expect(task.body.data.sessionsOnTask).toBe(1);
   });
 });
+
+describe('POST /timer/complete — a session delivered late', () => {
+  // The app queues sessions that finish offline and replays them when it
+  // reconnects, so yesterday's session can land after today's.
+  const HOUR_MS = 60 * 60 * 1000;
+  const utcDay = (d: Date) => d.toISOString().slice(0, 10);
+  const dayBefore = (ymd: string) => utcDay(new Date(Date.parse(`${ymd}T00:00:00.000Z`) - 24 * HOUR_MS));
+
+  it('credits the time but neither resets the streak nor moves lastActiveDate back', async () => {
+    const user = await createUser();
+    const today = utcDay(new Date());
+    const yesterday = dayBefore(today);
+
+    // Four days running, the last of them yesterday.
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { currentStreak: 4, longestStreak: 4, lastActiveDate: new Date(`${yesterday}T00:00:00.000Z`) },
+    });
+
+    const todays = await completeSession(user, {
+      localDate: today,
+      actualElapsedSeconds: TWENTY_MIN,
+      plannedDurationSeconds: TWENTY_MIN,
+      clientSessionId: 'late-test-today',
+    });
+    expect(todays.status).toBe(200);
+    expect(todays.body.data.newStreak).toBe(5);
+
+    const late = await completeSession(user, {
+      completedAt: Date.now() - 20 * HOUR_MS,
+      localDate: yesterday,
+      actualElapsedSeconds: FIVE_MIN,
+      plannedDurationSeconds: FIVE_MIN,
+      clientSessionId: 'late-test-yesterday',
+    });
+    expect(late.status).toBe(200);
+    expect(late.body.data.newStreak).toBe(5);
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.currentStreak).toBe(5);
+    expect(row.lastActiveDate?.toISOString().slice(0, 10)).toBe(today);
+    expect(row.totalSessions).toBe(2);
+    expect(row.totalFocusTime).toBe(TWENTY_MIN + FIVE_MIN);
+  });
+
+  it('still rejects a replay older than the backdating window', async () => {
+    const user = await createUser();
+
+    const res = await completeSession(user, {
+      completedAt: Date.now() - 25 * HOUR_MS,
+      clientSessionId: 'late-test-too-old',
+    });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.session.count({ where: { userId: user.id } })).toBe(0);
+  });
+});

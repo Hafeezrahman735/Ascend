@@ -18,6 +18,7 @@ import {
 import { openExternal } from '../lib/openExternal';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../services/api';
+import { clearSessionOutbox } from '../services/sessionOutbox';
 import { useGamificationStore } from '../stores/gamificationStore';
 import { useUserProfileStore } from '../stores/userProfileStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -458,7 +459,9 @@ export default function SettingsScreen() {
     if (deleteText !== 'DELETE') return;
     setShowDeleteConfirm(false);
     try {
-      await api.delete('/auth/account');
+      const res = await api.delete('/auth/account');
+      // Sessions still queued for a deleted account can never be delivered.
+      if (res.success && user) await clearSessionOutbox(user.id);
     } catch {
       // proceed to logout even if the request fails
     }
