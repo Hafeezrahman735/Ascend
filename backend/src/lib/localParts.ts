@@ -74,6 +74,18 @@ export function partsOf(fmt: Intl.DateTimeFormat, d: Date): LocalParts {
   };
 }
 
+/**
+ * The hour of day an instant falls on in the user's zone, or null when the
+ * zone is missing or not a real IANA zone.
+ *
+ * Unlike localPartsOf, this does NOT fall back to UTC: callers that award
+ * something for the hour (Early Bird, Night Owl) must not award it on a guess.
+ */
+export function localHourIn(d: Date, timeZone: string | null | undefined): number | null {
+  if (!timeZone || safeTimeZone(timeZone) !== timeZone) return null;
+  return localPartsOf(d, timeZone).hour;
+}
+
 /** One-shot convenience for a single instant. Prefer `partsOf` inside loops. */
 export function localPartsOf(d: Date, timeZone: string): LocalParts {
   return partsOf(makeFormatter(safeTimeZone(timeZone)), d);

@@ -414,6 +414,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
         taskId: ownedTaskId,
         completedAt: completedAtDate.toISOString(),
         localDate: sessionLocalDate,
+        timeZone: tz ?? null,
       });
 
       timerNamespace.to(`user:${userId}`).emit('timer:completed', {

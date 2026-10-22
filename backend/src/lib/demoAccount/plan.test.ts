@@ -172,7 +172,7 @@ describe('deriveUnlocks', () => {
     taskCompletions: completions,
     followsCreatedAt: follows,
     xp: 3400,
-    serverTimeZone: 'UTC',
+    timeZone: CHICAGO,
   });
   const keys = unlocks.map((u) => u.key);
 

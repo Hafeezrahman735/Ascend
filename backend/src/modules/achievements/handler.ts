@@ -6,6 +6,16 @@ import {
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
+import { localHourIn } from '../../lib/localParts';
+
+/** Early Bird: a session completed before 08:00 local time. */
+const EARLY_BIRD_BEFORE_HOUR = 8;
+/** Night Owl: a session completed at 22:00 local time or later. */
+const NIGHT_OWL_FROM_HOUR = 22;
+/** Speed Runner: this many focus sessions on one local day. */
+const SPEED_RUNNER_SESSIONS = 8;
+/** Marathon: this much focus on one local day. */
+const MARATHON_SECONDS = 4 * 3600;
 
 /**
  * Unlock an achievement, returning null if the user already had it.
@@ -182,6 +192,26 @@ export async function handleSessionCompleted(
   // unlocked it keeps it; this only decides FUTURE unlocks.
   const followingCount = await prisma.follow.count({ where: { followerId: userId } });
 
+  // Null without a valid zone from the client: an hour-of-day achievement is
+  // not awarded on a guess. Every app build that ships sends one.
+  const localHour = localHourIn(new Date(payload.completedAt), payload.timeZone);
+
+  // The day this session belongs to, in the user's calendar — the same
+  // localDate the session row is stamped with and streaks are counted on.
+  // Loaded at most once, and only if a day-total achievement is still locked.
+  let dayTotals: { count: number; seconds: number } | null = null;
+  const sessionDayTotals = async () => {
+    if (!dayTotals) {
+      const agg = await prisma.session.aggregate({
+        where: { userId, type: 'focus', localDate: payload.localDate },
+        _count: { _all: true },
+        _sum: { durationSeconds: true },
+      });
+      dayTotals = { count: agg._count._all, seconds: agg._sum.durationSeconds ?? 0 };
+    }
+    return dayTotals;
+  };
+
   for (const achievement of allAchievements) {
     if (unlockedIds.has(achievement.id)) continue;
 
@@ -191,42 +221,21 @@ export async function handleSessionCompleted(
       case 'social-butterfly':
         shouldUnlock = followingCount >= 5;
         break;
+      // The hour and the day are the USER'S, not the server's. These used
+      // getHours() and setHours(0) on the server clock, which is UTC on
+      // Railway: a Chicago user's 7pm session counted as "before 8am", and a
+      // US evening's sessions were split across two "days".
       case 'early-bird':
-        {
-          const hour = new Date(payload.completedAt).getHours();
-          shouldUnlock = hour < 8;
-        }
+        shouldUnlock = localHour !== null && localHour < EARLY_BIRD_BEFORE_HOUR;
         break;
       case 'night-owl':
-        {
-          const hour = new Date(payload.completedAt).getHours();
-          shouldUnlock = hour >= 22;
-        }
+        shouldUnlock = localHour !== null && localHour >= NIGHT_OWL_FROM_HOUR;
         break;
       case 'speed-runner':
-        {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const tomorrow = new Date(today);
-          tomorrow.setDate(tomorrow.getDate() + 1);
-          const todayCount = await prisma.session.count({
-            where: { userId, type: 'focus', completedAt: { gte: today, lt: tomorrow } },
-          });
-          shouldUnlock = todayCount >= 8;
-        }
+        shouldUnlock = (await sessionDayTotals()).count >= SPEED_RUNNER_SESSIONS;
         break;
       case 'marathon':
-        {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const tomorrow = new Date(today);
-          tomorrow.setDate(tomorrow.getDate() + 1);
-          const todaySessions = await prisma.session.findMany({
-            where: { userId, type: 'focus', completedAt: { gte: today, lt: tomorrow } },
-          });
-          const todayTotalSeconds = todaySessions.reduce((sum, s) => sum + s.durationSeconds, 0);
-          shouldUnlock = todayTotalSeconds >= 4 * 3600;
-        }
+        shouldUnlock = (await sessionDayTotals()).seconds >= MARATHON_SECONDS;
         break;
       default:
         break;

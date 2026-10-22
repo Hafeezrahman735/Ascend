@@ -6,6 +6,7 @@
  */
 import { hashUnit } from '../demoHistory';
 import { dayNameFromLocalDate } from '../localDate';
+import { localHourIn } from '../localParts';
 import { dateKeyIn, shiftDateKey, streaksFrom, zonedInstant } from './time';
 import { getRankTitle } from '../rank';
 import {
@@ -363,8 +364,8 @@ export interface UnlockInput {
   taskCompletions: Date[];
   followsCreatedAt: Date[];
   xp: number;
-  /** The clock achievements/handler.ts reads with getHours(): the server's. */
-  serverTimeZone: string;
+  /** The user's zone. achievements/handler.ts reads the hour in it. */
+  timeZone: string;
 }
 
 export interface Unlock {
@@ -412,18 +413,16 @@ export function deriveUnlocks(catalogue: CatalogueEntry[], input: UnlockInput): 
   const xpReached = (threshold: number): Date | undefined =>
     input.xp >= threshold ? focusReached(Math.ceil((threshold / input.xp) * totalFocusSeconds)) : undefined;
 
-  const serverParts = (d: Date) => {
-    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: input.serverTimeZone, hour: '2-digit', hourCycle: 'h23' });
-    return { hour: Number(fmt.format(d)), dateKey: dateKeyIn(d, input.serverTimeZone) };
-  };
-  const perServerDay = new Map<string, { count: number; minutes: number; last: Date }>();
+  // Same rules as achievements/handler.ts: the hour in the user's zone, and
+  // day totals on the session's own local date.
+  const localHour = (d: Date) => localHourIn(d, input.timeZone);
+  const perLocalDay = new Map<string, { count: number; minutes: number; last: Date }>();
   for (const s of sessions) {
-    const { dateKey } = serverParts(s.completedAt);
-    const entry = perServerDay.get(dateKey) ?? { count: 0, minutes: 0, last: s.completedAt };
-    perServerDay.set(dateKey, { count: entry.count + 1, minutes: entry.minutes + s.minutes, last: s.completedAt });
+    const entry = perLocalDay.get(s.dateKey) ?? { count: 0, minutes: 0, last: s.completedAt };
+    perLocalDay.set(s.dateKey, { count: entry.count + 1, minutes: entry.minutes + s.minutes, last: s.completedAt });
   }
   const firstDay = (ok: (e: { count: number; minutes: number }) => boolean) =>
-    [...perServerDay.values()].find(ok)?.last;
+    [...perLocalDay.values()].find(ok)?.last;
 
   const completions = [...input.taskCompletions].sort((a, b) => a.getTime() - b.getTime());
   const follows = [...input.followsCreatedAt].sort((a, b) => a.getTime() - b.getTime());
@@ -431,8 +430,8 @@ export function deriveUnlocks(catalogue: CatalogueEntry[], input: UnlockInput): 
   const unlockedAt = (a: CatalogueEntry): Date | undefined => {
     switch (a.key) {
       case 'social-butterfly': return nth(follows, 5);
-      case 'early-bird': return sessions.find((s) => serverParts(s.completedAt).hour < 8)?.completedAt;
-      case 'night-owl': return sessions.find((s) => serverParts(s.completedAt).hour >= 22)?.completedAt;
+      case 'early-bird': return sessions.find((s) => (localHour(s.completedAt) ?? 24) < 8)?.completedAt;
+      case 'night-owl': return sessions.find((s) => (localHour(s.completedAt) ?? -1) >= 22)?.completedAt;
       case 'speed-runner': return firstDay((e) => e.count >= 8);
       case 'marathon': return firstDay((e) => e.minutes >= 240);
     }

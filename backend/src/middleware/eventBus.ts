@@ -19,6 +19,8 @@ export interface SessionCompletedEvent {
   taskId: string | null;
   completedAt: string;
   localDate: string; // YYYY-MM-DD in the user's local timezone
+  /** IANA zone the client sent, or null. Decides the local hour of completedAt. */
+  timeZone: string | null;
 }
 
 export interface TaskGoalCompletedEvent {

@@ -36,8 +36,6 @@ export interface SeedOptions {
   /** The phone's timezone. Decides what "today" is on every screen. */
   timeZone: string;
   now?: Date;
-  /** The API server's clock, which achievements/handler.ts reads. Railway is UTC. */
-  serverTimeZone?: string;
 }
 
 export interface SeedSummary {
@@ -130,7 +128,6 @@ interface FriendRow {
 export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions): Promise<SeedSummary> {
   const { email, password, timeZone } = options;
   const now = options.now ?? new Date();
-  const serverTimeZone = options.serverTimeZone ?? 'UTC';
 
   // An existing account on this email that is not the demo account belongs to
   // someone. Refuse before the teardown runs, rather than fail on the unique
@@ -547,7 +544,7 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
       taskCompletions,
       followsCreatedAt: mainFollowTimes,
       xp: MAIN_XP,
-      serverTimeZone,
+      timeZone,
     });
     await tx.userAchievement.createMany({
       data: unlocks.map((u) => ({ userId: user.id, achievementId: u.achievementId, unlockedAt: u.unlockedAt })),
