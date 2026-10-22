@@ -92,23 +92,6 @@ export async function clearSessionHistory(): Promise<void> {
   } catch {}
 }
 
-// Drops every locally-cached session belonging to a task. Called when a task is
-// deleted so its focus time leaves the time tracker immediately, without waiting
-// for the next server reconcile.
-export async function removeTaskSessionsFromHistory(taskId: string): Promise<void> {
-  if (!taskId) return;
-  try {
-    const local = await getSessionHistory();
-    const filtered = local.filter((s) => s.taskId !== taskId);
-    if (filtered.length !== local.length) {
-      await AsyncStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(filtered));
-      invalidateHistoryCache();
-    }
-  } catch (err) {
-    console.warn('[sync] removeTaskSessionsFromHistory failed:', err);
-  }
-}
-
 // Grace window for a just-completed local session whose /timer/complete POST may
 // not have round-tripped to the server yet. Anything older that the server doesn't
 // know about is treated as an orphan and dropped.

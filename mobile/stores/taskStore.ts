@@ -3,7 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
 import { Task, DayOfWeek } from '../types';
 import { useAuthStore } from './authStore';
-import { removeTaskSessionsFromHistory } from '../store/sync';
 import { getLocalDateString } from '../utils/date';
 import { log } from '../lib/log';
 
@@ -360,9 +359,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       if (!res.success) {
         restore();
       } else {
-        // The task's focus sessions were deleted server-side — drop them from the
-        // local time-tracker cache too so its stats update without a full reconcile.
-        removeTaskSessionsFromHistory(id).catch(() => {});
+        // The server archives the task and keeps its focus sessions, so the
+        // local session history is left exactly as it is.
         invalidateCalendar();
       }
     } catch (err) {

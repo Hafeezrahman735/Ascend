@@ -639,40 +639,13 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
-      // Remove this task's focus-session stats from the user's all-time totals,
-      // then delete the sessions so they leave the time tracker and analytics.
-      const agg = await prisma.session.aggregate({
-        where: { taskId: id, userId, type: 'focus' },
-        _sum: { durationSeconds: true },
-        _count: true,
-      });
-      const removedSeconds = agg._sum.durationSeconds ?? 0;
-      const removedCount = agg._count ?? 0;
-
-      await prisma.session.deleteMany({ where: { taskId: id, userId } });
-
-      if (removedSeconds > 0 || removedCount > 0) {
-        // Atomic decrement. Read-then-write lost updates when a session completed
-        // (which increments these same columns) between the read and the write.
-        await prisma.user.update({
-          where: { id: userId },
-          data: {
-            totalFocusTime: { decrement: removedSeconds },
-            totalSessions: { decrement: removedCount },
-          },
-        });
-        // The old code clamped at zero; `decrement` cannot, so restore the floor
-        // in a follow-up that only touches rows which actually went negative.
-        await prisma.user.updateMany({
-          where: { id: userId, totalFocusTime: { lt: 0 } },
-          data: { totalFocusTime: 0 },
-        });
-        await prisma.user.updateMany({
-          where: { id: userId, totalSessions: { lt: 0 } },
-          data: { totalSessions: 0 },
-        });
-      }
-
+      // Deleting a task archives it and keeps its focus sessions. It used to
+      // delete them and subtract them from the all-time totals, so one tap
+      // erased hours of real history from the time tracker, the leaderboard
+      // and the profile — while deleting a habit already kept its sessions.
+      // Focus time is a record of what happened, not a property of the task
+      // (product decision, 2026-10-22). Sessions keep the task's title and
+      // tags as they were stamped when logged, so reports still label them.
       await prisma.task.update({
         where: { id },
         data: { isArchived: true },
@@ -689,7 +662,7 @@ export function setupTaskRoutes(router: Router): void {
         });
       }
 
-      res.json({ success: true, data: { removedSeconds, removedCount } });
+      res.json({ success: true, data: { id } });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('Delete task error:', err);

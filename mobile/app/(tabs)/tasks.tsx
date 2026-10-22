@@ -2339,22 +2339,20 @@ export default function TasksScreen() {
     const templateId = task.parentTaskId ?? (task.isRecurring ? task.id : null);
     const [title, message] = templateId
       ? ['Delete recurring task?', "This stops the task repeating and removes it from your list. Focus time you've already logged on it is kept. This can't be undone."]
-      : ['Delete task?', "This permanently deletes the task and all of its focus sessions. That time is removed from your total focus time and the time tracker. This can't be undone."];
+      : ['Delete task?', "This removes the task from your list. Focus time you've already logged on it is kept. This can't be undone."];
     Alert.alert(
       title,
       message,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: async () => {
+            // Focus time is kept either way, so there are no totals to refresh.
             await taskActions.deleteTask(templateId ?? task.id);
             setShowFormModal(false); setFormTask(null);
-            // Refresh the local tracker history and server-backed totals.
-            loadSessionHistory();
-            useGamificationStore.getState().fetchProfile();
           } },
       ],
     );
-  }, [taskActions, loadSessionHistory]);
+  }, [taskActions]);
 
   const handleComplete = useCallback(async (taskId: string) => {
     const task = tasks.find((t) => t.id === taskId);
