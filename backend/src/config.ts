@@ -4,7 +4,10 @@ import { z } from 'zod';
 const isRealSecret = (v: string) => !/change-me/i.test(v);
 const placeholderMsg = 'is still the placeholder — set a real random secret (e.g. `openssl rand -hex 48`)';
 
-const envSchema = z.object({
+/** The lowest bcrypt cost accepted anywhere but the test suite. */
+const MIN_PRODUCTION_BCRYPT_COST = 10;
+
+export const envSchema = z.object({
   PORT: z.string().default('3001'),
   DATABASE_URL: z.string(),
   JWT_ACCESS_SECRET: z.string().min(32).refine(isRealSecret, `JWT_ACCESS_SECRET ${placeholderMsg}`),
@@ -59,7 +62,21 @@ const envSchema = z.object({
   TOKEN_ENCRYPTION_KEY: z.string()
     .regex(/^[0-9a-fA-F]{64}$/, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (openssl rand -hex 32)')
     .optional(),
-});
+
+  /**
+   * bcrypt work factor for password hashes. Leave unset outside tests.
+   *
+   * Exists so the integration suite can hash at cost 4: at 12, every test
+   * user cost ~480ms of CPU, roughly a third of the whole suite's runtime.
+   * Below MIN_PRODUCTION_BCRYPT_COST is refused unless NODE_ENV is 'test', so
+   * a stray variable can never weaken real password storage.
+   */
+  BCRYPT_COST: z.coerce.number().int().min(4).max(15).default(12),
+  NODE_ENV: z.string().optional(),
+}).refine(
+  (env) => env.BCRYPT_COST >= MIN_PRODUCTION_BCRYPT_COST || env.NODE_ENV === 'test',
+  { message: 'BCRYPT_COST below 10 is only allowed when NODE_ENV=test', path: ['BCRYPT_COST'] },
+);
 
 function loadConfig() {
   const result = envSchema.safeParse(process.env);

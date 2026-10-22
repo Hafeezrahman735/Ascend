@@ -71,7 +71,7 @@ authRouter.post('/auth/register', async (req: Request, res: Response) => {
       return;
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, config.BCRYPT_COST);
     const user = await prisma.user.create({
       data: {
         email,
@@ -634,7 +634,7 @@ authRouter.post('/auth/reset-password', async (req: Request, res: Response) => {
       return;
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, config.BCRYPT_COST);
 
     // One transaction: the new password, the death of every reset token for
     // this user, and the death of every session. Split across three statements,

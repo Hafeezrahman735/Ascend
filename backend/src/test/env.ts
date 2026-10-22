@@ -5,7 +5,7 @@ import path from 'path';
  * Loads .env.test and refuses to continue unless the target database is local.
  *
  * This guard is not paranoia: backend/.env points DATABASE_URL at the Railway
- * database over its public proxy, and the integration suite TRUNCATEs every
+ * database over its public proxy, and the integration suite empties every
  * table between tests. Without this check, a missing .env.test or a stray
  * `DATABASE_URL=...` in the environment would quietly wipe real user data.
  */
@@ -33,9 +33,17 @@ export function loadTestEnv(): string {
   if (!LOCAL_HOSTS.has(host)) {
     throw new Error(
       `Refusing to run integration tests against "${host}". ` +
-        'These tests truncate every table, so DATABASE_URL must point at a local Postgres.',
+        'These tests empty every table, so DATABASE_URL must point at a local Postgres.',
     );
   }
+
+  // Password hashing at the minimum cost: these tests check auth behaviour,
+  // not bcrypt's strength, and cost 12 spent ~480ms of CPU per test user.
+  // config.ts allows a cost this low only because NODE_ENV is 'test'.
+  // Set here, not only in .env.test, so a copy of the example file missing
+  // the line cannot turn the cost guard into a boot failure.
+  process.env.NODE_ENV = 'test';
+  process.env.BCRYPT_COST = '4';
 
   return url;
 }

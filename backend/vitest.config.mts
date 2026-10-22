@@ -36,19 +36,19 @@ export default defineConfig({
           //
           // It matters more than it looks. Retention prunes on the write path
           // are deliberately unawaited (see lib/retention.ts), so a DELETE can
-          // still be in flight when the next file's beforeEach issues its
-          // TRUNCATE — and TRUNCATE takes an ACCESS EXCLUSIVE lock. With one
-          // process those at least share a connection pool; with several, the
-          // contention showed up as an intermittent 500 from an unrelated
-          // route, roughly one full run in two.
+          // still be in flight when the next file's beforeEach clears the
+          // tables. With one process those at least share a connection pool;
+          // with several (back when the clear was a TRUNCATE, which takes an
+          // ACCESS EXCLUSIVE lock), the contention showed up as an
+          // intermittent 500 from an unrelated route, roughly one run in two.
           maxWorkers: 1,
           minWorkers: 1,
-          // Files must not interleave either: every test truncates shared
+          // Files must not interleave either: every test clears shared
           // tables in beforeEach, so a second file running concurrently wipes
           // the first file's fixtures mid-test.
           fileParallelism: false,
-          // Schema push on the first run plus bcrypt hashing make these slower
-          // than unit tests by an order of magnitude.
+          // Schema push on the first run, a real Postgres and a real HTTP stack
+          // make these slower than unit tests by an order of magnitude.
           testTimeout: 30_000,
           hookTimeout: 60_000,
         },
