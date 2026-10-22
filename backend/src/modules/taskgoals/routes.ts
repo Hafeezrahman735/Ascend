@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import {
-  computeProgress, loadGoalCounts, syncGoalCompletion, userOwnsTasks,
+  computeProgress, linkHabitCounterparts, loadGoalCounts, syncGoalCompletion, userOwnsTasks,
 } from '../../lib/goalProgress';
 
 export const taskGoalsRouter = Router();
@@ -157,16 +157,18 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
     const data = createSchema.parse(req.body);
-    const taskIds = [...new Set(data.taskIds ?? [])];
+    const requested = [...new Set(data.taskIds ?? [])];
 
     // All-or-nothing, checked BEFORE anything is written. The alternative —
     // create the goal, then attach in a second request — leaves a goal that
     // silently lacks the tasks the user just picked, and a rollback that can
     // itself fail. One transaction removes the state instead of handling it.
-    if (taskIds.length > 0 && !(await userOwnsTasks(userId, taskIds))) {
+    if (requested.length > 0 && !(await userOwnsTasks(userId, requested))) {
       res.status(404).json({ success: false, error: 'One or more tasks were not found' });
       return;
     }
+    // A habit picked by its instance takes its template along, and vice versa.
+    const taskIds = await linkHabitCounterparts(userId, requested);
 
     // Task.taskGoalId holds ONE goal, so linking a task moves it off whatever
     // goal it was on. Capture those goals first: losing an unfinished task can
@@ -331,29 +333,33 @@ taskGoalsRouter.post('/task-goals/:id/tasks', async (req: Request, res: Response
       res.status(404).json({ success: false, error: 'One or more tasks were not found' });
       return;
     }
+    // Widened only after validation, so the contradiction and ownership checks
+    // above judge exactly what the client sent.
+    const linkRows = await linkHabitCounterparts(userId, link);
+    const unlinkRows = await linkHabitCounterparts(userId, unlink);
 
     // Task.taskGoalId holds one goal, so linking MOVES a task. The goals it
     // moves away from change too, and losing an unfinished task can push one of
     // them to 100%.
-    const losing = link.length > 0
+    const losing = linkRows.length > 0
       ? await prisma.task.findMany({
-          where: { id: { in: link }, userId, taskGoalId: { not: null } },
+          where: { id: { in: linkRows }, userId, taskGoalId: { not: null } },
           select: { taskGoalId: true },
         })
       : [];
 
     const writes = [];
-    if (link.length > 0) {
+    if (linkRows.length > 0) {
       writes.push(prisma.task.updateMany({
-        where: { id: { in: link }, userId },
+        where: { id: { in: linkRows }, userId },
         data:  { taskGoalId: id },
       }));
     }
-    if (unlink.length > 0) {
+    if (unlinkRows.length > 0) {
       // Scoped to THIS goal: this endpoint can never clear a task's link to a
       // goal it was not called on.
       writes.push(prisma.task.updateMany({
-        where: { id: { in: unlink }, userId, taskGoalId: id },
+        where: { id: { in: unlinkRows }, userId, taskGoalId: id },
         data:  { taskGoalId: null },
       }));
     }

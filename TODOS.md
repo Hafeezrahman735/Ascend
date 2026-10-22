@@ -70,16 +70,6 @@ Deferred work, with the context that produced it. Written by gstack plan reviews
 
 Full plan: `docs/plans/adaptive-session-plan.md`
 
-### Pre-existing bug, found during review (not caused by this feature)
-
-- **Goals linked to recurring habits under-count sessions and focus time.**
-  `backend/src/lib/goalProgress.ts:106` filters `isArchived: false` on the
-  SESSION groupBy, and `POST /tasks/spawn-recurring` archives every non-today
-  instance (`tasks/routes.ts:288-292`). So such a goal can only ever see today
-  instance. Fix: drop `isArchived` from the *session* filter only; keep it on
-  the task-count groupBy, where excluding archived instances is correct.
-  Time already spent does not become un-spent when a row is archived.
-
 ### Deferred scope
 
 - Telemetry on estimate fill-rate. Premise P1 (that enough tasks carry an
@@ -134,24 +124,15 @@ Full plan: `docs/plans/adaptive-session-plan.md`
 Full review: `docs/plans/goal-stats-modal.md`. Recorded here because each was a
 decision, not an oversight.
 
-### F1 — a habit-linked goal reports contradictory numbers
+### F1 — a habit-linked goal reports contradictory numbers — RESOLVED (2026-10-21)
 
-`loadGoalCounts` filters `isArchived: false` for task counts
-(`backend/src/lib/goalProgress.ts:95`) but deliberately does NOT for sessions
-(`:117-123`, with a comment explaining why: time already spent does not become
-un-spent when its row is archived).
-
-A goal linked to a **recurring habit** therefore counts only today's live
-instance in `linkedTaskCount` while counting every session ever in
-`actualSessions` and `totalFocusSeconds`. It renders as "0/1 tasks · 47 sessions
-· 23h focus", and `taskProgress` swings between 0 and 1 as instances spawn and
-archive each day.
-
-The stats modal **labels** this ("all time, every instance") rather than fixing
-it. The real fix is a decision about what a habit-linked goal's progress should
-*mean* — arguably it should be sessions-only, since the task count is
-structurally meaningless for a habit — and that changes behaviour for every
-existing goal of that shape. Too big to ride along with a display feature.
+A linked habit now counts as exactly one item in `linkedTaskCount`, done when
+its most recent scheduled day was completed (`loadHabitProgress` in
+`backend/src/lib/goalProgress.ts`), so a habit-linked goal can reach 100% and no
+longer swings between 0 and 1 as instances spawn and archive. Sessions still
+count across every instance, all time. The earlier "sessions are filtered by
+`isArchived`" item from the adaptive-session review was already fixed and has
+been removed.
 
 ### Goal completion is logged, never celebrated — the next feature
 

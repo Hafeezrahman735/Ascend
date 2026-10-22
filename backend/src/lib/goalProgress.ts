@@ -83,11 +83,15 @@ export function computeProgress(
 }
 
 /**
- * Counts for a set of goals, in two queries total regardless of goal count.
+ * Counts for a set of goals, in a fixed number of queries regardless of goal count.
  *
- * Both queries are scoped by userId as well as taskGoalId: a task belonging to
+ * Every query is scoped by userId as well as taskGoalId: a task belonging to
  * someone else must never contribute to this user's goal, even if it somehow
  * carries the id.
+ *
+ * A linked HABIT counts as one item, whatever rows represent it — see
+ * loadHabitProgress. It used to be counted as its template (never completed,
+ * so the goal could not reach 100%) plus today's instance.
  */
 export async function loadGoalCounts(
   userId: string,
@@ -99,10 +103,17 @@ export async function loadGoalCounts(
   }
   if (goalIds.length === 0) return counts;
 
-  // Task counts — grouped, so no task rows cross the wire just to be counted.
+  // One-off task counts — grouped, so no task rows cross the wire just to be
+  // counted. Templates and instances are habits, counted below.
   const taskGroups = await prisma.task.groupBy({
     by: ['taskGoalId', 'isCompleted'],
-    where: { userId, taskGoalId: { in: goalIds }, isArchived: false },
+    where: {
+      userId,
+      taskGoalId: { in: goalIds },
+      isArchived: false,
+      isRecurring: false,
+      parentTaskId: null,
+    },
     _count: { _all: true },
   });
 
@@ -112,6 +123,13 @@ export async function loadGoalCounts(
     if (!entry) continue;
     entry.linkedTaskCount += g._count._all;
     if (g.isCompleted) entry.completedTaskCount += g._count._all;
+  }
+
+  for (const habit of await loadHabitProgress(userId, goalIds)) {
+    const entry = counts.get(habit.goalId);
+    if (!entry) continue;
+    entry.linkedTaskCount += 1;
+    if (habit.done) entry.completedTaskCount += 1;
   }
 
   // Focus sessions logged against any task currently linked to each goal.
@@ -156,6 +174,107 @@ export async function loadGoalCounts(
   }
 
   return counts;
+}
+
+/**
+ * Each active habit linked to one of these goals, and whether it counts as done.
+ *
+ * A habit has no finish line, so "done" means its most recent scheduled day
+ * was completed. That makes a goal reach 100% once every one-off task is done
+ * and each habit was kept on its latest day, and holds steady on days the
+ * habit is not scheduled (product decision, 2026-10-21).
+ *
+ * Membership is the template's taskGoalId. A habit linked through its live
+ * instance only — what the app wrote before linkHabitCounterparts existed —
+ * still counts, through that instance.
+ */
+async function loadHabitProgress(
+  userId: string,
+  goalIds: string[],
+): Promise<{ goalId: string; done: boolean }[]> {
+  const [linkedTemplates, linkedInstances] = await Promise.all([
+    prisma.task.findMany({
+      where: { userId, isRecurring: true, isArchived: false, taskGoalId: { in: goalIds } },
+      select: { id: true, taskGoalId: true },
+    }),
+    prisma.task.findMany({
+      where: { userId, parentTaskId: { not: null }, isArchived: false, taskGoalId: { in: goalIds } },
+      select: { parentTaskId: true, taskGoalId: true },
+    }),
+  ]);
+
+  const goalByTemplate = new Map<string, string>();
+  for (const t of linkedTemplates) goalByTemplate.set(t.id, t.taskGoalId!);
+
+  const instanceOnly = linkedInstances.filter((i) => !goalByTemplate.has(i.parentTaskId!));
+  if (instanceOnly.length > 0) {
+    // Only habits that still exist: an instance of a deleted habit is archived
+    // with it, but the template check keeps this independent of that.
+    const active = await prisma.task.findMany({
+      where: {
+        userId,
+        id: { in: instanceOnly.map((i) => i.parentTaskId!) },
+        isRecurring: true,
+        isArchived: false,
+      },
+      select: { id: true },
+    });
+    const activeIds = new Set(active.map((t) => t.id));
+    for (const i of instanceOnly) {
+      if (activeIds.has(i.parentTaskId!)) goalByTemplate.set(i.parentTaskId!, i.taskGoalId!);
+    }
+  }
+  if (goalByTemplate.size === 0) return [];
+
+  // The newest instance of each habit, archived or not: on a day the habit is
+  // not scheduled, yesterday's instance is already archived and is still the
+  // day that decides.
+  const latest = await prisma.task.findMany({
+    where: { userId, parentTaskId: { in: [...goalByTemplate.keys()] } },
+    orderBy: [{ parentTaskId: 'asc' }, { dueDate: 'desc' }, { createdAt: 'desc' }],
+    distinct: ['parentTaskId'],
+    select: { parentTaskId: true, isCompleted: true },
+  });
+  const doneByTemplate = new Map(latest.map((i) => [i.parentTaskId!, i.isCompleted]));
+
+  return [...goalByTemplate].map(([templateId, goalId]) => ({
+    goalId,
+    done: doneByTemplate.get(templateId) ?? false,
+  }));
+}
+
+/**
+ * A habit is linked to a goal as a unit: its template and its live instance.
+ *
+ * The app links whichever row it is showing, which for a habit is today's
+ * instance. Instances inherit the TEMPLATE's goal when they spawn, so linking
+ * only the instance dropped the habit off its goal the next morning. Every
+ * write of taskGoalId goes through this to reach both rows.
+ *
+ * Returns the given ids plus each habit's template and live instance.
+ * Archived instances are left as they were: they are history, and their
+ * sessions belong to the goal they were worked under.
+ */
+export async function linkHabitCounterparts(userId: string, taskIds: string[]): Promise<string[]> {
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return ids;
+
+  const rows = await prisma.task.findMany({
+    where: { id: { in: ids }, userId },
+    select: { id: true, isRecurring: true, parentTaskId: true },
+  });
+  const templateIds = new Set<string>();
+  for (const r of rows) {
+    if (r.isRecurring) templateIds.add(r.id);
+    if (r.parentTaskId) templateIds.add(r.parentTaskId);
+  }
+  if (templateIds.size === 0) return ids;
+
+  const live = await prisma.task.findMany({
+    where: { userId, parentTaskId: { in: [...templateIds] }, isArchived: false },
+    select: { id: true },
+  });
+  return [...new Set([...ids, ...templateIds, ...live.map((t) => t.id)])];
 }
 
 /**

@@ -329,11 +329,12 @@ export interface TaskGoal {
    * tasks. SECONDS — note `gamificationStore.totalFocusMinutes` is minutes;
    * comparing the two without converting is wrong by a factor of 60.
    *
-   * Counts sessions on ARCHIVED tasks too, unlike the task counts above, which
-   * exclude them (`backend/src/lib/goalProgress.ts:95` vs `:117-123`). For a
-   * goal linked to a recurring habit that means this keeps every session ever
-   * while `linkedTaskCount` sees only today's live instance. Deliberate on the
-   * server, and the reason anything displaying it has to say "all time".
+   * Counts sessions on ARCHIVED tasks too, unlike the task counts above (see
+   * loadGoalCounts in backend/src/lib/goalProgress.ts). For a goal linked to a
+   * recurring habit that means this keeps every session ever, while the habit
+   * adds exactly one to `linkedTaskCount`, done when its latest scheduled day
+   * was. Deliberate on the server, and the reason anything displaying it has
+   * to say "all time".
    */
   totalFocusSeconds: number;
   /**

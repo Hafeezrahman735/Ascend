@@ -5,7 +5,7 @@ import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import { resolveLocalDate, dayNameFromLocalDate, utcDateStr } from '../../lib/localDate';
 import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
-import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
+import { linkHabitCounterparts, syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
 import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
@@ -583,13 +583,36 @@ export function setupTaskRoutes(router: Router): void {
         }
       }
 
+      // A habit's template and live instance move between goals together — see
+      // linkHabitCounterparts. Their previous goals are affected as well.
+      const counterpartGoals: (string | null)[] = [];
+      if (data.taskGoalId !== undefined) {
+        const counterparts = (await linkHabitCounterparts(userId, [id])).filter((t) => t !== id);
+        if (counterparts.length > 0) {
+          const before = await prisma.task.findMany({
+            where: { id: { in: counterparts }, userId },
+            select: { taskGoalId: true },
+          });
+          counterpartGoals.push(...before.map((t) => t.taskGoalId));
+          await prisma.task.updateMany({
+            where: { id: { in: counterparts }, userId },
+            data: { taskGoalId: task.taskGoalId },
+          });
+        }
+      }
+
       // Anything that changed completion or moved the task between goals can move
       // goal progress. Recompute both the old and new goal so a task leaving a
-      // goal updates that goal too.
+      // goal updates that goal too. Completing a habit's instance counts toward
+      // the goal its TEMPLATE is on, which older data may not have copied down.
       if (data.isCompleted !== undefined || data.taskGoalId !== undefined) {
+        const template = task.parentTaskId
+          ? await prisma.task.findFirst({ where: { id: task.parentTaskId, userId }, select: { taskGoalId: true } })
+          : null;
         await syncGoalCompletion(
           userId,
-          [existing.taskGoalId, task.taskGoalId].filter((g): g is string => !!g),
+          [existing.taskGoalId, task.taskGoalId, template?.taskGoalId ?? null, ...counterpartGoals]
+            .filter((g): g is string => !!g),
         );
       }
 
