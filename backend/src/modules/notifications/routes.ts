@@ -39,38 +39,75 @@ notificationsRouter.patch('/notifications/preferences', async (req: Request, res
   }
 });
 
+/**
+ * Page cursor: the last row's createdAt and id, as `<ISO>|<uuid>`.
+ *
+ * createdAt alone is not unique — a fan-out can write several rows in the
+ * same millisecond — and a `createdAt < cursor` page boundary silently skipped
+ * every row that shared the boundary row's timestamp. The id breaks the tie.
+ * A bare ISO timestamp (the old format) is still accepted.
+ */
+const cursorSchema = z
+  .string()
+  .transform((raw, ctx) => {
+    const [at, id] = raw.split('|');
+    const createdAt = new Date(at);
+    const isIso = z.string().datetime({ offset: true }).safeParse(at).success;
+    const idOk = id === undefined || z.string().uuid().safeParse(id).success;
+    if (!isIso || Number.isNaN(createdAt.getTime()) || !idOk) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid cursor' });
+      return z.NEVER;
+    }
+    return { createdAt, id: id ?? null };
+  });
+
 notificationsRouter.get('/notifications', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
 
-    // Cursor-paginated. It used to be a bare `take: 50` with no cursor, which
-    // meant anything past the newest 50 was permanently unreachable through the
-    // API while still sitting in the table forever — stored but unreadable, the
-    // worst of both. The response shape gains `cursor` alongside the rows; the
-    // client reads `data.notifications`, and older builds that read `data` as an
-    // array are not a concern because this endpoint is only called by the app.
+    // `data` stays a bare array so app builds already installed keep working;
+    // `cursor` and `unreadCount` ride beside it. The client used to page only
+    // its first fetch and count unread within it, so a badge never read above
+    // the page size and older notifications could not be reached.
     const { cursor, limit } = z
       .object({
-        cursor: z.string().datetime({ offset: true }).optional(),
+        cursor: cursorSchema.optional(),
         limit: z.coerce.number().int().min(1).max(50).default(50),
       })
       .parse(req.query);
 
-    const rows = await prisma.notification.findMany({
-      where: { userId, ...(cursor ? { createdAt: { lt: new Date(cursor) } } : {}) },
-      orderBy: { createdAt: 'desc' },
-      take: limit + 1,
-    });
+    const before = cursor
+      ? cursor.id
+        ? {
+            OR: [
+              { createdAt: { lt: cursor.createdAt } },
+              { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+            ],
+          }
+        : { createdAt: { lt: cursor.createdAt } }
+      : {};
+
+    const [rows, unreadCount] = await Promise.all([
+      prisma.notification.findMany({
+        where: { userId, ...before },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+      }),
+      prisma.notification.count({ where: { userId, isRead: false } }),
+    ]);
 
     const hasMore = rows.length > limit;
     const notifications = hasMore ? rows.slice(0, limit) : rows;
+    const last = notifications[notifications.length - 1];
 
     res.json({
       success: true,
       data: notifications,
-      cursor: hasMore ? notifications[notifications.length - 1].createdAt.toISOString() : null,
+      cursor: hasMore ? `${last.createdAt.toISOString()}|${last.id}` : null,
+      unreadCount,
     });
   } catch (error) {
+    if (handleZodError(res, error)) return;
     if (handleAuthError(res, error)) return;
     console.error('Get notifications error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });

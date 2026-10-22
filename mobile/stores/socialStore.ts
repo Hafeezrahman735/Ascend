@@ -13,6 +13,7 @@ import {
   PublicUserProfile,
 } from '../types';
 import { api } from '../services/api';
+import { appendNotificationPage, parseNotificationPage, type NotificationRow } from '../lib/notificationPages';
 
 /**
  * The non-group feed URL for a scope.
@@ -51,6 +52,10 @@ interface SocialState {
   focusLeaderboard: FocusLeaderboardEntry[];
   myFocusEntry: FocusLeaderboardEntry | null;
   notifications: InAppNotification[];
+  /** Where the next, older page starts. Null once the oldest has loaded. */
+  notificationsCursor: string | null;
+  isLoadingMoreNotifications: boolean;
+  /** The server's total, not a count of the rows loaded so far. */
   unreadCount: number;
 
   searchUsers: (query: string) => Promise<UserSearchResult[]>;
@@ -76,6 +81,7 @@ interface SocialState {
   fetchFocusLeaderboard: (scope: string, period: string) => Promise<void>;
   markNotificationsRead: () => Promise<void>;
   fetchNotifications: () => Promise<void>;
+  fetchMoreNotifications: () => Promise<void>;
 
   // Search & follow
   searchResults: UserSearchResult[];
@@ -127,6 +133,8 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   focusLeaderboard: [],
   myFocusEntry: null,
   notifications: [],
+  notificationsCursor: null,
+  isLoadingMoreNotifications: false,
   unreadCount: 0,
 
   searchResults: [],
@@ -471,21 +479,34 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   fetchNotifications: async () => {
-    try {
-      const response = await api.get<{ id: string; type: string; title: string; body: string; isRead: boolean; createdAt: string }[]>('/notifications');
-      if (response.success && response.data) {
-        const list = Array.isArray(response.data) ? response.data : [];
-        const mapped: InAppNotification[] = list.map((n) => ({
-          id: n.id,
-          text: n.title + (n.body ? `: ${n.body}` : ''),
-          createdAt: n.createdAt,
-          isRead: n.isRead,
-        }));
-        set({ notifications: mapped, unreadCount: mapped.filter((n) => !n.isRead).length });
-      }
-    } catch {
-      // silent
+    const response = await api.get<NotificationRow[]>('/notifications');
+    if (!response.success) {
+      console.warn('[social] fetchNotifications failed:', response.error);
+      return;
     }
+    const page = parseNotificationPage(response);
+    set({ notifications: page.items, notificationsCursor: page.cursor, unreadCount: page.unreadCount });
+  },
+
+  fetchMoreNotifications: async () => {
+    const { notificationsCursor, isLoadingMoreNotifications } = get();
+    if (!notificationsCursor || isLoadingMoreNotifications) return;
+    set({ isLoadingMoreNotifications: true });
+    const response = await api.get<NotificationRow[]>(
+      `/notifications?cursor=${encodeURIComponent(notificationsCursor)}`,
+    );
+    if (!response.success) {
+      console.warn('[social] fetchMoreNotifications failed:', response.error);
+      set({ isLoadingMoreNotifications: false });
+      return;
+    }
+    const page = parseNotificationPage(response);
+    set((state) => ({
+      notifications: appendNotificationPage(state.notifications, page.items),
+      notificationsCursor: page.cursor,
+      unreadCount: page.unreadCount,
+      isLoadingMoreNotifications: false,
+    }));
   },
 
   fetchUserSocialStats: async () => {

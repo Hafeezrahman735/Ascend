@@ -1253,6 +1253,8 @@ export default function AscendScreen() {
       feedScope: s.feedScope,
       setFeedScope: s.setFeedScope,
       notifications: s.notifications,
+      notificationsCursor: s.notificationsCursor,
+      isLoadingMoreNotifications: s.isLoadingMoreNotifications,
       unreadCount: s.unreadCount,
       isLoading: s.isLoading,
       focusLeaderboard: s.focusLeaderboard,
@@ -1262,6 +1264,7 @@ export default function AscendScreen() {
       fetchStudyGroups: s.fetchStudyGroups,
       fetchFocusLeaderboard: s.fetchFocusLeaderboard,
       fetchNotifications: s.fetchNotifications,
+      fetchMoreNotifications: s.fetchMoreNotifications,
       markNotificationsRead: s.markNotificationsRead,
       setSelectedGroup: s.setSelectedGroup,
       toggleReaction: s.toggleReaction,
@@ -1733,6 +1736,13 @@ export default function AscendScreen() {
                 data={social.notifications}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ paddingBottom: 32 }}
+                // Older pages load as the list nears its end; the cursor is
+                // null once the oldest notification is on screen.
+                onEndReached={() => { if (social.notificationsCursor) social.fetchMoreNotifications(); }}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={social.isLoadingMoreNotifications
+                  ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
+                  : null}
                 renderItem={({ item }) => (
                   <View style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: BORDER_SOFT }}>
                     <Text style={{ color: item.isRead ? Colors.subtext : Colors.textBright, fontSize: 14 }}>
