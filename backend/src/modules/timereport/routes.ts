@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
-import { shiftDateKey, daysBetweenKeys, safeTimeZone, localPartsOf } from '../../lib/localParts';
-import { computeTimeReport, type ReportSession } from '../../lib/timeReport';
-import { loadCurrentGoals } from '../../lib/goalAttribution';
+import { shiftDateKey, daysBetweenKeys, safeTimeZone, localPartsOf, makeFormatter } from '../../lib/localParts';
+import { computeTimeReport, effectiveLocal, type ReportSession } from '../../lib/timeReport';
+import { loadCurrentGoals, SESSION_GOAL_EXPR, SESSION_GOAL_JOIN } from '../../lib/goalAttribution';
+import { Prisma } from '@prisma/client';
 import { postgresTimeZone, sessionLocalDaySql } from '../../lib/localDaySql';
 
 /**
@@ -253,6 +254,150 @@ timeReportRouter.get('/time-report/history', async (req: Request, res: Response)
   } catch (err) {
     if (handleAuthError(res, err)) return;
     console.error('Time history error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+const SESSIONS_PAGE_DEFAULT = 50;
+const SESSIONS_PAGE_MAX = 100;
+
+const sessionsQuerySchema = z
+  .object({
+    by: z.enum(['goal', 'task']),
+    key: z.string().min(1).max(64).optional(),
+    none: z.literal('true').optional(),
+    from: z.string().regex(DATE, 'from must be YYYY-MM-DD'),
+    to: z.string().regex(DATE, 'to must be YYYY-MM-DD'),
+    tz: z.string().max(64).optional(),
+    cursor: z.string().max(80).optional(),
+    limit: z.coerce.number().int().min(1).max(SESSIONS_PAGE_MAX).default(SESSIONS_PAGE_DEFAULT),
+  })
+  .refine((q) => (q.key === undefined) !== (q.none === undefined), {
+    message: 'Send exactly one of key or none=true',
+  });
+
+/** `<ISO completedAt>|<session id>`, the last row of the previous page. */
+function parseSessionCursor(raw: string): { at: number; id: string } | null {
+  const [iso, id] = raw.split('|');
+  const at = Date.parse(iso);
+  return Number.isNaN(at) || !id ? null : { at, id };
+}
+
+/**
+ * `GET /time-report/sessions?by=goal|task&key=<id>|none=true&from&to&tz&cursor&limit`
+ *
+ * The sessions behind one row of /time-report, for the drill-down. It uses the
+ * same rows and the same rules: sessions fetched by `completedAt` widened a day
+ * each side, filed by the resolved local day (effectiveLocal), and matched to a
+ * goal by its task's CURRENT goal (lib/goalAttribution.ts). So a goal or task
+ * row's seconds in /time-report equal the total here for the same window.
+ *
+ * `none=true` is the null group: sessions not linked to a goal, or with no
+ * task. Newest first; cursor-paginated. An unknown key is an empty list, not
+ * a 404, because a row can name a task that has since been archived.
+ */
+timeReportRouter.get('/time-report/sessions', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+
+    const parsed = sessionsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid query' });
+      return;
+    }
+    const { by, key, from, to, tz, limit } = parsed.data;
+    const span = daysBetweenKeys(from, to);
+    if (span < 0 || span + 1 > MAX_RANGE_DAYS) {
+      res.status(400).json({ success: false, error: `Range must run forwards and be ${MAX_RANGE_DAYS} days or fewer` });
+      return;
+    }
+    const cursor = parsed.data.cursor ? parseSessionCursor(parsed.data.cursor) : null;
+    if (parsed.data.cursor && !cursor) {
+      res.status(400).json({ success: false, error: 'Invalid cursor' });
+      return;
+    }
+
+    const fetchFrom = new Date(`${shiftDateKey(from, -1)}T00:00:00.000Z`);
+    const fetchTo = new Date(`${shiftDateKey(to, 1)}T23:59:59.999Z`);
+    const keyFilter = by === 'task'
+      ? (key ? Prisma.sql`s.task_id = ${key}` : Prisma.sql`s.task_id IS NULL`)
+      : (key ? Prisma.sql`${SESSION_GOAL_EXPR} = ${key}` : Prisma.sql`${SESSION_GOAL_EXPR} IS NULL`);
+
+    const rows = await prisma.$queryRaw<{
+      id: string; completed_at: Date; duration_seconds: number; task_id: string | null;
+      task_title_snapshot: string | null; primary_tag: string | null; was_recurring: boolean;
+      local_date: string | null; local_hour: number | null; local_weekday: number | null; local_date_approx: boolean;
+    }[]>`
+      SELECT s.id, s.completed_at, s.duration_seconds, s.task_id, s.task_title_snapshot, s.primary_tag,
+             s.was_recurring, s.local_date, s.local_hour, s.local_weekday, s.local_date_approx
+      FROM sessions s
+      ${SESSION_GOAL_JOIN}
+      WHERE s.user_id = ${userId}::uuid AND s.type = 'focus'
+        AND s.completed_at >= ${fetchFrom} AND s.completed_at <= ${fetchTo}
+        AND ${keyFilter}
+      ORDER BY s.completed_at DESC, s.id DESC
+      LIMIT ${MAX_REPORT_SESSIONS + 1}`;
+
+    const truncated = rows.length > MAX_REPORT_SESSIONS;
+    if (truncated) rows.length = MAX_REPORT_SESSIONS;
+
+    const fmt = makeFormatter(safeTimeZone(tz));
+    const inRange = rows
+      .map((r) => ({
+        row: r,
+        day: effectiveLocal({
+          completedAt: r.completed_at,
+          localDate: r.local_date,
+          localHour: r.local_hour,
+          localWeekday: r.local_weekday,
+          localDateApprox: r.local_date_approx,
+        }, fmt).dateKey,
+      }))
+      .filter((r) => r.day >= from && r.day <= to);
+
+    const totals = {
+      seconds: inRange.reduce((sum, r) => sum + r.row.duration_seconds, 0),
+      sessions: inRange.length,
+    };
+
+    const afterCursor = cursor
+      ? inRange.filter((r) => {
+          const at = r.row.completed_at.getTime();
+          return at < cursor.at || (at === cursor.at && r.row.id < cursor.id);
+        })
+      : inRange;
+    const page = afterCursor.slice(0, limit);
+    const last = page[page.length - 1];
+    const goalByTask = await loadCurrentGoals(
+      userId,
+      page.map((r) => r.row.task_id).filter((t): t is string => !!t),
+    );
+
+    res.json({
+      success: true,
+      data: {
+        totals,
+        truncated,
+        sessions: page.map(({ row, day }) => ({
+          id: row.id,
+          completedAt: row.completed_at.toISOString(),
+          durationSeconds: row.duration_seconds,
+          localDate: day,
+          taskId: row.task_id,
+          taskTitle: row.task_title_snapshot,
+          goalId: row.task_id ? goalByTask.get(row.task_id) ?? null : null,
+          primaryTag: row.primary_tag,
+          wasRecurring: row.was_recurring,
+          approximateDay: row.local_date_approx || row.local_date === null,
+        })),
+        nextCursor: afterCursor.length > limit && last
+          ? `${last.row.completed_at.toISOString()}|${last.row.id}`
+          : null,
+      },
+    });
+  } catch (err) {
+    if (handleAuthError(res, err)) return;
+    console.error('Time sessions error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

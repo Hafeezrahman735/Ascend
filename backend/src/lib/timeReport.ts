@@ -177,7 +177,10 @@ function sumSeconds(map: Map<string, Bucket>): number {
  * See the header: an exact stamp is kept, an approximate one is thrown away
  * and recomputed from the instant in the caller's zone.
  */
-function effectiveLocal(s: ReportSession, fmt: Intl.DateTimeFormat): LocalParts {
+export function effectiveLocal(
+  s: Pick<ReportSession, 'completedAt' | 'localDate' | 'localHour' | 'localWeekday' | 'localDateApprox'>,
+  fmt: Intl.DateTimeFormat,
+): LocalParts {
   if (!s.localDateApprox && s.localDate !== null && s.localHour !== null && s.localWeekday !== null) {
     return { dateKey: s.localDate, hour: s.localHour, weekday: s.localWeekday };
   }

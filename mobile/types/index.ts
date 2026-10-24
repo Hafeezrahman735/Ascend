@@ -478,6 +478,32 @@ export interface TimeReport {
   truncated: boolean;
 }
 
+/**
+ * `GET /time-report/sessions`: the sessions behind one /time-report goal or
+ * task row. `totals` equals that row for the same window and zone.
+ */
+export interface TimeSessionsPage {
+  totals: { seconds: number; sessions: number };
+  truncated: boolean;
+  sessions: {
+    id: string;
+    completedAt: string;
+    durationSeconds: number;
+    /** Resolved local day, 'YYYY-MM-DD'. */
+    localDate: string;
+    taskId: string | null;
+    /** Title as it was when the session was logged. */
+    taskTitle: string | null;
+    /** Current goal of the task. */
+    goalId: string | null;
+    primaryTag: string | null;
+    wasRecurring: boolean;
+    /** The day was worked out from the instant, not stamped exactly. */
+    approximateDay: boolean;
+  }[];
+  nextCursor: string | null;
+}
+
 /** `GET /time-report/history`: all-time focus by local day. Server-confirmed sessions only. */
 export interface TimeHistory {
   timeZone: string;
