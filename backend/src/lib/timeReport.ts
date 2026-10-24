@@ -58,8 +58,12 @@ export interface ReportSession {
   completedAt: Date;
   durationSeconds: number;
   taskId: string | null;
-  taskGoalId: string | null;
-  goalTitleSnapshot: string | null;
+  /**
+   * The goal this session counts toward NOW: its task's current goal, resolved
+   * by the caller with lib/goalAttribution.ts, and only ever a goal in `goals`.
+   * Null for no goal. Never the frozen `session.taskGoalId`.
+   */
+  goalId: string | null;
   taskTitleSnapshot: string | null;
   primaryTag: string | null;
   tags: string[];
@@ -196,6 +200,13 @@ export function computeTimeReport(input: {
 
   const bySeconds = (a: { seconds: number }, b: { seconds: number }) => b.seconds - a.seconds;
 
+  // Only a goal the caller passed in can be credited. A session whose resolved
+  // goal is anything else (deleted, or another account's id) counts as not
+  // linked, so no figure here can ever name a goal the user cannot see.
+  const goalTitleById = new Map(goals.map((g) => [g.id, g.title]));
+  const creditedGoal = (s: ReportSession): string | null =>
+    s.goalId && goalTitleById.has(s.goalId) ? s.goalId : null;
+
   let totalSeconds = 0;
   let goalLinkedSeconds = 0;
   let urgentSeconds = 0;
@@ -218,8 +229,6 @@ export function computeTimeReport(input: {
   let previousCount = 0;
   let currentCount = 0;
 
-  // The goal title frozen on a session, for goals that no longer exist.
-  const frozenGoalTitles = new Map<string, string>();
 
   for (const s of sessions) {
     const { dateKey, hour, weekday } = effectiveLocal(s, fmt);
@@ -233,7 +242,8 @@ export function computeTimeReport(input: {
     if (inPrevious) {
       previousSeconds += secs;
       previousCount += 1;
-      if (s.taskGoalId) addTo(prevGoalBuckets, s.taskGoalId, secs);
+      const prevGoal = creditedGoal(s);
+      if (prevGoal) addTo(prevGoalBuckets, prevGoal, secs);
       if (s.primaryTag) addTo(prevTagBuckets, s.primaryTag, secs);
       continue;
     }
@@ -246,14 +256,12 @@ export function computeTimeReport(input: {
     byHour[hour] = (byHour[hour] ?? 0) + secs;
     if (s.localDateApprox) approxSeconds += secs;
 
-    if (s.taskGoalId) {
+    const goalId = creditedGoal(s);
+    if (goalId) {
       goalLinkedSeconds += secs;
-      addTo(goalBuckets, s.taskGoalId, secs);
-      const seen = goalLastWorked.get(s.taskGoalId);
-      if (!seen || dateKey > seen) goalLastWorked.set(s.taskGoalId, dateKey);
-      if (s.goalTitleSnapshot && !frozenGoalTitles.has(s.taskGoalId)) {
-        frozenGoalTitles.set(s.taskGoalId, s.goalTitleSnapshot);
-      }
+      addTo(goalBuckets, goalId, secs);
+      const seen = goalLastWorked.get(goalId);
+      if (!seen || dateKey > seen) goalLastWorked.set(goalId, dateKey);
     }
 
     if (s.priority && URGENT_PRIORITIES.has(s.priority)) urgentSeconds += secs;
@@ -266,7 +274,7 @@ export function computeTimeReport(input: {
           // the snapshot columns and still be worth counting.
           title: s.taskTitleSnapshot ?? 'Untitled task',
           wasRecurring: s.wasRecurring,
-          goalTitle: s.goalTitleSnapshot,
+          goalTitle: goalId ? goalTitleById.get(goalId) ?? null : null,
         });
       }
     } else {
@@ -281,9 +289,10 @@ export function computeTimeReport(input: {
 
   // ── Goals ──
   const goalById = new Map(goals.map((g) => [g.id, g]));
-  // Every goal the user has, plus any goal that only appears in history
-  // (deleted since, but its time was still spent).
-  const goalIds = new Set<string>([...goals.map((g) => g.id), ...goalBuckets.keys()]);
+  // Every goal the user has. Time on a deleted goal's tasks was moved to "not
+  // linked" when the goal was deleted (its tasks were unlinked), so no goal
+  // exists only in history any more.
+  const goalIds = new Set<string>(goals.map((g) => g.id));
 
   const goalRows: GoalRow[] = [];
   for (const goalId of goalIds) {
@@ -304,9 +313,10 @@ export function computeTimeReport(input: {
 
     goalRows.push({
       goalId,
-      // Prefer the live title; fall back to whatever the sessions froze, which
-      // is all that survives once a goal is deleted.
-      title: meta?.title ?? frozenGoalTitles.get(goalId) ?? 'Deleted goal',
+      // Sessions only ever resolve to a goal in `goals`, so there is always a
+      // live title. Deleting a goal unlinks its tasks, and their time then
+      // counts as not linked rather than under a ghost of the goal.
+      title: meta?.title ?? 'Untitled goal',
       seconds: bucket.seconds,
       sessions: bucket.sessions,
       share,

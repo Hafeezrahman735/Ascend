@@ -5,14 +5,16 @@ import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import { shiftDateKey, daysBetweenKeys, safeTimeZone, localPartsOf } from '../../lib/localParts';
 import { computeTimeReport, type ReportSession } from '../../lib/timeReport';
+import { loadCurrentGoals } from '../../lib/goalAttribution';
 
 /**
  * `GET /time-report?from=YYYY-MM-DD&to=YYYY-MM-DD`
  *
- * Reads frozen attribution off the session rows and aggregates it. No joins:
- * everything the report needs was stamped when the session was saved (see
- * lib/sessionAttribution.ts), which is what makes this a single indexed read
- * rather than a per-row lookup against a task list that excludes archived rows.
+ * Reads attribution frozen onto the session rows (titles, tags, local day;
+ * see lib/sessionAttribution.ts) and aggregates it. The one exception is the
+ * GOAL: a session counts toward its task's current goal, resolved once per
+ * task by lib/goalAttribution.ts, so relinking a task moves its time. The
+ * frozen `taskGoalId` / `goalTitleSnapshot` are deliberately not selected.
  *
  * The query is by `completedAt`, NOT by the stored `localDate`, and it is
  * widened by a day at each end. Two reasons, both load-bearing:
@@ -52,8 +54,6 @@ const REPORT_SELECT = {
   completedAt: true,
   durationSeconds: true,
   taskId: true,
-  taskGoalId: true,
-  goalTitleSnapshot: true,
   taskTitleSnapshot: true,
   primaryTag: true,
   tags: true,
@@ -69,8 +69,6 @@ type SessionRow = {
   completedAt: Date;
   durationSeconds: number;
   taskId: string | null;
-  taskGoalId: string | null;
-  goalTitleSnapshot: string | null;
   taskTitleSnapshot: string | null;
   primaryTag: string | null;
   tags: string[];
@@ -87,13 +85,12 @@ type SessionRow = {
  * computeTimeReport must resolve from `completedAt`, and defaulting it to
  * midnight-on-the-epoch would file it under the wrong day silently.
  */
-function toReportSession(row: SessionRow): ReportSession {
+function toReportSession(row: SessionRow, goalByTask: Map<string, string | null>): ReportSession {
   return {
     completedAt: row.completedAt,
     durationSeconds: row.durationSeconds,
     taskId: row.taskId,
-    taskGoalId: row.taskGoalId,
-    goalTitleSnapshot: row.goalTitleSnapshot,
+    goalId: row.taskId ? goalByTask.get(row.taskId) ?? null : null,
     taskTitleSnapshot: row.taskTitleSnapshot,
     primaryTag: row.primaryTag,
     tags: row.tags,
@@ -154,8 +151,13 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
     const timeZone = safeTimeZone(tz);
     const today = localPartsOf(new Date(), timeZone).dateKey;
 
+    const goalByTask = await loadCurrentGoals(
+      userId,
+      rows.map((r) => r.taskId).filter((t): t is string => !!t),
+    );
+
     const report = computeTimeReport({
-      sessions: rows.map(toReportSession),
+      sessions: rows.map((r) => toReportSession(r, goalByTask)),
       from,
       to,
       previousFrom: prevFrom,

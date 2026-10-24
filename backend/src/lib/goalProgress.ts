@@ -1,5 +1,6 @@
-import { ProgressMode } from '@prisma/client';
+import { Prisma, ProgressMode } from '@prisma/client';
 import { prisma } from './prisma';
+import { SESSION_GOAL_EXPR, SESSION_GOAL_JOIN } from './goalAttribution';
 import { eventBus, EventTypes } from '../middleware/eventBus';
 
 /**
@@ -132,45 +133,27 @@ export async function loadGoalCounts(
     if (habit.done) entry.completedTaskCount += 1;
   }
 
-  // Focus sessions logged against any task currently linked to each goal.
-  // NOTE: no `isArchived` filter here, unlike the task-count query above.
-  // Recurring habits archive yesterday’s instance every day (see
-  // POST /tasks/spawn-recurring), and each instance inherits the template’s
-  // taskGoalId. Filtering archived tasks out therefore hid every session
-  // older than today, so a goal linked to a habit reported near-zero
-  // progress forever. Time already spent does not become un-spent when the
-  // row it belongs to is archived. The task-count query keeps its filter,
-  // where excluding archived instances is correct — they should not inflate
-  // linkedTaskCount.
-  const sessionGroups = await prisma.session.groupBy({
-    by: ['taskId'],
-    where: {
-      userId,
-      type: 'focus',
-      task: { userId, taskGoalId: { in: goalIds } },
-    },
-    _count: { _all: true },
-    _sum: { durationSeconds: true },
-  });
+  // Focus time, by each session's CURRENT goal (lib/goalAttribution.ts): the
+  // task's present link, or for a habit instance the template's. Linking an
+  // already-worked task brings its past time; moving or unlinking one takes it
+  // away. Archived tasks still count, because their time was really spent; the
+  // task-count query above is where excluding archived rows is correct.
+  const sessionGroups = await prisma.$queryRaw<{ goal_id: string; sessions: number; seconds: number }[]>`
+    SELECT ${SESSION_GOAL_EXPR} AS goal_id,
+           COUNT(*)::int AS sessions,
+           COALESCE(SUM(s.duration_seconds), 0)::int AS seconds
+    FROM sessions s
+    ${SESSION_GOAL_JOIN}
+    WHERE s.user_id = ${userId}::uuid
+      AND s.type = 'focus'
+      AND ${SESSION_GOAL_EXPR} IN (${Prisma.join(goalIds)})
+    GROUP BY 1`;
 
-  if (sessionGroups.length > 0) {
-    const taskIds = sessionGroups.map((s) => s.taskId).filter((t): t is string => !!t);
-    const taskToGoal = await prisma.task.findMany({
-      where: { id: { in: taskIds }, userId },
-      select: { id: true, taskGoalId: true },
-    });
-    const goalByTask = new Map(taskToGoal.map((t) => [t.id, t.taskGoalId]));
-
-    for (const s of sessionGroups) {
-      if (!s.taskId) continue;
-      const goalId = goalByTask.get(s.taskId);
-      if (!goalId) continue;
-      const entry = counts.get(goalId);
-      if (!entry) continue;
-      entry.actualSessions += s._count._all;
-      // Prisma types _sum as nullable when a group could be empty.
-      entry.totalFocusSeconds += s._sum.durationSeconds ?? 0;
-    }
+  for (const g of sessionGroups) {
+    const entry = counts.get(g.goal_id);
+    if (!entry) continue;
+    entry.actualSessions += g.sessions;
+    entry.totalFocusSeconds += g.seconds;
   }
 
   return counts;

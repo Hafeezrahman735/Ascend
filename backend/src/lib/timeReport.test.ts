@@ -9,8 +9,7 @@ function session(over: Partial<ReportSession> = {}): ReportSession {
     completedAt: new Date('2026-08-10T13:00:00Z'),
     durationSeconds: 25 * MIN,
     taskId: 'task_1',
-    taskGoalId: null,
-    goalTitleSnapshot: null,
+    goalId: null,
     taskTitleSnapshot: 'A task',
     primaryTag: null,
     tags: [],
@@ -22,6 +21,10 @@ function session(over: Partial<ReportSession> = {}): ReportSession {
     localDateApprox: false,
     ...over,
   };
+}
+
+function goal(over: Partial<ReportGoal> = {}): ReportGoal {
+  return { id: 'g1', title: 'Chemistry Degree', deadline: null, isCompleted: false, ...over };
 }
 
 /** Same-length window ending the day before `from`, as the route computes it. */
@@ -87,9 +90,10 @@ describe('totals', () => {
 describe('intent — was this where I wanted my time to go', () => {
   it('reports the share of time linked to a goal', () => {
     const r = report({
+      goals: [goal()],
       sessions: [
-        session({ taskGoalId: 'g1', durationSeconds: 60 * MIN }),
-        session({ taskGoalId: null, durationSeconds: 20 * MIN }),
+        session({ goalId: 'g1', durationSeconds: 60 * MIN }),
+        session({ goalId: null, durationSeconds: 20 * MIN }),
       ],
     });
     expect(r.intent.goalLinkedSeconds).toBe(60 * MIN);
@@ -118,9 +122,6 @@ describe('intent — was this where I wanted my time to go', () => {
 });
 
 describe('goals', () => {
-  const goal = (over: Partial<ReportGoal> = {}): ReportGoal => ({
-    id: 'g1', title: 'Chemistry Degree', deadline: null, isCompleted: false, ...over,
-  });
 
   it('includes a goal with no time this window, marked idle', () => {
     const r = report({ goals: [goal()] });
@@ -134,8 +135,8 @@ describe('goals', () => {
       today: '2026-08-15',
       goals: [goal({ id: 'g1', deadline: '2026-08-20' }), goal({ id: 'g2', title: 'Other' })],
       sessions: [
-        session({ taskGoalId: 'g1', durationSeconds: 5 * MIN }),
-        session({ taskGoalId: 'g2', durationSeconds: 200 * MIN }),
+        session({ goalId: 'g1', durationSeconds: 5 * MIN }),
+        session({ goalId: 'g2', durationSeconds: 200 * MIN }),
       ],
     });
     const g1 = r.goals.find((g) => g.goalId === 'g1')!;
@@ -147,7 +148,7 @@ describe('goals', () => {
     const r = report({
       today: '2026-08-15',
       goals: [goal({ deadline: '2026-08-20' })],
-      sessions: [session({ taskGoalId: 'g1', durationSeconds: 200 * MIN })],
+      sessions: [session({ goalId: 'g1', durationSeconds: 200 * MIN })],
     });
     expect(r.goals[0].status).toBe('fed');
   });
@@ -158,8 +159,8 @@ describe('goals', () => {
       today: '2026-08-15',
       goals: [goal({ deadline: '2026-08-16', isCompleted: true }), goal({ id: 'g2', title: 'Other' })],
       sessions: [
-        session({ taskGoalId: 'g1', durationSeconds: 1 * MIN }),
-        session({ taskGoalId: 'g2', durationSeconds: 300 * MIN }),
+        session({ goalId: 'g1', durationSeconds: 1 * MIN }),
+        session({ goalId: 'g2', durationSeconds: 300 * MIN }),
       ],
     });
     expect(r.goals.find((g) => g.goalId === 'g1')!.status).toBe('fed');
@@ -170,8 +171,8 @@ describe('goals', () => {
       today: '2026-08-15',
       goals: [goal({ deadline: '2026-08-01' }), goal({ id: 'g2', title: 'Other' })],
       sessions: [
-        session({ taskGoalId: 'g1', durationSeconds: 2 * MIN }),
-        session({ taskGoalId: 'g2', durationSeconds: 300 * MIN }),
+        session({ goalId: 'g1', durationSeconds: 2 * MIN }),
+        session({ goalId: 'g2', durationSeconds: 300 * MIN }),
       ],
     });
     const g1 = r.goals.find((g) => g.goalId === 'g1')!;
@@ -188,30 +189,34 @@ describe('goals', () => {
         goal({ id: 'idle', title: 'Idle' }),
       ],
       sessions: [
-        session({ taskGoalId: 'fed', durationSeconds: 300 * MIN }),
-        session({ taskGoalId: 'starved', durationSeconds: 2 * MIN }),
+        session({ goalId: 'fed', durationSeconds: 300 * MIN }),
+        session({ goalId: 'starved', durationSeconds: 2 * MIN }),
       ],
     });
     expect(r.goals.map((g) => g.goalId)).toEqual(['starved', 'fed', 'idle']);
   });
 
-  it('still reports a goal that only exists in history, under its frozen title', () => {
-    // Deleted since. The time was still spent and still counts.
+  it('credits no goal it was not given: that time counts as not linked', () => {
+    // A goal is credited by its CURRENT link. Deleting a goal unlinks its
+    // tasks, so an id the caller did not pass can only be stale or foreign,
+    // and must never surface as a row or inflate the goal-linked share.
     const r = report({
       goals: [],
-      sessions: [session({ taskGoalId: 'gone', goalTitleSnapshot: 'Abandoned Goal' })],
+      sessions: [session({ goalId: 'gone', durationSeconds: 30 * MIN })],
     });
-    expect(r.goals).toHaveLength(1);
-    expect(r.goals[0].title).toBe('Abandoned Goal');
+    expect(r.goals).toHaveLength(0);
+    expect(r.totals.seconds).toBe(30 * MIN);
+    expect(r.intent.goalLinkedSeconds).toBe(0);
+    expect(r.intent.unlinkedSeconds).toBe(30 * MIN);
   });
 
   it('records the last day each goal was worked', () => {
     const r = report({
       goals: [goal()],
       sessions: [
-        session({ taskGoalId: 'g1', localDate: '2026-08-03' }),
-        session({ taskGoalId: 'g1', localDate: '2026-08-11' }),
-        session({ taskGoalId: 'g1', localDate: '2026-08-07' }),
+        session({ goalId: 'g1', localDate: '2026-08-03' }),
+        session({ goalId: 'g1', localDate: '2026-08-11' }),
+        session({ goalId: 'g1', localDate: '2026-08-07' }),
       ],
     });
     expect(r.goals[0].lastWorkedDate).toBe('2026-08-11');
@@ -256,12 +261,12 @@ describe('tags', () => {
 });
 
 describe('tasks', () => {
-  it('ranks by time and keeps the goal each belonged to', () => {
+  it('ranks by time and names each task’s current goal', () => {
     const r = report({
+      goals: [goal({ id: 'chem', title: 'Chemistry Degree' })],
       sessions: [
         session({ taskId: 't1', taskTitleSnapshot: 'Small', durationSeconds: 10 * MIN }),
-        session({ taskId: 't2', taskTitleSnapshot: 'Big', durationSeconds: 90 * MIN,
-                  goalTitleSnapshot: 'Chemistry Degree' }),
+        session({ taskId: 't2', taskTitleSnapshot: 'Big', durationSeconds: 90 * MIN, goalId: 'chem' }),
       ],
     });
     expect(r.tasks[0].title).toBe('Big');
