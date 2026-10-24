@@ -40,6 +40,13 @@ const deadlineSchema = z
   .regex(YYYY_MM_DD, 'deadline must be a YYYY-MM-DD date')
   .refine((v) => !Number.isNaN(new Date(`${v}T00:00:00.000Z`).getTime()), 'deadline is not a real date');
 
+/**
+ * Planned focus time, in minutes. 1 to 100,000 (about 1,666 hours), or null for
+ * "no plan". Zero is rejected: a plan of nothing would read as reached the
+ * moment it was set.
+ */
+const plannedMinutesSchema = z.number().int().min(1).max(100_000);
+
 /** Parse a 'YYYY-MM-DD' deadline into the UTC-midnight Date a @db.Date column stores. */
 function parseDeadline(value: string | null | undefined): Date | null {
   return value ? new Date(`${value}T00:00:00.000Z`) : null;
@@ -55,6 +62,7 @@ const createSchema = z.object({
   title:          z.string().min(1).max(80),
   tag:            z.string().max(30).optional().nullable(),
   deadline:       deadlineSchema.optional().nullable(),
+  plannedMinutes: plannedMinutesSchema.optional().nullable(),
   /** Linked in the same transaction as the create — see the handler. */
   taskIds:        TASK_IDS.optional(),
   // Retired, accepted, ignored. See TASK_IDS above.
@@ -73,6 +81,7 @@ const updateSchema = z.object({
   tag:            z.string().max(30).optional().nullable(),
   targetSessions: z.number().int().positive().max(200).optional().nullable(),
   deadline:       deadlineSchema.optional().nullable(),
+  plannedMinutes: plannedMinutesSchema.optional().nullable(),
   progressMode:   z.enum(PROGRESS_MODES).optional(),
   isCompleted:    z.boolean().optional(),
   completedAt:    z.string().datetime({ offset: true }).optional().nullable(),
@@ -95,6 +104,7 @@ export interface SerializedGoal {
   targetSessions: number | null;
   progressMode: 'tasks' | 'sessions' | 'both';
   deadline: string | null;
+  plannedMinutes: number | null;
   isCompleted: boolean;
   completedAt: string | null;
   isArchived: boolean;
@@ -118,6 +128,7 @@ function serializeGoal(
     targetSessions: number | null;
     progressMode: 'tasks' | 'sessions' | 'both';
     deadline: Date | null;
+    plannedMinutes: number | null;
     isCompleted: boolean;
     completedAt: Date | null;
     isArchived: boolean;
@@ -133,6 +144,7 @@ function serializeGoal(
     targetSessions:     goal.targetSessions,
     progressMode:       progress.progressMode,
     deadline:           formatDeadline(goal.deadline),
+    plannedMinutes:     goal.plannedMinutes,
     isCompleted:        goal.isCompleted,
     completedAt:        goal.completedAt?.toISOString() ?? null,
     isArchived:         goal.isArchived,
@@ -187,6 +199,7 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
           title:    data.title,
           tag:      data.tag ?? null,
           deadline: parseDeadline(data.deadline),
+          plannedMinutes: data.plannedMinutes ?? null,
           // Stored, never read. Retained rather than dropped so that reverting
           // this change does not lose what older clients sent.
           targetSessions: data.targetSessions ?? null,
@@ -261,6 +274,7 @@ taskGoalsRouter.patch('/task-goals/:id', async (req: Request, res: Response) => 
     if (data.tag            !== undefined) update.tag            = data.tag;
     if (data.targetSessions !== undefined) update.targetSessions = data.targetSessions;
     if (data.deadline       !== undefined) update.deadline       = parseDeadline(data.deadline);
+    if (data.plannedMinutes !== undefined) update.plannedMinutes = data.plannedMinutes;
     if (data.isCompleted    !== undefined) update.isCompleted    = data.isCompleted;
     if (data.completedAt    !== undefined) update.completedAt    = data.completedAt ? new Date(data.completedAt) : null;
 

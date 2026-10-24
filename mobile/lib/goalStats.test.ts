@@ -18,6 +18,7 @@ function goal(over: Partial<TaskGoal> = {}): TaskGoal {
     targetSessions: null,
     progressMode: 'tasks',
     deadline: null,
+    plannedMinutes: null,
     isCompleted: false,
     completedAt: null,
     isArchived: false,

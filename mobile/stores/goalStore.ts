@@ -44,6 +44,7 @@ function normaliseCachedGoal(goal: TaskGoal): TaskGoal {
     ...goal,
     totalFocusSeconds: goal.totalFocusSeconds ?? 0,
     elapsedDays: goal.elapsedDays ?? 0,
+    plannedMinutes: goal.plannedMinutes ?? null,
   };
 }
 
@@ -160,6 +161,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       targetSessions: null,
       progressMode: 'tasks',
       deadline: data.deadline ?? null,
+      plannedMinutes: null,
       isCompleted: false,
       completedAt: null,
       isArchived: false,

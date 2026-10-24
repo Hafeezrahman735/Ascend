@@ -208,6 +208,7 @@ describe('the wire contract', () => {
       'isCompleted',
       'linkedTaskCount',
       'overallProgress',
+      'plannedMinutes',
       'progressMode',
       'sessionProgress',
       'tag',

@@ -287,6 +287,10 @@ model TaskGoal {
   // carries no time or timezone: picking "Aug 10" means Aug 10 wherever the user
   // is, and travelling or crossing DST cannot shift it.
   deadline       DateTime?    @db.Date
+  /// Focus time the user plans to spend on this goal, in minutes. Set by the
+  /// user, never derived. Drives the planned-vs-actual time view only: goal
+  /// completion stays task-based and never reads it. Null = no plan.
+  plannedMinutes Int?         @map("planned_minutes")
   isCompleted    Boolean      @default(false) @map("is_completed")
   completedAt    DateTime?    @map("completed_at")
   isArchived     Boolean      @default(false) @map("is_archived")

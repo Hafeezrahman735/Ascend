@@ -312,6 +312,8 @@ export interface TaskGoal {
   progressMode: ProgressMode;
   /** Calendar day, 'YYYY-MM-DD' — no time or timezone. */
   deadline: string | null;
+  /** Focus time the user plans to spend, in minutes. Null = no plan. Never affects completion. */
+  plannedMinutes: number | null;
   isCompleted: boolean;
   completedAt: string | null;
   isArchived: boolean;
