@@ -1,4 +1,4 @@
-import { daysBetweenKeys, hourLabel, makeFormatter, partsOf, type LocalParts } from './localParts';
+import { daysBetweenKeys, hourLabel, makeFormatter, partsOf, shiftDateKey, type LocalParts } from './localParts';
 
 /**
  * "Where did my time go, and was that where I wanted it to go?"
@@ -126,6 +126,13 @@ export interface TimeReport {
     wasRecurring: boolean;
     goalTitle: string | null;
   }[];
+  /** Tasks beyond the top list, so the list plus this row adds up to all task time. */
+  tasksOther: { count: number; seconds: number; sessions: number };
+  /**
+   * Every day of the window, oldest first, zero-filled, by resolved local day.
+   * Its seconds add up to `totals.seconds`.
+   */
+  series: { daily: { date: string; seconds: number; sessions: number }[] };
   patterns: {
     byWeekday: number[];
     byHour: number[];
@@ -222,6 +229,7 @@ export function computeTimeReport(input: {
   const taskBuckets = new Map<string, Bucket>();
   const taskTitles = new Map<string, { title: string; wasRecurring: boolean; goalTitle: string | null }>();
   const tagBuckets = new Map<string, Bucket>();
+  const dayBuckets = new Map<string, Bucket>();
 
   const prevGoalBuckets = new Map<string, Bucket>();
   const prevTagBuckets = new Map<string, Bucket>();
@@ -252,6 +260,7 @@ export function computeTimeReport(input: {
     currentCount += 1;
     totalSeconds += secs;
     activeDays.add(dateKey);
+    addTo(dayBuckets, dateKey, secs);
     byWeekday[weekday] = (byWeekday[weekday] ?? 0) + secs;
     byHour[hour] = (byHour[hour] ?? 0) + secs;
     if (s.localDateApprox) approxSeconds += secs;
@@ -334,7 +343,7 @@ export function computeTimeReport(input: {
   goalRows.sort((a, b) => statusRank[a.status] - statusRank[b.status] || b.seconds - a.seconds);
 
   // ── Tasks ──
-  const taskRows = [...taskBuckets.entries()]
+  const allTaskRows = [...taskBuckets.entries()]
     .map(([taskId, b]) => {
       const meta = taskTitles.get(taskId);
       return {
@@ -346,8 +355,21 @@ export function computeTimeReport(input: {
         goalTitle: meta?.goalTitle ?? null,
       };
     })
-    .sort(bySeconds)
-    .slice(0, TOP_TASKS);
+    .sort(bySeconds);
+  const taskRows = allTaskRows.slice(0, TOP_TASKS);
+  const otherTasks = allTaskRows.slice(TOP_TASKS);
+  const tasksOther = {
+    count: otherTasks.length,
+    seconds: otherTasks.reduce((sum, t) => sum + t.seconds, 0),
+    sessions: otherTasks.reduce((sum, t) => sum + t.sessions, 0),
+  };
+
+  // ── Daily series ──
+  const daily: { date: string; seconds: number; sessions: number }[] = [];
+  for (let day = from; day <= to; day = shiftDateKey(day, 1)) {
+    const b = dayBuckets.get(day);
+    daily.push({ date: day, seconds: b?.seconds ?? 0, sessions: b?.sessions ?? 0 });
+  }
 
   // ── Tags ──
   const tagTotal = sumSeconds(tagBuckets);
@@ -397,6 +419,8 @@ export function computeTimeReport(input: {
     },
     goals: goalRows,
     tasks: taskRows,
+    tasksOther,
+    series: { daily },
     patterns: { byWeekday, byHour, peakHour, bestWeekday },
     tags: tagRows,
     unattributedSeconds,

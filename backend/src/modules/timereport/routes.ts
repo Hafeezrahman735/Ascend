@@ -6,6 +6,7 @@ import { handleAuthError } from '../../lib/errors';
 import { shiftDateKey, daysBetweenKeys, safeTimeZone, localPartsOf } from '../../lib/localParts';
 import { computeTimeReport, type ReportSession } from '../../lib/timeReport';
 import { loadCurrentGoals } from '../../lib/goalAttribution';
+import { postgresTimeZone, sessionLocalDaySql } from '../../lib/localDaySql';
 
 /**
  * `GET /time-report?from=YYYY-MM-DD&to=YYYY-MM-DD`
@@ -135,10 +136,14 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
     const fetchTo = new Date(`${shiftDateKey(to, 1)}T23:59:59.999Z`);
 
     const [rows, goals] = await Promise.all([
+      // Newest first, one row past the cap: if the cap is hit, the rows dropped
+      // are the oldest (the previous-window comparison goes first), and the
+      // response says so instead of presenting partial totals as complete.
       prisma.session.findMany({
         where: { userId, type: 'focus', completedAt: { gte: fetchFrom, lte: fetchTo } },
         select: REPORT_SELECT,
-        take: MAX_REPORT_SESSIONS,
+        orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
+        take: MAX_REPORT_SESSIONS + 1,
       }),
       prisma.taskGoal.findMany({
         where: { userId, isArchived: false },
@@ -150,6 +155,9 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
     // re-resolve any session whose stored local day was a UTC guess.
     const timeZone = safeTimeZone(tz);
     const today = localPartsOf(new Date(), timeZone).dateKey;
+
+    const truncated = rows.length > MAX_REPORT_SESSIONS;
+    if (truncated) rows.length = MAX_REPORT_SESSIONS;
 
     const goalByTask = await loadCurrentGoals(
       userId,
@@ -177,10 +185,74 @@ timeReportRouter.get('/time-report', async (req: Request, res: Response) => {
     // second case can no longer produce an empty report: computeTimeReport
     // resolves a session with no stamp from its `completedAt`, so every session
     // lands on a day whether it was ever backfilled or not.
-    res.json({ success: true, data: report });
+    res.json({ success: true, data: { ...report, truncated } });
   } catch (err) {
     if (handleAuthError(res, err)) return;
     console.error('Time report error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+const historyQuerySchema = z.object({
+  tz: z.string().max(64).optional(),
+});
+
+/**
+ * `GET /time-report/history?tz=IANA` — all-time focus, by local day.
+ *
+ * Grouped in SQL with no row cap, so it is complete for any history: one row
+ * per day with focus, plus monthly totals and the all-time total. Each session
+ * lands on the same local day as in /time-report (lib/localDaySql.ts).
+ *
+ * Server-confirmed sessions only. Sessions still waiting in the app's outbox
+ * are not here; the app shows those separately.
+ */
+timeReportRouter.get('/time-report/history', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+
+    const parsed = historyQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid query' });
+      return;
+    }
+    const timeZone = await postgresTimeZone(safeTimeZone(parsed.data.tz));
+    const day = sessionLocalDaySql(timeZone);
+
+    const daily = await prisma.$queryRaw<{ date: string; seconds: number; sessions: number }[]>`
+      SELECT ${day} AS date,
+             COALESCE(SUM(s.duration_seconds), 0)::int AS seconds,
+             COUNT(*)::int AS sessions
+      FROM sessions s
+      WHERE s.user_id = ${userId}::uuid AND s.type = 'focus'
+      GROUP BY 1
+      ORDER BY 1`;
+
+    const monthly = new Map<string, { seconds: number; sessions: number }>();
+    let seconds = 0;
+    let sessions = 0;
+    for (const d of daily) {
+      seconds += d.seconds;
+      sessions += d.sessions;
+      const key = d.date.slice(0, 7);
+      const m = monthly.get(key) ?? { seconds: 0, sessions: 0 };
+      m.seconds += d.seconds;
+      m.sessions += d.sessions;
+      monthly.set(key, m);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        timeZone,
+        allTime: { seconds, sessions, activeDays: daily.length, firstDate: daily[0]?.date ?? null },
+        daily,
+        monthly: [...monthly.entries()].map(([month, m]) => ({ month, ...m })),
+      },
+    });
+  } catch (err) {
+    if (handleAuthError(res, err)) return;
+    console.error('Time history error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

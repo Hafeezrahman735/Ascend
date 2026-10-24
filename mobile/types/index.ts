@@ -450,6 +450,21 @@ export interface TimeReport {
    * only approximate for someone who has changed timezone since.
    */
   approxShare: number;
+  /** Tasks beyond `tasks`, so the list plus this row covers all task time. */
+  tasksOther: { count: number; seconds: number; sessions: number };
+  /** Every day of the window, zero-filled; adds up to `totals.seconds`. */
+  series: { daily: { date: string; seconds: number; sessions: number }[] };
+  /** True when the window held more sessions than one report reads: totals are incomplete. */
+  truncated: boolean;
+}
+
+/** `GET /time-report/history`: all-time focus by local day. Server-confirmed sessions only. */
+export interface TimeHistory {
+  timeZone: string;
+  allTime: { seconds: number; sessions: number; activeDays: number; firstDate: string | null };
+  /** Days with focus only, oldest first. */
+  daily: { date: string; seconds: number; sessions: number }[];
+  monthly: { month: string; seconds: number; sessions: number }[];
 }
 
 export interface UserSearchResult {
