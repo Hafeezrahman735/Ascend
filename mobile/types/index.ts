@@ -303,6 +303,24 @@ export interface GoogleCalendarStatus {
 
 export type ProgressMode = 'tasks' | 'sessions' | 'both';
 
+/**
+ * Planned focus time against an EVEN schedule from the goal's start day to its
+ * deadline. A comparison, not a prediction; not the task-based pace in
+ * lib/goalStats.ts. Mirrors backend/src/lib/timePace.ts.
+ */
+export interface GoalTimePace {
+  status: 'completed' | 'no_plan' | 'reached' | 'past_due' | 'no_deadline' | 'ahead' | 'behind' | 'on_pace';
+  remainingSeconds: number | null;
+  expectedSeconds: number | null;
+  deltaSeconds: number | null;
+  perDayToFinishSeconds: number | null;
+}
+
+/** What a goal reads as before the server has computed its pace. */
+export const UNKNOWN_TIME_PACE: GoalTimePace = {
+  status: 'no_plan', remainingSeconds: null, expectedSeconds: null, deltaSeconds: null, perDayToFinishSeconds: null,
+};
+
 export interface TaskGoal {
   id: string;
   title: string;
@@ -350,6 +368,8 @@ export interface TaskGoal {
   sessionProgress: number | null;
   /** 0..1 — what the progress bar renders. */
   overallProgress: number;
+  /** Planned time against an even schedule to the deadline. Server-computed. */
+  timePace: GoalTimePace;
 }
 
 /**

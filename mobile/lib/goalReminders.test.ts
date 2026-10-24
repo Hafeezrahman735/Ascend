@@ -17,6 +17,7 @@ const goal = (over: Partial<TaskGoal> = {}): TaskGoal => ({
   progressMode: 'tasks',
   deadline: '2026-09-10',
   plannedMinutes: null,
+  timePace: { status: 'no_plan', remainingSeconds: null, expectedSeconds: null, deltaSeconds: null, perDayToFinishSeconds: null },
   isCompleted: false,
   completedAt: null,
   isArchived: false,

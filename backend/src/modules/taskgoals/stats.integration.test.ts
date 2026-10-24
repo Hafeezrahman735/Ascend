@@ -214,6 +214,7 @@ describe('the wire contract', () => {
       'tag',
       'targetSessions',
       'taskProgress',
+      'timePace',
       'title',
       'totalFocusSeconds',
     ]);

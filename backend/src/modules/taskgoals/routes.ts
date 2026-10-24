@@ -6,6 +6,8 @@ import { handleAuthError } from '../../lib/errors';
 import {
   computeProgress, linkHabitCounterparts, loadGoalCounts, syncGoalCompletion, userOwnsTasks,
 } from '../../lib/goalProgress';
+import { computeTimePace, type TimePace } from '../../lib/timePace';
+import { localPartsOf, safeTimeZone } from '../../lib/localParts';
 
 export const taskGoalsRouter = Router();
 
@@ -117,6 +119,16 @@ export interface SerializedGoal {
   taskProgress: number;
   sessionProgress: number | null;
   overallProgress: number;
+  /** Planned time against an even schedule, in the caller's zone. See lib/timePace.ts. */
+  timePace: TimePace;
+}
+
+/**
+ * The caller's zone for calendar maths (`?tz=IANA`). Optional, so older
+ * builds keep working; they get UTC days, as everywhere else that takes tz.
+ */
+function requestTimeZone(req: Request): string {
+  return safeTimeZone(typeof req.query.tz === 'string' ? req.query.tz : undefined);
 }
 
 /** Shape one goal for the wire, with server-computed progress attached. */
@@ -135,8 +147,17 @@ function serializeGoal(
     createdAt: Date;
   },
   counts: { linkedTaskCount: number; completedTaskCount: number; actualSessions: number; totalFocusSeconds: number },
+  timeZone: string,
 ): SerializedGoal {
   const progress = computeProgress(goal.progressMode, goal.targetSessions, counts);
+  const timePace = computeTimePace({
+    plannedMinutes: goal.plannedMinutes,
+    actualSeconds: counts.totalFocusSeconds,
+    isCompleted: goal.isCompleted,
+    startDay: localPartsOf(goal.createdAt, timeZone).dateKey,
+    deadline: formatDeadline(goal.deadline),
+    today: localPartsOf(new Date(), timeZone).dateKey,
+  });
   return {
     id:                 goal.id,
     title:              goal.title,
@@ -162,6 +183,7 @@ function serializeGoal(
     taskProgress:       progress.taskProgress,
     sessionProgress:    progress.sessionProgress,
     overallProgress:    progress.overallProgress,
+    timePace,
   };
 }
 
@@ -225,7 +247,7 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
 
     res.status(201).json({
       success: true,
-      data: serializeGoal(fresh ?? goal, counts.get(goal.id) ?? NO_COUNTS),
+      data: serializeGoal(fresh ?? goal, counts.get(goal.id) ?? NO_COUNTS, requestTimeZone(req)),
     });
   } catch (err) {
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
@@ -249,7 +271,7 @@ taskGoalsRouter.get('/task-goals', async (req: Request, res: Response) => {
     const counts = await loadGoalCounts(userId, goals.map((g) => g.id));
 
     const data = goals.map((g) =>
-      serializeGoal(g, counts.get(g.id) ?? { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 }),
+      serializeGoal(g, counts.get(g.id) ?? NO_COUNTS, requestTimeZone(req)),
     );
 
     res.json({ success: true, data });
@@ -289,7 +311,7 @@ taskGoalsRouter.patch('/task-goals/:id', async (req: Request, res: Response) => 
     const counts = await loadGoalCounts(userId, [goal.id]);
     res.json({
       success: true,
-      data: serializeGoal(goal, counts.get(goal.id) ?? { linkedTaskCount: 0, completedTaskCount: 0, actualSessions: 0, totalFocusSeconds: 0 }),
+      data: serializeGoal(goal, counts.get(goal.id) ?? NO_COUNTS, requestTimeZone(req)),
     });
   } catch (err) {
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }
@@ -391,7 +413,7 @@ taskGoalsRouter.post('/task-goals/:id/tasks', async (req: Request, res: Response
 
     res.json({
       success: true,
-      data: serializeGoal(fresh ?? goal, counts.get(id) ?? NO_COUNTS),
+      data: serializeGoal(fresh ?? goal, counts.get(id) ?? NO_COUNTS, requestTimeZone(req)),
     });
   } catch (err) {
     if (err instanceof z.ZodError) { res.status(400).json({ success: false, error: err.errors[0].message }); return; }

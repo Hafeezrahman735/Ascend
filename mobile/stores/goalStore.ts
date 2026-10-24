@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
-import { TaskGoal } from '../types';
+import { TaskGoal, UNKNOWN_TIME_PACE } from '../types';
+import { getDeviceTimeZone } from '../utils/date';
 import { useAuthStore } from './authStore';
 import { syncGoalReminders, cancelGoalReminders } from '../services/notifications';
 
@@ -45,7 +46,17 @@ function normaliseCachedGoal(goal: TaskGoal): TaskGoal {
     totalFocusSeconds: goal.totalFocusSeconds ?? 0,
     elapsedDays: goal.elapsedDays ?? 0,
     plannedMinutes: goal.plannedMinutes ?? null,
+    timePace: goal.timePace ?? UNKNOWN_TIME_PACE,
   };
+}
+
+/**
+ * `?tz=` for goal requests: the server works out each goal's time pace on the
+ * user's own calendar days. Omitted when the device reports no zone.
+ */
+function tzQuery(): string {
+  const tz = getDeviceTimeZone();
+  return tz ? `?tz=${encodeURIComponent(tz)}` : '';
 }
 
 async function readCachedGoals(userId: string): Promise<TaskGoal[] | null> {
@@ -138,7 +149,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
     const userId = useAuthStore.getState().user?.id;
     if (!silent) set({ isLoading: true, error: null });
     try {
-      const res = await api.get<TaskGoal[]>('/task-goals');
+      const res = await api.get<TaskGoal[]>(`/task-goals${tzQuery()}`);
       if (res.success && res.data) {
         const goals = res.data;
         set({ goals, isLoading: false });
@@ -177,13 +188,14 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       taskProgress: 0,
       sessionProgress: null,
       overallProgress: 0,
+      timePace: UNKNOWN_TIME_PACE,
     };
     const withTemp = [tempGoal, ...get().goals];
     set({ goals: withTemp });
     persistGoals(withTemp, userId);
 
     try {
-      const res = await api.post<TaskGoal>('/task-goals', data);
+      const res = await api.post<TaskGoal>(`/task-goals${tzQuery()}`, data);
       if (res.success && res.data) {
         const confirmed = res.data;
         const current = get().goals;
@@ -216,7 +228,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
   linkTasks: async (id, delta) => {
     const userId = useAuthStore.getState().user?.id;
     try {
-      const res = await api.post<TaskGoal>(`/task-goals/${id}/tasks`, delta);
+      const res = await api.post<TaskGoal>(`/task-goals/${id}/tasks${tzQuery()}`, delta);
       if (!res.success || !res.data) return false;
       const goals = get().goals.map((g) => (g.id === id ? { ...g, ...res.data } : g));
       set({ goals });
@@ -235,7 +247,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
     set({ goals: optimistic });
     persistGoals(optimistic, userId);
     try {
-      const res = await api.patch<TaskGoal>(`/task-goals/${id}`, data);
+      const res = await api.patch<TaskGoal>(`/task-goals/${id}${tzQuery()}`, data);
       if (res.success && res.data) {
         const goals = get().goals.map((g) => (g.id === id ? { ...g, ...res.data } : g));
         set({ goals });
