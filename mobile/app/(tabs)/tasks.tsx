@@ -29,8 +29,8 @@ import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../com
 import AppPressable from '../../components/AppPressable';
 import GoalStatsModal from '../../components/GoalStatsModal';
 import TaskPicker, { SelectedTaskList } from '../../components/TaskMultiSelect';
-import TimeReportView from '../../components/timeReport/TimeReportView';
-import TimeReportSummary from '../../components/timeReport/TimeReportSummary';
+import TimeAnalyticsView, { type Lens } from '../../components/timeReport/TimeAnalyticsView';
+import TimeCard from '../../components/timeReport/TimeCard';
 import type { ReportPeriod } from '../../hooks/useTimeReport';
 import { lastSessionOnGoal, sortGoalsByUrgency, type GoalStatusAction } from '../../lib/goalStats';
 import { useAuthStore } from '../../stores/authStore';
@@ -58,6 +58,7 @@ import {
   formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
 import { stepGoalMinutes, GOAL_MIN_MINUTES, GOAL_MAX_MINUTES } from '../../lib/dailyTarget';
+import { parsePlannedHours, plannedHoursText } from '../../lib/timeAnalytics';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
@@ -368,6 +369,13 @@ function GoalPickerModal({ visible, goals, selectedGoalId, onSelect, onClose }: 
 }
 
 // ─── TaskFormModal ────────────────────────────────────────────────────────────
+type GoalSaveData = {
+  title: string; tag?: string | null; deadline?: string | null;
+  /** Minutes, or null to clear the plan. */
+  plannedMinutes: number | null;
+  taskIds: string[];
+};
+
 type FormSaveData = {
   title: string; description?: string | null; dueDate?: string | null;
   tags?: string[]; estimatedMinutes?: number | null;
@@ -877,9 +885,7 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
   linkableTasks: Task[];
   /** Every goal, so the picker can name the one a task moves away from. */
   goals: TaskGoal[];
-  onSave: (data: {
-    title: string; tag?: string | null; deadline?: string | null; taskIds: string[];
-  }) => void;
+  onSave: (data: GoalSaveData) => void;
   onClose: () => void;
   /** Only passed when editing — creates have nothing to delete. */
   onDelete?: () => void;
@@ -890,6 +896,9 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
   const [title, setTitle] = useState('');
   const [tag, setTag] = useState<string | null>(null);
   const [deadline, setDeadline] = useState('');
+  /** Hours as typed; parsed on save so "1." mid-typing is not an error yet. */
+  const [plannedText, setPlannedText] = useState('');
+  const [plannedError, setPlannedError] = useState(false);
   /**
    * null means "the user has not touched the list yet", so the checkboxes
    * mirror what is actually linked right now. Once they touch it, their draft
@@ -915,6 +924,8 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
     if (visible) {
       setTitle(goal?.title ?? ''); setTag(goal?.tag ?? null);
       setDeadline(goal?.deadline?.substring(0, 10) ?? '');
+      setPlannedText(plannedHoursText(goal?.plannedMinutes ?? null));
+      setPlannedError(false);
       setDraftTaskIds(null);
       setNewCategory(null);
       setTasksOpen(false);
@@ -946,6 +957,8 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
 
   const handleSave = () => {
     if (!title.trim()) { setTitleError(true); return; }
+    const plannedMinutes = parsePlannedHours(plannedText);
+    if (plannedMinutes === undefined) { setPlannedError(true); return; }
     // Send the calendar day as-is. This used to convert to an instant via
     // `new Date(deadline + 'T00:00:00').toISOString()`, which baked in the
     // creating device's timezone — the same goal then read as a different day
@@ -954,6 +967,7 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
       title: title.trim(),
       tag: tag || null,
       deadline: deadline || null,
+      plannedMinutes,
       taskIds,
     });
   };
@@ -1073,6 +1087,25 @@ function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSa
                 </TouchableOpacity>
               )}
               {datePickerOpen && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={datePickerFloor!} />}
+
+              {/* Planned focus time. Optional, and never part of whether the
+                  goal is done (that stays task-based): it only adds planned vs
+                  done and pace to the time screen. Hours, decimals allowed. */}
+              <Text style={styles.fieldLabel}>Planned focus time</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: plannedError ? 4 : 16, gap: 8 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 14 }, plannedError && { borderColor: ROSE }]}
+                  placeholder="e.g. 20"
+                  placeholderTextColor={Colors.subtext}
+                  value={plannedText}
+                  onChangeText={(t) => { setPlannedText(t); if (plannedError) setPlannedError(false); }}
+                  keyboardType="decimal-pad"
+                  maxLength={7}
+                  accessibilityLabel="Planned focus time in hours"
+                />
+                <Text style={{ color: Colors.subtext, fontSize: 14, fontWeight: '600' }}>hours</Text>
+              </View>
+              {plannedError && <Text style={{ color: ROSE, fontSize: 11, marginBottom: 12 }}>Enter hours between 1 minute and 1,666 hours, or leave it empty</Text>}
 
               {/* What the goal is actually measured on. Previously reachable
                   only from the other side — open a task, pick its goal — so
@@ -2091,6 +2124,7 @@ export default function TasksScreen() {
   // One period for both the summary card and the full report, so "See more"
   // always opens the period you were already looking at.
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('month');
+  const [timeLens, setTimeLens] = useState<Lens>('overview');
   const [statsTask, setStatsTask] = useState<Task | null>(null);
   // Held as an ID, not the goal object: GoalStatsModal reads the goal live from
   // the store so it cannot show numbers that went stale while it was open, or
@@ -2417,9 +2451,7 @@ export default function TasksScreen() {
     );
   }, [formGoal, goalActions]);
 
-  const handleGoalSave = useCallback(async (data: {
-    title: string; tag?: string | null; deadline?: string | null; taskIds: string[];
-  }) => {
+  const handleGoalSave = useCallback(async (data: GoalSaveData) => {
     setShowGoalForm(false);
     const { taskIds, ...fields } = data;
 
@@ -2449,6 +2481,7 @@ export default function TasksScreen() {
 
   // ── Back from detail view ──
   const goBack = useCallback(() => setActiveView(null), []);
+  const openTime = useCallback((lens: Lens) => { setTimeLens(lens); setActiveView('time-tracker'); }, []);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DETAIL VIEWS
@@ -2550,22 +2583,21 @@ export default function TasksScreen() {
   }
 
   if (activeView === 'time-tracker') {
-    // Rebuilt as a server-aggregated retrospective. It reads attribution frozen
-    // onto each session at write time, so archived tasks and renamed goals no
-    // longer change what a past window reports — see components/timeReport.
-    //
-    // Its period is separate from `trackerPeriod`, which still drives the
-    // summary card on the tab behind it. Sharing one would mean a period the
-    // summary card cannot display (Quarter) leaving its switcher with nothing
-    // selected.
+    // The time screen. Goal time in it follows each task's CURRENT goal
+    // (backend lib/goalAttribution.ts), so relinking a task moves its history
+    // with it. The goal form is mounted here too, because the Goals lens has
+    // "Set a plan", and the form is where planned time is set.
     return (
       <>
-        <TimeReportView
+        <TimeAnalyticsView
+          initialLens={timeLens}
           period={reportPeriod}
           onPeriodChange={setReportPeriod}
           onBack={goBack}
           onLongPressTag={setOverrideTag}
+          onEditGoal={(g) => { setFormGoal(g); setShowGoalForm(true); }}
         />
+        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
       </>
     );
@@ -2777,22 +2809,13 @@ export default function TasksScreen() {
           )}
         </View>
 
-        {/* Zone 4 — Time Tracker.
-
-            Reads GET /time-report, the same source as the full report behind
-            "See more", and shares its period state. It used to compute its own
-            numbers from the local session cache, which is how it came to say
-            27m today / 1h 17m this month while the report said nothing today /
-            50m this month — same sessions, one tap apart. Two sources for one
-            fact is a bug generator; there is now one. */}
+        {/* Zone 4 — Time. This week and the all-time climb, from the same
+            routes as the full time screen behind it, so the two cannot
+            disagree. */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
-          <ZoneHeader title="Time Tracker" onSeeMore={() => setActiveView('time-tracker')} />
+          <ZoneHeader title="Time" onSeeMore={() => openTime('overview')} />
           <View style={[styles.card]}>
-            <TimeReportSummary
-              period={reportPeriod}
-              onPeriodChange={setReportPeriod}
-              onSeeMore={() => setActiveView('time-tracker')}
-            />
+            <TimeCard onOpen={openTime} />
           </View>
         </View>
 

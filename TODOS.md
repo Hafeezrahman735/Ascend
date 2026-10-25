@@ -243,3 +243,24 @@ check types. A shared schema (zod on both sides) would, and is the real fix.
         `POST /admin/reports/:id/dismiss`. Integration test each, per the Testing Standard.
       - The page is one static HTML file, vanilla fetch and a table. No build step, no
         framework, no new dependency.
+
+## Time analytics v1 — deferred (2026-10-24)
+
+v1 shipped Overview, Activity, Goals, Breakdown (goal/task/category with session
+drill-down) and the Tasks-tab Time card, on hand-built `react-native-svg` charts
+(no new native module, so it stays OTA-updatable). Left for later, by the owner's
+scope cut on 2026-10-22:
+
+- [ ] **Offline cache for the time screens.** Today every lens shows its error state
+      with "Try again" when offline. The design doc calls for the last report, history
+      and goals per user (`time:v1:<uid>:<kind>`, cleared on logout).
+- [ ] **Category drill-down.** `/time-report/sessions` groups by goal and task only, so
+      category rows in Breakdown do not open a session list.
+- [ ] **Per-goal climb vs pace line.** Needs a per-goal daily series from the server
+      (current-link attribution, `lib/goalAttribution.ts`); do not build it from the
+      client task list (see "Per-goal charts are possible but would disagree" above).
+- [ ] **Insights lens:** records (best day, best week, longest session), milestone
+      crossing dates, month-by-month table, recap card and its Share destination.
+- [ ] **Full Projects lens:** tags as a first-class grouping with filtering and paging.
+- [ ] **Tablet layout:** sidebar lenses at ≥768pt.
+- [ ] **Year switcher on the heatmap.** v1 shows a rolling 53 weeks.

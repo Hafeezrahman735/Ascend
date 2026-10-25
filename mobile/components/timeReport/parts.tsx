@@ -1,7 +1,8 @@
 import { View, Text } from 'react-native';
-import { useTheme, type ThemeColors } from '../../hooks/useTheme';
+import { useTheme } from '../../hooks/useTheme';
 import { Space, Radius } from '../../constants/spacing';
 import { Font } from '../../constants/typography';
+import AppPressable from '../AppPressable';
 import { formatSeconds } from '../../lib/taskMetrics';
 
 /**
@@ -141,53 +142,6 @@ export function LedgerRow({
   );
 }
 
-/**
- * Seven bars, one per weekday, scaled by TIME.
- *
- * The chart this replaces plotted session COUNT, so a ninety-minute session and
- * a five-minute one were the same height — the same defect corrected in
- * getPeakHour. Seven bars and a sentence carry the same insight as an
- * hour-by-weekday heatmap at a tenth of the ink.
- */
-const WEEKDAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-export function WeekdayStrip({ byWeekday, Colors }: { byWeekday: number[]; Colors: ThemeColors }) {
-  const max = Math.max(...byWeekday, 1);
-  const todayIndex = new Date().getDay();
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: Space.sm, height: 84 }}>
-      {byWeekday.map((seconds, i) => {
-        const isEmpty = seconds === 0;
-        return (
-          <View key={i} style={{ flex: 1, alignItems: 'center', gap: Space.sm }}>
-            <View style={{ flex: 1, width: '100%', justifyContent: 'flex-end' }}>
-              <View
-                accessibilityLabel={`${WEEKDAY_LETTERS[i]}: ${formatSeconds(seconds)}`}
-                style={{
-                  width: '100%',
-                  height: isEmpty ? 3 : Math.max(4, (seconds / max) * 64),
-                  borderRadius: Radius.sm,
-                  backgroundColor: isEmpty ? Colors.inactive : Colors.primary,
-                  // Emphasis by opacity rather than a second colour: the peak
-                  // should read as "more", not as a different kind of thing.
-                  opacity: isEmpty ? 1 : seconds === max ? 1 : 0.55,
-                }}
-              />
-            </View>
-            <Text style={{
-              color: i === todayIndex ? Colors.textBright : Colors.subtext,
-              fontSize: 11, fontFamily: Font.mono,
-            }}>
-              {WEEKDAY_LETTERS[i]}
-            </Text>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
 /** Centred, quiet message for the empty and error states. */
 export function Notice({ title, body }: { title: string; body?: string }) {
   const Colors = useTheme();
@@ -208,5 +162,61 @@ export function Notice({ title, body }: { title: string; body?: string }) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Placeholder shapes while a lens loads for the first time. Quiet blocks in
+ * the layout's own rhythm, so the page does not jump when the data lands.
+ */
+export function SkeletonBlocks({ heights = [44, 150, 96] }: { heights?: number[] }) {
+  const Colors = useTheme();
+  return (
+    <View style={{ gap: Space.xl, paddingTop: Space.lg }} accessibilityLabel="Loading" accessible>
+      {heights.map((h, i) => (
+        <View key={i} style={{ height: h, borderRadius: Radius.md, backgroundColor: Colors.raised, opacity: 0.6 }} />
+      ))}
+    </View>
+  );
+}
+
+/** The error state for a lens: what went wrong, and the one thing to do. */
+export function ErrorRetry({ title, body, onRetry }: { title: string; body: string; onRetry: () => void }) {
+  const Colors = useTheme();
+  return (
+    <View>
+      <Notice title={title} body={body} />
+      <AppPressable
+        onPress={onRetry}
+        accessibilityRole="button"
+        style={{
+          alignSelf: 'center', paddingHorizontal: Space.xxl, paddingVertical: Space.md, minHeight: 44,
+          borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
+        }}
+      >
+        <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600' }}>Try again</Text>
+      </AppPressable>
+    </View>
+  );
+}
+
+/** A tappable ledger row that opens the sessions behind it. */
+export function DrillRow({ onPress, label, ...row }: React.ComponentProps<typeof LedgerRow> & {
+  onPress?: () => void;
+  label?: string;
+}) {
+  const Colors = useTheme();
+  if (!onPress) return <LedgerRow {...row} />;
+  return (
+    <AppPressable
+      onPress={onPress}
+      scaleOnPress={false}
+      accessibilityRole="button"
+      accessibilityLabel={label ?? `${row.title}, ${formatSeconds(row.seconds)}. Show sessions.`}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: Space.sm }}
+    >
+      <View style={{ flex: 1 }}><LedgerRow {...row} /></View>
+      <Text style={{ color: Colors.subtext, fontSize: 16 }}>›</Text>
+    </AppPressable>
   );
 }

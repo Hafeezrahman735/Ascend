@@ -96,6 +96,8 @@ interface CreateGoalInput {
   tag?: string | null;
   /** Calendar day, 'YYYY-MM-DD'. */
   deadline?: string | null;
+  /** Planned focus minutes, or null for no plan. */
+  plannedMinutes?: number | null;
   /**
    * Linked in the SAME request that creates the goal. Creation used to be two
    * calls — create, then attach — which left a third outcome to handle: a goal
@@ -172,7 +174,7 @@ export const useGoalStore = create<GoalStoreState>((set, get) => ({
       targetSessions: null,
       progressMode: 'tasks',
       deadline: data.deadline ?? null,
-      plannedMinutes: null,
+      plannedMinutes: data.plannedMinutes ?? null,
       isCompleted: false,
       completedAt: null,
       isArchived: false,
