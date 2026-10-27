@@ -261,12 +261,12 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
         {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: Space.md }} />}
         {analyticsError && <Text style={{ color: Colors.text, fontSize: 12, marginBottom: Space.md }}>Analytics unavailable — try again later.</Text>}
 
-        {/* notes — the description captured when the task was created */}
+        {/* description — captured when the task was created */}
         {task.description?.trim() ? (
           <View style={{ backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
               <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
-              <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>Notes</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>Description</Text>
             </View>
             <Text style={{ color: Colors.textBright, fontSize: 14, lineHeight: 20 }}>{task.description.trim()}</Text>
           </View>
@@ -805,7 +805,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
         </View>
       )}
 
-      {/* Recurring sits last, above the notes. It is the one field that
+      {/* Recurring sits last, above the description. It is the one field that
           changes what the task IS rather than describing it, and every
           answer above stays true either way — so it reads as the closing
           question, not a fork you hit three fields in. Turning it on also
@@ -860,9 +860,9 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
         </View>
       )}
 
-      {/* notes */}
-      <Text style={monoLabel}>NOTES</Text>
-      <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="Any notes for this task…" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
+      {/* description */}
+      <Text style={monoLabel}>DESCRIPTION</Text>
+      <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="What is this task about?" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
 
       {/* create / save */}
       <TouchableOpacity onPress={handleSave} disabled={!!timeError} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: timeError ? 0.5 : 1 }}>

@@ -267,7 +267,7 @@ export default function PlanningView({
           <EmptyBox
             icon="checkmark-done-outline"
             text={isPastWeek
-              ? 'That week is done. Missed habits are not carried forward.'
+              ? 'That week is done. Missed recurring tasks are not carried forward.'
               : 'No tasks due this week. Nothing waiting on you.'}
           />
         ) : (

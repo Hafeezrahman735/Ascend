@@ -48,7 +48,7 @@ function SessionRow({ row, showTask }: { row: Row; showTask: boolean }) {
         </Text>
         {showTask && (
           <Text numberOfLines={1} style={{ color: Colors.text, fontSize: 12, marginTop: 2 }}>
-            {row.taskTitle ?? 'Timer, no task'}{row.wasRecurring ? ' · habit' : ''}
+            {row.taskTitle ?? 'Timer, no task'}{row.wasRecurring ? ' · recurring' : ''}
           </Text>
         )}
       </View>

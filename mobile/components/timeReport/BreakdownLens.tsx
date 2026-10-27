@@ -213,7 +213,7 @@ function TaskRows({ report, drill }: { report: TimeReport; drill: Drill }) {
           <DrillRow
             title={t.title}
             seconds={t.seconds}
-            subtitle={[t.goalTitle, t.wasRecurring ? 'habit' : null].filter(Boolean).join(' · ') || null}
+            subtitle={[t.goalTitle, t.wasRecurring ? 'recurring' : null].filter(Boolean).join(' · ') || null}
             onPress={t.taskId ? () => drill('task', t.taskId, t.title) : undefined}
           />
         </View>
