@@ -274,6 +274,86 @@ export function paceShares(
   };
 }
 
+export interface GoalClimb {
+  dates: string[];
+  /** Running total per day, up to and including today; shorter than `dates` when the deadline is ahead. */
+  actual: number[];
+  /** Where an even schedule would be by the end of each day. Null without a plan and a deadline. */
+  pace: number[] | null;
+  /** Planned seconds, for the plan rule. Null without a plan. */
+  plannedSeconds: number | null;
+}
+
+/**
+ * One goal's climb against its plan, on a shared day axis.
+ *
+ * The axis runs from the earlier of the goal's start day and its first
+ * session (time logged before the goal existed still counts once its task is
+ * linked) to the later of today and the deadline, so the pace line can be seen
+ * reaching the plan on the deadline even while the actual line stops at today.
+ *
+ * The pace line is the even schedule lib/timePace.ts on the server compares
+ * against: 0 before the start day, `planned × elapsed / total` with both days
+ * inclusive, flat at the plan after the deadline. Same rule, so the line and
+ * the "ahead / behind" words can never disagree.
+ *
+ * Thinned to at most `maxPoints` with the same indices for both series, and
+ * today and the deadline are always kept.
+ */
+export function goalClimb(input: {
+  daily: DayTotal[];
+  startDay: string;
+  today: string;
+  deadline: string | null;
+  plannedMinutes: number | null;
+}, maxPoints = CLIMB_MAX_POINTS): GoalClimb {
+  const { daily, startDay, today, deadline, plannedMinutes } = input;
+  const sorted = [...daily].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const firstSession = sorted[0]?.date;
+  const from = firstSession && firstSession < startDay ? firstSession : startDay;
+  const lastDay = deadline && deadline > today ? deadline : today;
+  const span = Math.max(1, daysBetween(from, lastDay) + 1);
+  const plannedSeconds = plannedMinutes === null ? null : plannedMinutes * 60;
+
+  const byDay = new Map(sorted.map((d) => [d.date, d.seconds]));
+  const allDates: string[] = [];
+  const allActual: number[] = [];
+  const allPace: number[] = [];
+  const schedule = plannedSeconds !== null && deadline !== null && deadline >= startDay
+    ? { total: daysBetween(startDay, deadline) + 1 }
+    : null;
+  let total = 0;
+  for (let i = 0; i < span; i += 1) {
+    const date = shiftKey(from, i);
+    allDates.push(date);
+    if (date <= today) {
+      total += byDay.get(date) ?? 0;
+      allActual.push(total);
+    }
+    if (schedule && plannedSeconds !== null) {
+      const elapsed = Math.min(schedule.total, Math.max(0, daysBetween(startDay, date) + 1));
+      allPace.push(Math.round((plannedSeconds * elapsed) / schedule.total));
+    }
+  }
+
+  const keep = thinIndices(span, maxPoints, [allActual.length - 1]);
+  return {
+    dates: keep.map((i) => allDates[i]),
+    actual: keep.filter((i) => i < allActual.length).map((i) => allActual[i]),
+    pace: schedule ? keep.map((i) => allPace[i]) : null,
+    plannedSeconds,
+  };
+}
+
+/** Evenly spaced indices into 0..count-1, always including both ends and `pinned`. */
+function thinIndices(count: number, maxPoints: number, pinned: number[]): number[] {
+  if (count <= maxPoints) return Array.from({ length: count }, (_, i) => i);
+  const step = (count - 1) / (maxPoints - 1);
+  const set = new Set(Array.from({ length: maxPoints }, (_, i) => Math.round(i * step)));
+  for (const p of pinned) if (p >= 0 && p < count) set.add(p);
+  return [...set].sort((a, b) => a - b);
+}
+
 export interface PaceLike {
   status: 'completed' | 'no_plan' | 'reached' | 'past_due' | 'no_deadline' | 'ahead' | 'behind' | 'on_pace';
   remainingSeconds: number | null;

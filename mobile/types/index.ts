@@ -513,6 +513,20 @@ export interface TimeHistory {
   monthly: { month: string; seconds: number; sessions: number }[];
 }
 
+/**
+ * `GET /time-report/goals/:id/daily`: one goal's focus by local day, all time.
+ * Follows each task's current goal, so it adds up to the goal's totalFocusSeconds.
+ */
+export interface GoalDaily {
+  goalId: string;
+  timeZone: string;
+  /** The goal's creation day in that zone: where the pace line starts. */
+  startDay: string;
+  totalSeconds: number;
+  /** Days with focus only, oldest first. */
+  daily: { date: string; seconds: number; sessions: number }[];
+}
+
 export interface UserSearchResult {
   id: string;
   username: string;

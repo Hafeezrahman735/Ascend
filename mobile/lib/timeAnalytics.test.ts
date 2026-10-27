@@ -3,7 +3,7 @@ import {
   shiftKey, daysBetween, mondayIndex, weekRange,
   climbSeries, nextMilestone, activeDayShare, weekBars, heatmapCells, HEATMAP_WEEKS,
   weekdayAverages, peakWindow, hourLabel, groupGoals, paceShares,
-  parsePlannedHours, paceCopy, plannedHoursText, topMovers, moverSentence,
+  parsePlannedHours, paceCopy, goalClimb, plannedHoursText, topMovers, moverSentence,
   linePath, areaPath, indexAtX, dayLabel, weekLabel, compactHours,
 } from './timeAnalytics';
 
@@ -214,5 +214,47 @@ describe('paceCopy', () => {
     expect(paceCopy(pace('no_deadline'), fmt).text).toBe('30m left · no deadline');
     expect(paceCopy(pace('reached'), fmt).tone).toBe('accent');
     expect(paceCopy(pace('on_pace'), fmt)).toEqual({ text: 'On pace', tone: 'primary' });
+  });
+});
+
+describe('goalClimb', () => {
+  it('runs the actual line to today and the pace line to the planned total on the deadline', () => {
+    const c = goalClimb({
+      daily: [{ date: '2026-10-02', seconds: H }],
+      startDay: '2026-10-01', today: '2026-10-03', deadline: '2026-10-04', plannedMinutes: 240,
+    });
+    expect(c.dates).toEqual(['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04']);
+    expect(c.actual).toEqual([0, H, H]);
+    expect(c.pace).toEqual([H, 2 * H, 3 * H, 4 * H]);
+    expect(c.plannedSeconds).toBe(4 * H);
+  });
+
+  it('starts at the first session when work predates the goal, with the pace flat at zero before it', () => {
+    const c = goalClimb({
+      daily: [{ date: '2026-09-29', seconds: 1800 }],
+      startDay: '2026-10-01', today: '2026-10-02', deadline: '2026-10-02', plannedMinutes: 120,
+    });
+    expect(c.dates[0]).toBe('2026-09-29');
+    expect(c.pace).toEqual([0, 0, H, 2 * H]);
+    expect(c.actual[c.actual.length - 1]).toBe(1800);
+  });
+
+  it('has no pace line without a plan or a deadline, and stays flat at the plan after the deadline', () => {
+    expect(goalClimb({ daily: [], startDay: '2026-10-01', today: '2026-10-05', deadline: null, plannedMinutes: 60 }).pace).toBeNull();
+    expect(goalClimb({ daily: [], startDay: '2026-10-01', today: '2026-10-05', deadline: '2026-10-09', plannedMinutes: null }).pace).toBeNull();
+    const past = goalClimb({ daily: [], startDay: '2026-10-01', today: '2026-10-05', deadline: '2026-10-02', plannedMinutes: 120 });
+    expect(past.pace).toEqual([H, 2 * H, 2 * H, 2 * H, 2 * H]);
+    expect(past.actual).toHaveLength(5);
+  });
+
+  it('thins long axes with the same days for both lines, keeping today', () => {
+    const c = goalClimb({
+      daily: [{ date: '2026-01-05', seconds: H }],
+      startDay: '2026-01-01', today: '2026-06-01', deadline: '2026-12-31', plannedMinutes: 6000,
+    }, 50);
+    expect(c.dates.length).toBeLessThanOrEqual(51);
+    expect(c.pace).toHaveLength(c.dates.length);
+    expect(c.dates[c.actual.length - 1]).toBe('2026-06-01');
+    expect(c.dates[c.dates.length - 1]).toBe('2026-12-31');
   });
 });

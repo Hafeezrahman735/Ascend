@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { getLocalDateString, getDeviceTimeZone } from '../utils/date';
-import type { TimeReport, TimeHistory, TimeSessionsPage } from '../types';
+import type { TimeReport, TimeHistory, TimeSessionsPage, GoalDaily } from '../types';
 
 /**
  * Fetches `GET /time-report` (by period or window), `/time-report/history`
@@ -132,6 +132,12 @@ export function useTimeReport(period: ReportPeriod) {
 export function useTimeHistory() {
   const { data, ...rest } = useResource<TimeHistory>(`/time-report/history?${tzParam()}`);
   return { history: data, ...rest };
+}
+
+/** `GET /time-report/goals/:id/daily`: one goal's climb. */
+export function useGoalDaily(goalId: string) {
+  const { data, ...rest } = useResource<GoalDaily>(`/time-report/goals/${encodeURIComponent(goalId)}/daily?${tzParam()}`);
+  return { goalDaily: data, ...rest };
 }
 
 export type TimeHistoryState = ReturnType<typeof useTimeHistory>;

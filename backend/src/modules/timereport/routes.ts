@@ -258,6 +258,65 @@ timeReportRouter.get('/time-report/history', async (req: Request, res: Response)
   }
 });
 
+/**
+ * `GET /time-report/goals/:id/daily?tz=IANA`: one goal's focus by local day,
+ * all time, for the goal climb in the app's Goals lens.
+ *
+ * A session counts if its task's CURRENT goal is this one
+ * (lib/goalAttribution.ts), so the series always adds up to the goal's
+ * `totalFocusSeconds` from /task-goals, and moving a task moves its days.
+ * Grouped in SQL with no row cap; days land as in /time-report/history.
+ *
+ * `startDay` is the goal's creation day in the same zone: where the pace
+ * line in /task-goals `timePace` starts.
+ */
+timeReportRouter.get('/time-report/goals/:id/daily', async (req: Request, res: Response) => {
+  try {
+    const userId = authenticate(req);
+
+    const parsed = historyQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid query' });
+      return;
+    }
+    const goal = await prisma.taskGoal.findFirst({
+      where: { id: String(req.params.id), userId },
+      select: { id: true, createdAt: true },
+    });
+    if (!goal) {
+      res.status(404).json({ success: false, error: 'Goal not found' });
+      return;
+    }
+
+    const timeZone = await postgresTimeZone(safeTimeZone(parsed.data.tz));
+    const day = sessionLocalDaySql(timeZone);
+    const daily = await prisma.$queryRaw<{ date: string; seconds: number; sessions: number }[]>`
+      SELECT ${day} AS date,
+             COALESCE(SUM(s.duration_seconds), 0)::int AS seconds,
+             COUNT(*)::int AS sessions
+      FROM sessions s
+      ${SESSION_GOAL_JOIN}
+      WHERE s.user_id = ${userId}::uuid AND s.type = 'focus' AND ${SESSION_GOAL_EXPR} = ${goal.id}
+      GROUP BY 1
+      ORDER BY 1`;
+
+    res.json({
+      success: true,
+      data: {
+        goalId: goal.id,
+        timeZone,
+        startDay: localPartsOf(goal.createdAt, timeZone).dateKey,
+        totalSeconds: daily.reduce((sum, d) => sum + d.seconds, 0),
+        daily,
+      },
+    });
+  } catch (err) {
+    if (handleAuthError(res, err)) return;
+    console.error('Goal daily error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 const SESSIONS_PAGE_DEFAULT = 50;
 const SESSIONS_PAGE_MAX = 100;
 

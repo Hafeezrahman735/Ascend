@@ -256,9 +256,6 @@ scope cut on 2026-10-22:
       and goals per user (`time:v1:<uid>:<kind>`, cleared on logout).
 - [ ] **Category drill-down.** `/time-report/sessions` groups by goal and task only, so
       category rows in Breakdown do not open a session list.
-- [ ] **Per-goal climb vs pace line.** Needs a per-goal daily series from the server
-      (current-link attribution, `lib/goalAttribution.ts`); do not build it from the
-      client task list (see "Per-goal charts are possible but would disagree" above).
 - [ ] **Insights lens:** records (best day, best week, longest session), milestone
       crossing dates, month-by-month table, recap card and its Share destination.
 - [ ] **Full Projects lens:** tags as a first-class grouping with filtering and paging.
