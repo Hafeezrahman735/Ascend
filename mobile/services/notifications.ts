@@ -1,3 +1,9 @@
+/* eslint-disable import/namespace -- False positives since expo-notifications 58:
+   AndroidImportance, AndroidNotificationVisibility, AndroidAudioUsage and
+   AndroidAudioContentType ARE exported (build/NotificationChannelManager.types.js,
+   `export var ...`) and TypeScript resolves them, but eslint-plugin-import cannot
+   parse SDK 58's build output. Scoped to this file so the rule stays on elsewhere:
+   it is what caught expo-calendar 58's throwing stubs (see appleCalendar.ts). */
 import * as Notifications from 'expo-notifications';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform, AppState } from 'react-native';

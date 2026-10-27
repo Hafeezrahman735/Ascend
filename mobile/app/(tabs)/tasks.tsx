@@ -9,7 +9,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Swipeable, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Swipeable, { SwipeDirection, type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 import { Task, TaskGoal, TaskAnalytics, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
 import { useTheme, useIsDark, type ThemeColors } from '../../hooks/useTheme';
@@ -1284,8 +1285,12 @@ const TaskRow = memo(function TaskRow({ task, isActive, goals, onTap, onEdit, on
   const Colors = useTheme();
   const { ROSE, ROSE_DIM } = Colors;
   const isCompleted = task.isCompleted;
-  const swipeRef = useRef<Swipeable>(null);
-  const handleSwipeOpen = useCallback((direction: 'left' | 'right') => { swipeRef.current?.close(); if (direction === 'left') onComplete(task.id); else onEdit(task); }, [onComplete, onEdit, task]);
+  const swipeRef = useRef<SwipeableMethods>(null);
+  // ReanimatedSwipeable reports the direction of the SWIPE, not the panel:
+  // dragging right reveals the left ("Done") panel and reports RIGHT. The old
+  // Animated-based Swipeable (removed in gesture-handler 3) reported 'left' for
+  // the same gesture, so the comparison flipped with the upgrade.
+  const handleSwipeOpen = useCallback((direction: SwipeDirection) => { swipeRef.current?.close(); if (direction === SwipeDirection.RIGHT) onComplete(task.id); else onEdit(task); }, [onComplete, onEdit, task]);
 
   const renderLeftActions = () => (
     <View style={{ width: 72, marginRight: 6, marginBottom: 8, borderRadius: 14, backgroundColor: isCompleted ? ROSE_DIM : Colors.accentDim, justifyContent: 'center', alignItems: 'center' }}>

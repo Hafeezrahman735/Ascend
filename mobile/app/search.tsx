@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, FlatList, Pressable,
   ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -85,7 +86,7 @@ export default function SearchScreen() {
       unfollowUser: s.unfollowUser,
     })),
   );
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {

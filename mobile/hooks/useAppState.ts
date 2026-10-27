@@ -13,7 +13,9 @@ export function useAppForeground(onForeground: () => void): void {
     callbackRef.current = onForeground;
   }, [onForeground]);
 
-  const prevStateRef = useRef<AppStateStatus>(AppState.currentState);
+  // Typed as RN types it: `currentState` can be null before the first native
+  // report (RN 0.88 says so explicitly). Only `=== 'active'` is ever asked.
+  const prevStateRef = useRef<string | null | undefined>(AppState.currentState);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {

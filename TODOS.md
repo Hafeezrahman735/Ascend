@@ -261,3 +261,16 @@ scope cut on 2026-10-22:
 - [ ] **Full Projects lens:** tags as a first-class grouping with filtering and paging.
 - [ ] **Tablet layout:** sidebar lenses at ≥768pt.
 - [ ] **Year switcher on the heatmap.** v1 shows a rolling 53 weeks.
+
+## Expo SDK 58 upgrade — follow-ups (2026-10-26)
+
+- [ ] **Move gestures to Gesture Handler 3's hook API** (`usePanGesture`, `useTapGesture`).
+      The `Gesture.Pan()` builder still works in 3.x but is deprecated and slated for
+      removal. Used by the hero card swipe (tasks.tsx) and the time charts
+      (ClimbChart, GoalClimbChart, YearHeatmap).
+- [ ] **Move Apple Calendar to expo-calendar's object API.** `services/appleCalendar.ts`
+      imports `expo-calendar/legacy`, because from SDK 58 the function API at
+      `expo-calendar` throws at runtime. Legacy works; it is just the old surface.
+- [ ] **Fonts in Expo Go.** The four families are compiled into the binary by the
+      expo-font plugin, which Expo Go does not run, so Expo Go shows the system font.
+      Dev and store builds are unaffected.

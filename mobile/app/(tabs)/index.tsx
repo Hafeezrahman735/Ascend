@@ -13,6 +13,7 @@ import {
   TextInput, ActivityIndicator, Modal, RefreshControl,
   KeyboardAvoidingView, Platform, Share, Image, Alert,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -863,7 +864,7 @@ function CreatePostSheet({ visible, onClose, onPost, studyGroups, defaultGroupId
   const [todayCount,           setTodayCount]           = useState(0);
   const [todayMinutes,         setTodayMinutes]         = useState(0);
   const [selectedAchievementId, setSelectedAchievementId] = useState<string | null>(null);
-  const freeTextRef = useRef<TextInput>(null);
+  const freeTextRef = useRef<TextInputInstance>(null);
 
   const unlockedAchievements = gamification.achievements.filter((a) => a.isUnlocked);
   const hasUnlockedAchievements = unlockedAchievements.length > 0;
@@ -1742,7 +1743,7 @@ export default function AscendScreen() {
                 onEndReachedThreshold={0.5}
                 ListFooterComponent={social.isLoadingMoreNotifications
                   ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
-                  : null}
+                  : undefined}
                 renderItem={({ item }) => (
                   <View style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: BORDER_SOFT }}>
                     <Text style={{ color: item.isRead ? Colors.subtext : Colors.textBright, fontSize: 14 }}>

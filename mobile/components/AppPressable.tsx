@@ -1,4 +1,4 @@
-import { forwardRef, useEffect } from 'react';
+import { forwardRef, useEffect, type ComponentRef } from 'react';
 import {
   Pressable,
   ActivityIndicator,
@@ -56,7 +56,9 @@ export interface AppPressableProps extends Omit<PressableProps, 'style'> {
  * and because it does not shift layout — the transform stays inside the
  * element's own bounds.
  */
-const AppPressable = forwardRef<View, AppPressableProps>(function AppPressable(
+// The ref is whatever Pressable forwards to: in RN 0.88 that is a
+// ReactNativeElement, no longer the `View` class the types used to name.
+const AppPressable = forwardRef<ComponentRef<typeof Pressable>, AppPressableProps>(function AppPressable(
   {
     style,
     disabled = false,

@@ -1,4 +1,9 @@
-import * as Calendar from 'expo-calendar';
+// The legacy entry point, deliberately. From expo-calendar 58 (SDK 58) the
+// function API at 'expo-calendar' is a set of stubs that THROW at runtime
+// ("Method getCalendarsAsync imported from \"expo-calendar\" is deprecated");
+// only the new object-oriented API lives there now. '/legacy' keeps the same
+// functions working unchanged. Moving to the object API is a separate change.
+import * as Calendar from 'expo-calendar/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import type { CalendarItem } from '../types';
