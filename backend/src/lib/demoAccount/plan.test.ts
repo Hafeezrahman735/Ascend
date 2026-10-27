@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { achievements } from '../achievementSeedData';
-import { FRIENDS, TASKS } from './content';
+import { dayNameFromLocalDate } from '../localDate';
+import { FRIENDS, GOALS, HABITS, TASKS } from './content';
 import {
-  DayTooShortError, checkPlan, deriveUnlocks, leaderboardOf, planFriend, planMain, sumMinutes,
+  ARCHIVE_DAYS, DayTooShortError, MAIN_HISTORY_DAYS, archiveSessionsByDay, calendarEvents, checkPlan, deriveUnlocks,
+  habitEndDate, leaderboardOf, planFriend, planMain, sumMinutes,
 } from './plan';
 import { checkDemoTarget } from './target';
-import { dateKeyIn, streaksFrom, zonedInstant } from './time';
+import { dateKeyIn, shiftDateKey, streaksFrom, zonedInstant } from './time';
 
 /**
  * The demo account exists to be screenshotted, so these pin the things a
@@ -126,12 +128,125 @@ describe.each(RUNS)('planMain — $label', ({ now, timeZone }) => {
 describe('habit streaks', () => {
   const main = planMain(new Date('2026-09-23T17:05:00Z'), CHICAGO);
 
-  it('matches the brief: reading 12 days, LeetCode 8 weekdays, all done today', () => {
+  it('matches the brief: reading 12 days, LeetCode 8 weekdays, done today except the one left open', () => {
     expect(main.habits.get('reading')).toMatchObject({ currentStreak: 12, scheduledToday: true });
     expect(main.habits.get('leetcode')).toMatchObject({ currentStreak: 8, scheduledToday: true });
     for (const h of main.habits.values()) {
-      if (h.scheduledToday) expect(h.completedOn[0]).toBe(main.today);
+      if (h.scheduledToday && !h.pendingToday) expect(h.completedOn[0]).toBe(main.today);
     }
+  });
+});
+
+describe.each(RUNS)('three months of history — $label', ({ now, timeZone }) => {
+  const main = planMain(now, timeZone);
+  const daysAgo = (dateKey: string) => Math.round((Date.parse(main.today) - Date.parse(dateKey)) / 86_400_000);
+
+  it('reaches back about three months, and no further', () => {
+    const oldest = Math.max(...main.sessions.map((s) => daysAgo(s.dateKey)));
+    expect(oldest).toBeGreaterThanOrEqual(ARCHIVE_DAYS - 15);
+    expect(oldest).toBeLessThan(ARCHIVE_DAYS);
+  });
+
+  it('rests on the day before the hand-shaped weeks, and never runs 12 days in the generated ones', () => {
+    expect(main.sessions.some((s) => daysAgo(s.dateKey) === MAIN_HISTORY_DAYS)).toBe(false);
+    const counts = archiveSessionsByDay(main.today);
+    let run = 0;
+    for (let d = ARCHIVE_DAYS - 1; d > MAIN_HISTORY_DAYS; d -= 1) {
+      run = counts.has(d) ? run + 1 : 0;
+      expect(run).toBeLessThan(12);
+    }
+  });
+
+  it('never runs 8 sessions in a day, which would unlock Speed Runner', () => {
+    const perDay = new Map<string, number>();
+    for (const s of main.sessions) perDay.set(s.dateKey, (perDay.get(s.dateKey) ?? 0) + 1);
+    expect(Math.max(...perDay.values())).toBeLessThan(8);
+  });
+});
+
+describe('goals', () => {
+  it('start no later than any task or recurring task on them', () => {
+    for (const g of GOALS) {
+      for (const t of TASKS.filter((t) => t.goal === g.key)) expect(t.createdDaysAgo).toBeLessThanOrEqual(g.createdDaysAgo);
+      for (const h of HABITS.filter((h) => h.goal === g.key)) expect(h.startedDaysAgo).toBeLessThanOrEqual(g.createdDaysAgo);
+    }
+  });
+
+  it('finish only after every task on them, and only when nothing recurring still counts', () => {
+    for (const g of GOALS.filter((g) => g.completedDaysAgo !== undefined)) {
+      for (const t of TASKS.filter((t) => t.goal === g.key)) {
+        expect(t.completedDaysAgo).toBeDefined();
+        expect(t.completedDaysAgo!).toBeGreaterThanOrEqual(g.completedDaysAgo!);
+      }
+      expect(HABITS.some((h) => h.goal === g.key)).toBe(false);
+    }
+  });
+
+  it('cover each shape the Goals lens draws', () => {
+    const open = GOALS.filter((g) => g.completedDaysAgo === undefined);
+    expect(open.some((g) => g.plannedHours && g.deadlineInDays !== undefined)).toBe(true);
+    expect(open.some((g) => g.plannedHours && g.deadlineInDays === undefined)).toBe(true);
+    expect(open.some((g) => !g.plannedHours)).toBe(true);
+    expect(GOALS.some((g) => g.completedDaysAgo !== undefined)).toBe(true);
+  });
+});
+
+describe.each(RUNS)('recurring tasks — $label', ({ now, timeZone }) => {
+  const main = planMain(now, timeZone);
+  const history = (key: Parameters<typeof main.habits.get>[0]) => main.habits.get(key)!;
+
+  it('leaves the open one undone today without breaking its streak', () => {
+    const plan = history('plan-tomorrow');
+    expect(plan).toMatchObject({ scheduledToday: true, pendingToday: true, currentStreak: 2 });
+    expect(plan.completedOn).not.toContain(main.today);
+  });
+
+  it('counts the streak of the one missed yesterday from today', () => {
+    expect(history('sql-challenge')).toMatchObject({ scheduledToday: true, pendingToday: false, currentStreak: 1 });
+  });
+
+  it('never completes an ended one after its end date, nor today', () => {
+    const spec = HABITS.find((h) => h.key === 'kaggle-notebook')!;
+    const end = habitEndDate(spec, main.today)!;
+    expect(end < main.today).toBe(true);
+    expect(history('kaggle-notebook').scheduledToday).toBe(false);
+    for (const day of history('kaggle-notebook').completedOn) expect(day <= end).toBe(true);
+  });
+
+  it('only completes each one on its own days, and never before it started', () => {
+    for (const spec of HABITS) {
+      const first = shiftDateKey(main.today, -(spec.startedDaysAgo - 1));
+      for (const day of history(spec.key).completedOn) {
+        expect(day >= first).toBe(true);
+        if (spec.days.length > 0) expect(spec.days).toContain(dayNameFromLocalDate(day));
+      }
+    }
+  });
+});
+
+describe('calendar events', () => {
+  const today = '2026-10-26';
+  const events = calendarEvents(today);
+
+  it('repeats the weekly ones only on their days', () => {
+    const gym = events.filter((e) => e.title === 'Gym');
+    expect(gym.length).toBeGreaterThan(10);
+    for (const e of gym) expect(['mon', 'wed', 'fri']).toContain(dayNameFromLocalDate(e.date));
+  });
+
+  it('gives every event either a slot inside its day or none at all', () => {
+    for (const e of events) {
+      expect(e.date).toBe(shiftDateKey(today, e.dayOffset));
+      if (e.startMinutes === null) {
+        expect(e.endMinutes).toBeNull();
+      } else {
+        expect(e.startMinutes).toBeGreaterThanOrEqual(0);
+        expect(e.endMinutes!).toBeGreaterThan(e.startMinutes);
+        expect(e.endMinutes!).toBeLessThanOrEqual(1439);
+      }
+    }
+    expect(events.some((e) => e.startMinutes === null)).toBe(true);
+    expect(events.some((e) => e.dayOffset < 0) && events.some((e) => e.dayOffset > 0)).toBe(true);
   });
 });
 
@@ -178,9 +293,9 @@ describe('deriveUnlocks', () => {
 
   it('unlocks what the history earns and nothing it does not', () => {
     expect(keys).toEqual(expect.arrayContaining([
-      'streak_3', 'streak_7', 'sessions_10', 'sessions_50', 'focus_600', 'tasks_10', 'level_5', 'social-butterfly',
+      'streak_3', 'streak_7', 'sessions_10', 'sessions_100', 'focus_600', 'focus_6000', 'tasks_10', 'level_5', 'social-butterfly',
     ]));
-    for (const unearned of ['streak_14', 'sessions_100', 'focus_6000', 'tasks_50', 'level_10', 'speed-runner']) {
+    for (const unearned of ['streak_14', 'sessions_250', 'focus_12000', 'tasks_50', 'level_10', 'speed-runner']) {
       expect(keys).not.toContain(unearned);
     }
   });

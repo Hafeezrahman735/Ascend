@@ -6,11 +6,12 @@
  */
 import { hashUnit } from '../demoHistory';
 import { dayNameFromLocalDate } from '../localDate';
+import { isScheduledOn } from '../recurrence';
 import { localHourIn } from '../localParts';
 import { dateKeyIn, shiftDateKey, streaksFrom, zonedInstant } from './time';
 import { getRankTitle } from '../rank';
 import {
-  FIXED_DAYS, FIXED_ONLY_TASKS, FRIENDS, HABITS, MAIN_USERNAME, MAIN_XP, SESSIONS_BY_DAY, TASKS,
+  EVENTS, FIXED_DAYS, FIXED_ONLY_TASKS, FRIENDS, HABITS, MAIN_USERNAME, MAIN_XP, SESSIONS_BY_DAY, TASKS, WEEKLY_EVENTS,
   type FixedBlock, type FriendSpec, type HabitKey, type HabitSpec, type Strand, type TaskKey,
 } from './content';
 
@@ -19,8 +20,16 @@ const MINUTE_MS = 60_000;
 /** Block lengths for generated task work, weighted toward a normal 50. */
 const TASK_BLOCK_MINUTES = [30, 45, 50, 50, 60, 90];
 
-/** The main account's history reaches back this far; nothing is older. */
+/** The hand-shaped recent history (SESSIONS_BY_DAY) covers days 0 to this-1. */
 export const MAIN_HISTORY_DAYS = 28;
+
+/** The generated history before it reaches back this far; nothing is older.
+ *  Three months is enough for every time analytics lens to have shape. */
+export const ARCHIVE_DAYS = 90;
+
+/** No run of worked days in the archive may reach this, so the live 12-day
+ *  streak stays the longest the account has had. */
+const ARCHIVE_MAX_RUN = 7;
 
 export interface PlannedBlock {
   dateKey: string;
@@ -106,16 +115,19 @@ export class DayTooShortError extends Error {
 
 // ── Habits ──────────────────────────────────────────────────────────────────
 
-function isScheduled(habit: HabitSpec, dateKey: string): boolean {
-  return habit.days.length === 0 || habit.days.includes(dayNameFromLocalDate(dateKey));
+/** The template's "repeat until" day, or null when it never ends. */
+export function habitEndDate(habit: HabitSpec, today: string): string | null {
+  return habit.endInDays === undefined ? null : shiftDateKey(today, habit.endInDays);
 }
 
-/** Days in the history window the habit was scheduled, most recent first. */
+/** Days up to today the habit was scheduled, most recent first. Same rule as
+ *  lib/recurrence.isScheduledOn, end date inclusive. */
 function occurrences(habit: HabitSpec, today: string): string[] {
+  const end = habitEndDate(habit, today);
   const days: string[] = [];
-  for (let d = 0; d < MAIN_HISTORY_DAYS; d += 1) {
+  for (let d = 0; d < habit.startedDaysAgo; d += 1) {
     const key = shiftDateKey(today, -d);
-    if (isScheduled(habit, key)) days.push(key);
+    if (isScheduledOn(habit.days, key, end)) days.push(key);
   }
   return days;
 }
@@ -125,6 +137,8 @@ export interface HabitHistory {
   completedOn: string[];
   /** Today's occurrence exists (the habit is scheduled today). */
   scheduledToday: boolean;
+  /** Today's instance is open, not done. */
+  pendingToday: boolean;
   currentStreak: number;
   longestStreak: number;
 }
@@ -137,10 +151,12 @@ export interface HabitHistory {
 export function habitHistory(habit: HabitSpec, today: string): HabitHistory {
   const occ = occurrences(habit, today);
   const missed = new Set(habit.missedOccurrences);
-  const done = occ.map((_, i) => !missed.has(i));
+  const pending = habit.pendingToday === true && occ[0] === today;
+  const done = occ.map((_, i) => !missed.has(i) && !(pending && i === 0));
 
+  // An open instance today is not a miss: the streak stands on yesterday.
   let current = 0;
-  while (current < done.length && done[current]) current += 1;
+  for (let i = pending ? 1 : 0; i < done.length && done[i]; i += 1) current += 1;
 
   let longest = 0;
   let run = 0;
@@ -152,6 +168,7 @@ export function habitHistory(habit: HabitSpec, today: string): HabitHistory {
   return {
     completedOn: occ.filter((_, i) => done[i]),
     scheduledToday: occ[0] === today,
+    pendingToday: pending,
     currentStreak: current,
     longestStreak: longest,
   };
@@ -224,6 +241,32 @@ function generatedBlocks(
   return blocks;
 }
 
+/**
+ * Blocks run on each day of the generated history, by days-ago. Weekdays are
+ * busier than weekends, a day a task was finished is always worked (so it has
+ * time behind it), and no run of worked days reaches ARCHIVE_MAX_RUN. Day
+ * MAIN_HISTORY_DAYS is always a rest day, so the generated days never join
+ * the hand-shaped ones into a longer run.
+ */
+export function archiveSessionsByDay(today: string): Map<number, number> {
+  const finishDays = new Set(TASKS.flatMap((t) => (t.completedDaysAgo !== undefined && t.completedDaysAgo > MAIN_HISTORY_DAYS ? [t.completedDaysAgo] : [])));
+  const counts = new Map<number, number>();
+  let run = 0;
+  for (let d = ARCHIVE_DAYS - 1; d > MAIN_HISTORY_DAYS; d -= 1) {
+    const weekday = dayNameFromLocalDate(shiftDateKey(today, -d));
+    const weekend = weekday === 'sat' || weekday === 'sun';
+    const rested = run >= ARCHIVE_MAX_RUN - 1;
+    const worked = finishDays.has(d) || (!rested && hashUnit(`archive:${d}:worked`) < (weekend ? 0.4 : 0.8));
+    if (!worked) {
+      run = 0;
+      continue;
+    }
+    run += 1;
+    counts.set(d, 1 + Math.floor(hashUnit(`archive:${d}:count`) * 4));
+  }
+  return counts;
+}
+
 export interface MainPlan {
   today: string;
   sessions: MainSession[];
@@ -244,9 +287,15 @@ export function planMain(now: Date, timeZone: string): MainPlan {
     if (block.strand.kind === 'task') used.set(block.strand.key, (used.get(block.strand.key) ?? 0) + 1);
   }
 
+  // Most recent first, so the hand-shaped days take their share of each
+  // task's cap before the generated ones do.
+  const dayCounts: [number, number][] = [
+    ...Object.entries(SESSIONS_BY_DAY).map(([d, count]): [number, number] => [Number(d), count]),
+    ...archiveSessionsByDay(today),
+  ].sort((a, b) => a[0] - b[0]);
+
   const sessions: MainSession[] = [];
-  for (const [daysAgoText, count] of Object.entries(SESSIONS_BY_DAY)) {
-    const daysAgo = Number(daysAgoText);
+  for (const [daysAgo, count] of dayCounts) {
     const dateKey = shiftDateKey(today, -daysAgo);
     const blocks = FIXED_DAYS[daysAgo] ?? generatedBlocks(daysAgo, count, dateKey, habitsDone, used);
     const minutes = blocks.map((b) => b.minutes);
@@ -260,6 +309,36 @@ export function planMain(now: Date, timeZone: string): MainPlan {
 
   sessions.sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime());
   return { today, sessions, habits };
+}
+
+// ── Calendar events ─────────────────────────────────────────────────────────
+
+export interface PlannedEvent {
+  title: string;
+  date: string;
+  dayOffset: number;
+  /** Minutes from local midnight; both null = all day. */
+  startMinutes: number | null;
+  endMinutes: number | null;
+}
+
+/** The one-off events plus every day of the weekly ones, sorted by day. */
+export function calendarEvents(today: string): PlannedEvent[] {
+  const slot = (at?: { start: [number, number]; minutes: number }) => {
+    if (!at) return { startMinutes: null, endMinutes: null };
+    const start = at.start[0] * 60 + at.start[1];
+    return { startMinutes: start, endMinutes: start + at.minutes };
+  };
+  const rows: PlannedEvent[] = EVENTS.map((e) => ({
+    title: e.title, dayOffset: e.dayOffset, date: shiftDateKey(today, e.dayOffset), ...slot(e.at),
+  }));
+  for (const w of WEEKLY_EVENTS) {
+    for (let d = w.fromDay; d <= w.toDay; d += 1) {
+      const date = shiftDateKey(today, d);
+      if (w.days.includes(dayNameFromLocalDate(date))) rows.push({ title: w.title, dayOffset: d, date, ...slot(w.at) });
+    }
+  }
+  return rows.sort((a, b) => a.dayOffset - b.dayOffset || (a.startMinutes ?? -1) - (b.startMinutes ?? -1));
 }
 
 // ── Friends ─────────────────────────────────────────────────────────────────
@@ -488,6 +567,7 @@ export function checkPlan(main: MainPlan, board: LeaderboardRow[]): void {
 
   const problems: string[] = [];
   if (streak.current !== 12) problems.push(`day streak is ${streak.current}, expected 12`);
+  if (streak.longest !== 12) problems.push(`longest streak is ${streak.longest}, expected 12 (the live one)`);
   if (today.length !== 3) problems.push(`${today.length} sessions today, expected 3`);
   if (sumMinutes(today) !== 100) problems.push(`${sumMinutes(today)} focus minutes today, expected 100`);
   if (position < 2 || position > 3) problems.push(`leaderboard position ${position}, expected 2 or 3`);

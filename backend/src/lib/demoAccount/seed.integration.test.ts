@@ -5,9 +5,10 @@ import { prisma } from '../prisma';
 import { achievements } from '../achievementSeedData';
 import { loadAchievementCatalogue } from '../achievementCatalogue';
 import { createUser, authed } from '../../test/factories';
-import { DEMO_EMAIL_DOMAIN, FRIENDS, GROUP, MAIN_USERNAME } from './content';
+import { DEMO_EMAIL_DOMAIN, FRIENDS, GOALS, GROUP, HABITS, MAIN_USERNAME } from './content';
+import { ARCHIVE_DAYS, calendarEvents } from './plan';
 import { friendEmail, seedDemoAccount, teardownDemoAccount } from './seed';
-import { dateKeyIn } from './time';
+import { dateKeyIn, shiftDateKey } from './time';
 
 /**
  * The demo seed, checked the way the screenshots will see it: through the real
@@ -132,17 +133,17 @@ describe('seedDemoAccount — the Tasks screen', () => {
     const today = Date.parse(dateKeyIn(new Date(), timeZone));
     const daysLeft = (t: { dueDate: string | null }) => (t.dueDate ? Math.round((Date.parse(t.dueDate.slice(0, 10)) - today) / 86_400_000) : null);
 
-    const dueSoon = tasks.filter((t) => !t.isCompleted && daysLeft(t) !== null && daysLeft(t)! >= 0 && daysLeft(t)! <= 2);
+    const dueSoon = tasks.filter((t) => !t.parentTaskId && !t.isCompleted && daysLeft(t) !== null && daysLeft(t)! >= 0 && daysLeft(t)! <= 2);
     expect(dueSoon.map((t) => t.title).sort()).toEqual([
       'Build iOS Live Activity for the focus timer',
       'Write integration tests for the auth routes',
       'Write the LinkedIn launch post for Ascend',
     ]);
 
-    // Today's habit instances are done, so none of them competes for a slot.
+    // Today's recurring instances are done, bar the one left open to tick off.
     const habitsToday = tasks.filter((t) => t.parentTaskId);
-    expect(habitsToday.length).toBeGreaterThan(0);
-    expect(habitsToday.every((t) => t.isCompleted)).toBe(true);
+    expect(habitsToday.length).toBeGreaterThan(1);
+    expect(habitsToday.filter((t) => !t.isCompleted).map((t) => t.title)).toEqual(['Plan tomorrow’s focus blocks']);
 
     const live = tasks.find((t) => t.title.startsWith('Build iOS Live Activity'))!;
     expect(live).toMatchObject({ sessionsOnTask: 1, estimatedMinutes: 200, totalTimeOnTask: 50 * 60 });
@@ -153,12 +154,79 @@ describe('seedDemoAccount — the Tasks screen', () => {
     }
 
     const goals = await api.get('/task-goals');
-    const progress = (goals.body.data as { title: string; overallProgress: number }[]).map((g) => g.overallProgress);
-    expect(progress).toHaveLength(2);
-    for (const p of progress) {
-      expect(p).toBeGreaterThan(0);
-      expect(p).toBeLessThan(1);
+    const rows = goals.body.data as { title: string; overallProgress: number; isCompleted: boolean }[];
+    const open = rows.filter((g) => !g.isCompleted);
+    expect(open).toHaveLength(GOALS.filter((g) => g.completedDaysAgo === undefined).length);
+    for (const g of open) {
+      expect(g.overallProgress).toBeGreaterThan(0);
+      expect(g.overallProgress).toBeLessThan(1);
     }
+  });
+
+  it('serves every recurring shape: open today, ended, not due today, and an end date ahead', async () => {
+    const { api, timeZone } = await seed();
+    const today = dateKeyIn(new Date(), timeZone);
+    const res = await api.get('/tasks/recurring');
+    expect(res.status).toBe(200);
+
+    const templates = res.body.data as { title: string; recurringDays: string[]; dueDate: string | null; currentStreak: number; nextOccurrence?: string | null }[];
+    expect(templates).toHaveLength(HABITS.length);
+    const by = (title: string) => templates.find((t) => t.title === title)!;
+
+    expect(by('30-day SQL challenge').dueDate!.slice(0, 10) > today).toBe(true);
+    expect(by('Daily Kaggle notebook').dueDate!.slice(0, 10) < today).toBe(true);
+    expect(by('Daily Kaggle notebook').nextOccurrence ?? null).toBeNull();
+    expect(by('Weekly review').recurringDays).toEqual(['sun']);
+    expect(by('Plan tomorrow’s focus blocks').currentStreak).toBe(2);
+  });
+});
+
+describe('seedDemoAccount — time analytics and the calendar', () => {
+  it('reports three months of focus that adds up to the profile total', async () => {
+    const { api, timeZone, account } = await seed();
+    const res = await api.get(`/time-report/history?tz=${encodeURIComponent(timeZone)}`);
+    expect(res.status).toBe(200);
+
+    const { allTime, daily } = res.body.data as { allTime: { seconds: number; firstDate: string }; daily: { date: string }[] };
+    const me = await api.get('/auth/me');
+    expect(allTime.seconds).toBe(me.body.data.totalFocusTime);
+    const spanDays = (Date.parse(dateKeyIn(new Date(), timeZone)) - Date.parse(allTime.firstDate)) / 86_400_000;
+    expect(spanDays).toBeGreaterThanOrEqual(60);
+    expect(spanDays).toBeLessThan(ARCHIVE_DAYS);
+    expect(daily.length).toBeGreaterThan(50);
+
+    // Every session carries a local day, so no lens has to guess one.
+    expect(await prisma.session.count({ where: { userId: account.id, localDate: null } })).toBe(0);
+  });
+
+  it('gives the planned goals a pace and keeps the unplanned one apart', async () => {
+    const { api, timeZone } = await seed();
+    const res = await api.get(`/task-goals?tz=${encodeURIComponent(timeZone)}`);
+    const goals = res.body.data as { title: string; plannedMinutes: number | null; timePace: { status: string } }[];
+    const status = (title: string) => goals.find((g) => g.title === title)!.timePace.status;
+
+    expect(['ahead', 'behind', 'on_pace']).toContain(status('Ship Ascend v1.1'));
+    expect(['ahead', 'behind', 'on_pace']).toContain(status('Land an ML/SWE role'));
+    expect(status('Build an ML portfolio')).toBe('no_deadline');
+    expect(status('Read 12 technical books this year')).toBe('no_plan');
+    expect(status('Launch Ascend v1.0')).toBe('completed');
+  });
+
+  it('fills the calendar with tasks, recurring tasks, events, notes and deadlines', async () => {
+    const { api, timeZone } = await seed();
+    const today = dateKeyIn(new Date(), timeZone);
+    const res = await api.get(`/calendar?start=${shiftDateKey(today, -14)}&end=${shiftDateKey(today, 21)}`);
+    expect(res.status).toBe(200);
+
+    const items = res.body.data.items as { type: string; date: string; data: { title?: string; startMinutes?: number | null } }[];
+    const types = new Set(items.map((i) => i.type));
+    for (const type of ['task', 'habit_instance', 'event', 'note', 'goal_deadline']) expect(types).toContain(type);
+
+    const events = items.filter((i) => i.type === 'event');
+    expect(events.length).toBe(calendarEvents(today).filter((e) => e.dayOffset >= -14 && e.dayOffset <= 21).length);
+    expect(events.some((e) => e.data.startMinutes === null)).toBe(true);
+    expect(items.some((i) => i.type === 'task' && typeof i.data.startMinutes === 'number')).toBe(true);
+    expect(items.some((i) => i.type === 'note' && i.date > today)).toBe(true);
   });
 });
 

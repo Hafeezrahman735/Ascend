@@ -18,7 +18,10 @@ import { CURRENT_TERMS_VERSION } from '../terms';
 import { getRankTitle } from '../rank';
 import { hashUnit } from '../demoHistory';
 import { calendarDay, dateKeyIn, shiftDateKey, streaksFrom, zonedInstant } from './time';
-import { checkPlan, deriveUnlocks, leaderboardOf, planFriend, planMain, sumMinutes, type FriendPlan, type LeaderboardRow, type MainPlan } from './plan';
+import {
+  ARCHIVE_DAYS, calendarEvents, checkPlan, deriveUnlocks, habitEndDate, leaderboardOf, planFriend, planMain, sumMinutes,
+  type FriendPlan, type LeaderboardRow, type MainPlan,
+} from './plan';
 import {
   DEMO_EMAIL_DOMAIN, FRIENDS, GOALS, GROUP, HABITS, MAIN_AVATAR, MAIN_RECAPS, MAIN_USERNAME,
   MAIN_XP, NOTES, REACTION_EMOJIS, SESSION_MINUTES, TASKS,
@@ -173,7 +176,7 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
         passwordHash: mainHash,
         avatarEmoji: MAIN_AVATAR,
         xp: MAIN_XP,
-        createdAt: noonOf(35),
+        createdAt: noonOf(ARCHIVE_DAYS + 5),
       },
     });
 
@@ -184,8 +187,11 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
           userId: user.id,
           title: g.title,
           tag: g.tag,
-          deadline: calendarDay(dayKey(g.deadlineInDays)),
-          createdAt: noonOf(28),
+          deadline: g.deadlineInDays === undefined ? null : calendarDay(dayKey(g.deadlineInDays)),
+          plannedMinutes: g.plannedHours === undefined ? null : g.plannedHours * 60,
+          isCompleted: g.completedDaysAgo !== undefined,
+          completedAt: g.completedDaysAgo === undefined ? null : noonOf(g.completedDaysAgo),
+          createdAt: noonOf(g.createdDaysAgo),
         },
       });
       goalIds.set(g.key, { id: row.id, title: row.title });
@@ -218,9 +224,12 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
         data: {
           userId: user.id,
           title: t.title,
+          description: t.description ?? null,
           tags: [t.tag],
           priority: t.priority,
           estimatedMinutes: t.estSessions * SESSION_MINUTES,
+          startMinutes: t.slot ? t.slot.startHour * 60 : null,
+          endMinutes: t.slot ? t.slot.startHour * 60 + t.slot.minutes : null,
           taskGoalId: goal?.id ?? null,
           dueDate: t.dueInDays === undefined ? null : calendarDay(dayKey(t.dueInDays)),
           isCompleted: completedAt !== null,
@@ -237,9 +246,9 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
     // ── Habits: a template, plus today's instance ─────────────────────────
     // The shape POST /tasks/spawn-recurring leaves behind. Past instances are
     // not written: spawn archives them, and nothing reads archived rows.
-    // Today's is written completed — both because the streaks run through
-    // today, and because an open habit due today would take a slot on the
-    // Due Soon card from the real deadlines.
+    // Today's is written completed, because the streaks run through today —
+    // except for the one habit marked pendingToday, left open to tick off.
+    // A template's dueDate is its "repeat until" day, as in lib/recurrence.
     const habitRows = new Map<HabitKey, { templateId: string; instanceId: string | null; goalId: string | null }>();
     for (const h of HABITS) {
       const history = main.habits.get(h.key)!;
@@ -257,11 +266,13 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
         taskGoalId: goal?.id ?? null,
       };
 
+      const endDate = habitEndDate(h, today);
       const template = await tx.task.create({
         data: {
           ...shared,
           isRecurring: true,
           recurringDays: h.days,
+          dueDate: endDate ? calendarDay(endDate) : null,
           lastSpawnedDate: today,
           currentStreak: history.currentStreak,
           longestStreak: history.longestStreak,
@@ -269,23 +280,25 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
           // Seconds, despite the name — the complete route adds totalTimeOnTask
           // to it and the client formats it with formatSeconds.
           totalFocusTimeMs: all.seconds,
-          createdAt: noonOf(28),
+          createdAt: noonOf(h.startedDaysAgo),
         },
       });
 
       let instanceId: string | null = null;
       if (history.scheduledToday) {
         // Done after its session today, or a while ago if it had none.
-        const doneAt = todays.last
-          ? new Date(todays.last.getTime() + 2 * MINUTE_MS)
-          : new Date(Math.max(zonedInstant(today, 0, 30, timeZone).getTime(), now.getTime() - 150 * MINUTE_MS));
-        taskCompletions.push(doneAt);
+        const doneAt = history.pendingToday
+          ? null
+          : todays.last
+            ? new Date(todays.last.getTime() + 2 * MINUTE_MS)
+            : new Date(Math.max(zonedInstant(today, 0, 30, timeZone).getTime(), now.getTime() - 150 * MINUTE_MS));
+        if (doneAt) taskCompletions.push(doneAt);
         const instance = await tx.task.create({
           data: {
             ...shared,
             dueDate: calendarDay(today),
             parentTaskId: template.id,
-            isCompleted: true,
+            isCompleted: doneAt !== null,
             completedAt: doneAt,
             sessionsOnTask: todays.count,
             totalTimeOnTask: todays.seconds,
@@ -367,10 +380,24 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
       data: NOTES.map((n, i) => ({
         userId: user.id,
         content: n.content,
-        date: today,
+        date: n.dayOffset === null ? null : dayKey(n.dayOffset ?? 0),
         isTodo: n.isTodo,
         isCompleted: n.isCompleted,
-        createdAt: new Date(noonOf(2).getTime() + i * MINUTE_MS),
+        // Written a day or so before the day it is pinned to, never in the future.
+        createdAt: new Date(noonOf(Math.max(2, 1 - (n.dayOffset ?? 0))).getTime() + i * MINUTE_MS),
+      })),
+    });
+
+    // ── Calendar events ───────────────────────────────────────────────────
+    const eventRows = calendarEvents(today);
+    await tx.event.createMany({
+      data: eventRows.map((e) => ({
+        userId: user.id,
+        title: e.title,
+        date: e.date,
+        startMinutes: e.startMinutes,
+        endMinutes: e.endMinutes,
+        createdAt: noonOf(Math.max(1, -e.dayOffset + 3)),
       })),
     });
 
