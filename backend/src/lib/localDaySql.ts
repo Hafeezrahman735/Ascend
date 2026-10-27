@@ -29,7 +29,19 @@ export function sessionLocalDaySql(timeZone: string): Prisma.Sql {
  */
 export async function postgresTimeZone(timeZone: string): Promise<string> {
   if (timeZone === 'UTC') return timeZone;
+  const known = knownZones.get(timeZone);
+  if (known !== undefined) return known ? timeZone : 'UTC';
   const rows = await prisma.$queryRaw<{ ok: boolean }[]>`
     SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = ${timeZone}) AS ok`;
-  return rows[0]?.ok ? timeZone : 'UTC';
+  const ok = rows[0]?.ok ?? false;
+  knownZones.set(timeZone, ok);
+  return ok ? timeZone : 'UTC';
 }
+
+/**
+ * Postgres's answer per zone, for the life of the process. pg_timezone_names
+ * is built by reading the zone files on every query (seconds when cold), and
+ * the answer cannot change while the server runs. Bounded in practice by the
+ * ~600 zone names `safeTimeZone` lets through.
+ */
+const knownZones = new Map<string, boolean>();
