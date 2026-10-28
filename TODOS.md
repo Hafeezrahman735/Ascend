@@ -274,3 +274,14 @@ scope cut on 2026-10-22:
 - [ ] **Fonts in Expo Go.** The four families are compiled into the binary by the
       expo-font plugin, which Expo Go does not run, so Expo Go shows the system font.
       Dev and store builds are unaffected.
+
+## From /plan-eng-review — recurring tasks as a rule plus a log (2026-10-27)
+
+- [ ] **"Skip today" for recurring tasks.** Today a day you can't do either breaks the
+      streak or forces deleting the whole recurring task (`mobile/app/(tabs)/tasks.tsx:2378`).
+      With the completion log (`docs/designs/recurring-tasks-rule-and-log.md`), a skip is a
+      skipped-day log row that neither breaks nor extends the streak.
+      **Pros:** small on top of the log; no copies involved.
+      **Cons:** every calculation has to handle a new log state, plus a UI action; no user has asked for it.
+      **Start in** `backend/src/lib/recurringOccurrences.ts` and the completion endpoints.
+      **Depends on:** stages 1-4 of that plan. Decided D12 (2026-10-27).
