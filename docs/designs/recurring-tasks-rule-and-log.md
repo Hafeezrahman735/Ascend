@@ -1203,6 +1203,13 @@ client tick ──► PUT /tasks/:id/completions/:date ─┐      older build: 
 
 ## Implementation Tasks
 
+> **Direct cutover (2026-10-29), supersedes the staged rollout above.** Stage 0 on production found 9 recurring tasks, 2 owners, 47 copies (11 completed) and 10 sessions on copies (48h). Both owners are the founder's test accounts, already notified, so no real user depends on the copies. The founder ruled the compatibility window, reconciliation and legacy fields wasteful at this size. What changes:
+> - **T3** shrinks to one cutover script (`prisma/recurringCutover.ts`, `--dry-run` first): completed copies become log rows, copy sessions move onto their recurring task, every copy is deleted. It runs once per environment, with the release that stops reading copies.
+> - **T4** drops the legacy fields for older builds and the `occurrences=1` flag: `GET /tasks` simply returns the new shape.
+> - **T5** drops the copy-id mapping and the copy counters: sessions point at the recurring task.
+> - **T6** and **T7** ship with T4/T5 as one release; the backup, reconciliation and 426 gates are dropped. `applyCompletionChange` stops marking copies in that release.
+> - No `occurrenceTaskId` column.
+
 These come from the findings above. Effort assumes features at about 30x and tests at about 50x faster with CC.
 
 - [x] **T1 (P1, human: ~1d / CC: ~45min): backend/lib. Thread a transaction client through `awardXp`, `checkAchievements`, `syncGoalCompletion`, `loadGoalCounts` and `loadHabitProgress`; emit events after commit.**
@@ -1213,7 +1220,7 @@ These come from the findings above. Effort assumes features at about 30x and tes
   - Surfaced by: D4, D6, D8, OV14.
   - Files: `backend/prisma/schema.prisma`, `backend/src/lib/recurringOccurrences.ts`, `backend/src/modules/tasks/completions.ts`.
   - Verify: completion endpoint integration tests, including the concurrency test.
-- [ ] **T3 (P1, human: ~1d / CC: ~45min): backend/scripts. Write the migration script with `completions`, `repoint`, `compare` and `reconcile` subcommands, each with `--dry-run`.**
+- [x] **T3 (rescoped to the direct-cutover script, see above) (P1, human: ~1d / CC: ~45min): backend/scripts. Write the migration script with `completions`, `repoint`, `compare` and `reconcile` subcommands, each with `--dry-run`.**
   - Surfaced by: D2, D5, OV5, OV6, D9.
   - Files: `backend/prisma/recurringMigration.ts`.
   - Verify: script integration tests against local Postgres.
