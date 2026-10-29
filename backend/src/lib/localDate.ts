@@ -1,7 +1,7 @@
 /**
  * The app's local-date convention, in one place.
  *
- * Anything day-shaped — streaks, daily goals, recurring-task spawns — must use
+ * Anything day-shaped — streaks, daily goals, recurring-task days — must use
  * the USER'S calendar day, not the server's. A user in UTC-8 is still on Monday
  * at 5pm while the server has already rolled over to Tuesday; keying off server
  * time would end their day early and break their streak nightly.

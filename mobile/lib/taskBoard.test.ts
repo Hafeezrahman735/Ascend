@@ -92,10 +92,10 @@ describe('topTasks', () => {
     expect(topTasks(list, NOW, 3).map((t) => t.id)).toEqual(['open']);
   });
 
-  it('ranks a recurring instance like any other task', () => {
+  it("ranks a recurring task's day row like any other task", () => {
     const list = [
       task({ id: 'one-off' }),
-      task({ id: 'habit', parentTaskId: 'tpl', priority: 'high', dueDate: '2026-08-18' }),
+      task({ id: 'habit', isOccurrence: true, isRecurring: true, priority: 'high', dueDate: '2026-08-18' }),
     ];
     expect(topTasks(list, NOW, 3).map((t) => t.id)).toEqual(['habit', 'one-off']);
   });
@@ -122,17 +122,17 @@ describe('buildTaskBoard', () => {
     expect([...board.notStarted, ...board.inProgress, ...board.completed]).toEqual([]);
   });
 
-  it("buckets a habit scheduled today by its instance's progress", () => {
+  it("buckets a recurring task due today by its day row's progress", () => {
     const board = buildTaskBoard({
-      tasks: [task({ id: 'inst', parentTaskId: 'tpl', sessionsOnTask: 1 })],
+      tasks: [task({ id: 'tpl', isOccurrence: true, isRecurring: true, sessionsOnTask: 1 })],
       templates: [template({ id: 'tpl', scheduledToday: true })],
       now: NOW,
     });
-    expect(ids(board.inProgress)).toEqual(['inst']);
+    expect(ids(board.inProgress)).toEqual(['tpl']);
     expect(ids(board.notStarted)).toEqual([]);
   });
 
-  it('shows a habit with no instance today in Not started, after real tasks', () => {
+  it('shows a recurring task with no row today in Not started, after real tasks', () => {
     const board = buildTaskBoard({
       tasks: [task({ id: 'real' })],
       templates: [template({ id: 'wed', scheduledToday: false, nextOccurrence: '2026-08-19' })],
@@ -141,13 +141,13 @@ describe('buildTaskBoard', () => {
     expect(ids(board.notStarted)).toEqual(['real', 'recurring:wed']);
   });
 
-  it('never lists a habit twice once its instance is completed', () => {
+  it('never lists a recurring task twice once its day row is ticked off', () => {
     const board = buildTaskBoard({
-      tasks: [task({ id: 'inst', parentTaskId: 'tpl', isCompleted: true })],
+      tasks: [task({ id: 'tpl', isOccurrence: true, isRecurring: true, isCompleted: true })],
       templates: [template({ id: 'tpl', scheduledToday: true })],
       now: NOW,
     });
-    expect(ids(board.completed)).toEqual(['inst']);
+    expect(ids(board.completed)).toEqual(['tpl']);
     expect(ids(board.notStarted)).toEqual([]);
   });
 

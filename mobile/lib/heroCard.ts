@@ -72,15 +72,15 @@ export const URGENCY_WINDOW = {
  * already paid for it and because the recurring rule needs it.
  *
  * That recurring rule mirrors getDueChip (taskMetrics.ts:51-53) exactly, and the
- * exactness matters: a past-due recurring instance is a stale row awaiting the
- * next spawn, not a missed deadline, so it is excluded — but a recurring instance
- * due TODAY is a habit you still have time to do, and it stays. Excluding
+ * exactness matters: a past-due recurring day row is a stale row from a cache
+ * read before midnight, not a missed deadline, so it is excluded — but one due
+ * TODAY is a habit you still have time to do, and it stays. Excluding
  * recurring tasks outright would silently drop today's habits from the card.
  * None of the three copies of this predicate had the rule in either form.
  */
 export function isUrgencyEligible(task: Task, daysUntil: number): boolean {
   if (task.isCompleted || task.isArchived) return false;
-  if (task.parentTaskId && daysUntil < 0) return false;
+  if (task.isOccurrence && daysUntil < 0) return false;
   return true;
 }
 

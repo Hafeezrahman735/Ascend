@@ -242,7 +242,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       // second findFirst that used to run after the insert.
       let ownedTask: {
         id: string; title: string; tags: string[]; priority: string;
-        taskGoalId: string | null; isRecurring: boolean; parentTaskId: string | null;
+        taskGoalId: string | null; isRecurring: boolean;
         sessionDates: string[];
       } | null = null;
       if (taskId) {
@@ -250,7 +250,7 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
           where: { id: taskId, userId },
           select: {
             id: true, title: true, tags: true, priority: true,
-            taskGoalId: true, isRecurring: true, parentTaskId: true,
+            taskGoalId: true, isRecurring: true,
             sessionDates: true,
           },
         });
@@ -299,22 +299,28 @@ export function setupTimerRoutes(router: Router, timerNamespace: Namespace): voi
       // userId again so the write itself can never touch another user's row.
       // Reuses the task read above rather than re-fetching it — the row cannot
       // have changed in between, and the attribution stamp already needed it.
+      //
+      // A recurring task's counters are left alone: its row is shown one day at
+      // a time, with that day's figures calculated from the sessions themselves
+      // (lib/recurringStats.ts), so a lifetime counter here would only mislead.
       if (ownedTaskId && ownedTask) {
         try {
-          const updatedDates = Array.from(new Set([...ownedTask.sessionDates, sessionLocalDate]));
-          await prisma.task.updateMany({
-            where: { id: ownedTaskId, userId },
-            data: {
-              sessionsOnTask: { increment: 1 },
-              totalTimeOnTask: { increment: creditedSeconds },
-              sessionDates: updatedDates,
-            },
-          });
+          if (!ownedTask.isRecurring) {
+            const updatedDates = Array.from(new Set([...ownedTask.sessionDates, sessionLocalDate]));
+            await prisma.task.updateMany({
+              where: { id: ownedTaskId, userId },
+              data: {
+                sessionsOnTask: { increment: 1 },
+                totalTimeOnTask: { increment: creditedSeconds },
+                sessionDates: updatedDates,
+              },
+            });
+          }
 
           // A session against a linked task moves the goal's sessions
           // component, which may complete it.
           if (ownedTask.taskGoalId) {
-            await syncGoalCompletion(userId, [ownedTask.taskGoalId]);
+            await syncGoalCompletion(userId, [ownedTask.taskGoalId], { today: sessionLocalDate });
           }
         } catch (taskErr) {
           // Non-fatal — session is already saved; log and continue

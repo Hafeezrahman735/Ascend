@@ -10,7 +10,7 @@ function task(over: Partial<Task> = {}): Task {
     id: 't1', title: 'A task', tags: [], priority: 'medium',
     isArchived: false, isCompleted: false, createdAt: '2026-09-01',
     sessionsOnTask: 0, totalTimeOnTask: 0, sessionDates: [],
-    isRecurring: false, recurringDays: [], lastSpawnedDate: null, parentTaskId: null,
+    isRecurring: false, recurringDays: [], isOccurrence: false,
     ...over,
   } as unknown as Task;
 }
@@ -20,34 +20,34 @@ function item(date: string, over: Partial<Task> = {}, type: 'task' | 'habit_inst
 }
 
 
-/** A spawned recurring instance: a real row, so it carries the full Task shape. */
+/** A recurring task's day as the full Task shape. */
 function habit(date: string, templateId: string, over: Partial<Task> = {}): CalendarItem {
   return {
     type: 'habit_instance',
     date,
-    data: task({ id: `${templateId}-${date}`, parentTaskId: templateId, isRecurring: true, ...over }),
+    data: task({ id: templateId, isRecurring: true, isOccurrence: true, occurrenceDate: date, ...over }),
   };
 }
 
 /**
- * A PROJECTED recurring day, exactly as the server sends it.
+ * A recurring day exactly as the calendar sends it.
  *
- * Deliberately NOT built through task(): the real placeholder carries only
- * id/title/parentTaskId/dueDate/isCompleted/isProjected (backend
- * calendar/routes.ts). Using the full fixture here would hide the very bug
- * these tests exist to pin — missing priority and isRecurring.
+ * Deliberately NOT built through task(): the server sends only a few fields
+ * (backend calendar/routes.ts). Using the full fixture here would hide the very
+ * bug these tests exist to pin — a field the server omits read as present.
  */
 function projected(date: string, templateId: string, title = 'Daily reading'): CalendarItem {
   return {
     type: 'habit_instance',
     date,
     data: {
-      id: `projected:${templateId}:${date}`,
+      id: templateId,
       title,
-      parentTaskId: templateId,
+      isRecurring: true,
+      isOccurrence: true,
+      occurrenceDate: date,
       dueDate: `${date}T00:00:00.000Z`,
       isCompleted: false,
-      isProjected: true,
     } as unknown as Task,
   };
 }

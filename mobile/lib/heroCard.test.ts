@@ -8,7 +8,7 @@ import type { Task } from '../types';
 function task(over: Partial<Task> = {}): Task {
   return {
     id: 't1', title: 'Task', isCompleted: false, isArchived: false,
-    dueDate: null, parentTaskId: null, tags: [], priority: 'medium',
+    dueDate: null, isOccurrence: false, tags: [], priority: 'medium',
     sessionsOnTask: 0, totalTimeOnTask: 0, sessionDates: [],
     isRecurring: false, recurringDays: [], createdAt: '2026-01-01T00:00:00.000Z',
     ...over,
@@ -31,13 +31,13 @@ describe('isUrgencyEligible', () => {
     // The rule is about STALE habits, not habits. A recurring instance due today
     // is one you still have time to do, and dropping it would quietly remove
     // today's habits from the card.
-    expect(isUrgencyEligible(task({ parentTaskId: 'tpl' }), 0)).toBe(true);
+    expect(isUrgencyEligible(task({ isOccurrence: true }), 0)).toBe(true);
   });
 
   it('rejects a recurring instance that is past due', () => {
     // Mirrors getDueChip (taskMetrics.ts:51-53): a past-due instance is a stale
     // row awaiting the next spawn, not a missed deadline.
-    expect(isUrgencyEligible(task({ parentTaskId: 'tpl' }), -1)).toBe(false);
+    expect(isUrgencyEligible(task({ isOccurrence: true }), -1)).toBe(false);
   });
 });
 
@@ -63,7 +63,7 @@ describe('hasUrgentTask', () => {
   });
 
   it('excludes a stale recurring instance', () => {
-    expect(hasUrgentTask([task({ dueDate: '2026-08-20', parentTaskId: 'tpl' })], NOW, 6)).toBe(false);
+    expect(hasUrgentTask([task({ dueDate: '2026-08-20', isOccurrence: true })], NOW, 6)).toBe(false);
   });
 });
 

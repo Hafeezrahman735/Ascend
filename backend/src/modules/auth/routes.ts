@@ -281,7 +281,7 @@ authRouter.post('/auth/logout', async (req: Request, res: Response) => {
 
   // Proactively resets the overall day-streak the moment a day is missed, instead
   // of the lazy "recompute on next session" path in lib/streak.ts. Called on app
-  // boot / foreground alongside recurring-task spawning. The streak survives only
+  // boot / foreground alongside the task refresh. The streak survives only
   // if the user was active today or yesterday; any older last-active means at least
   // one full day was missed, so it resets to 0 immediately. Never increments here.
   authRouter.post('/auth/me/streak-check', async (req: Request, res: Response) => {

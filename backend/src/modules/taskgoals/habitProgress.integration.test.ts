@@ -1,19 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createUser, authed, type TestUser } from '../../test/factories';
 import { prisma } from '../../lib/prisma';
+import { dayNameFromLocalDate } from '../../lib/localDate';
 
 /**
- * Goals linked to habits.
+ * Goals linked to recurring tasks.
  *
- * A linked habit used to be counted as its template — which is never
- * completed — plus today's instance, so any goal with a habit on it was stuck
- * below 100%. A habit now counts as ONE item, done when its most recent
- * scheduled day was completed (product decision, 2026-10-21).
- *
- * The app also links a habit through whichever row it is showing, usually
- * today's instance. Instances inherit the template's goal when they spawn, so
- * that link used to fall off overnight. The template and live instance now
- * move together.
+ * A recurring task counts as ONE item, done when its most recent due day on or
+ * before the user's today was ticked off (product decision, 2026-10-21). Its
+ * done days live in the completion log, so a goal reads the same thing the
+ * task list and the streak do.
  */
 
 function utcDayOffset(days: number): string {
@@ -24,8 +20,6 @@ function utcDayOffset(days: number): string {
 
 const TODAY = utcDayOffset(0);
 const YESTERDAY = utcDayOffset(-1);
-const TOMORROW = utcDayOffset(1);
-const EVERY_DAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 async function createGoal(user: TestUser, title = 'Ship portfolio') {
   const res = await authed(user).post('/task-goals').send({ title });
@@ -39,30 +33,49 @@ async function createTask(user: TestUser, title: string, taskGoalId?: string) {
   return res.body.data.id as string;
 }
 
-/** A daily habit, created today, so today's instance is spawned with it. */
-async function createHabit(user: TestUser, taskGoalId?: string) {
-  const res = await authed(user)
-    .post('/tasks')
-    .send({ title: 'Code 1h', isRecurring: true, recurringDays: EVERY_DAY, localDate: TODAY, taskGoalId });
-  expect(res.status).toBe(200);
-  const templateId = res.body.data.id as string;
-  const instance = await prisma.task.findFirstOrThrow({ where: { parentTaskId: templateId, isArchived: false } });
-  return { templateId, instanceId: instance.id };
+/** A recurring task running for ten days, every day unless told otherwise. */
+async function createHabit(user: TestUser, taskGoalId?: string, recurringDays: string[] = []) {
+  const task = await prisma.task.create({
+    data: {
+      userId: user.id,
+      title: 'Code 1h',
+      isRecurring: true,
+      recurringDays,
+      taskGoalId,
+      createdAt: new Date(Date.now() - 10 * 86_400_000),
+    },
+  });
+  return task.id;
 }
+
+async function tick(user: TestUser, taskId: string) {
+  const res = await authed(user).put(`/tasks/${taskId}/completions/${TODAY}`).send({ localDate: TODAY });
+  expect(res.status).toBe(200);
+}
+
+const logDay = (user: TestUser, taskId: string, date: string) =>
+  prisma.recurringCompletion.create({ data: { userId: user.id, taskId, date } });
 
 async function complete(user: TestUser, taskId: string) {
   const res = await authed(user).patch(`/tasks/${taskId}`).send({ isCompleted: true });
   expect(res.status).toBe(200);
 }
 
-async function getGoal(user: TestUser, goalId: string) {
-  const res = await authed(user).get('/task-goals');
+async function getGoal(user: TestUser, goalId: string, localDate = TODAY) {
+  const res = await authed(user).get(`/task-goals?localDate=${localDate}`);
   expect(res.status).toBe(200);
   return res.body.data.find((g: { id: string }) => g.id === goalId);
 }
 
-describe('GET /task-goals — a linked habit counts once', () => {
-  it('counts a habit as one item, not its template plus its instance', async () => {
+/** Feed events land through a fire-and-forget listener; wait for them. */
+async function settleFeed(user: TestUser, count: number) {
+  await vi.waitFor(async () => {
+    expect(await prisma.feedEvent.count({ where: { userId: user.id } })).toBe(count);
+  });
+}
+
+describe('GET /task-goals — a linked recurring task counts once', () => {
+  it('counts it as one item', async () => {
     const user = await createUser();
     const goalId = await createGoal(user);
     await createHabit(user, goalId);
@@ -72,162 +85,99 @@ describe('GET /task-goals — a linked habit counts once', () => {
     expect(goal.completedTaskCount).toBe(0);
   });
 
-  it('reaches 100% and auto-completes once tasks are done and the habit is kept today', async () => {
-    // The bug: this goal used to read 2/3 at best, forever.
+  it('reaches 100% and auto-completes once tasks are done and the habit is ticked today', async () => {
     const user = await createUser();
     const goalId = await createGoal(user);
     const taskId = await createTask(user, 'Write case study', goalId);
-    const { instanceId } = await createHabit(user, goalId);
+    const habitId = await createHabit(user, goalId);
 
     await complete(user, taskId);
     expect((await getGoal(user, goalId)).overallProgress).toBe(0.5);
 
-    await complete(user, instanceId);
+    await tick(user, habitId);
 
     const goal = await getGoal(user, goalId);
-    expect(goal.linkedTaskCount).toBe(2);
     expect(goal.completedTaskCount).toBe(2);
     expect(goal.overallProgress).toBe(1);
     expect(goal.isCompleted).toBe(true);
+    // task_completed twice, goal_completed once.
+    await settleFeed(user, 3);
   });
 
-  it('counts the habit as open while today’s instance is not done', async () => {
+  it('judges by the NEWEST due day: kept yesterday but not yet today is open', async () => {
     const user = await createUser();
     const goalId = await createGoal(user);
-    // Habit first: completing the only task on a goal is 1/1 and completes it.
-    await createHabit(user, goalId);
-    await complete(user, await createTask(user, 'Deploy site', goalId));
-
-    const goal = await getGoal(user, goalId);
-    expect(goal.completedTaskCount).toBe(1);
-    expect(goal.linkedTaskCount).toBe(2);
-    expect(goal.isCompleted).toBe(false);
-  });
-
-  it('holds steady on a day the habit is not scheduled, using its latest day', async () => {
-    // Yesterday's instance, completed and already archived by the spawner,
-    // with nothing spawned today.
-    const user = await createUser();
-    const goalId = await createGoal(user);
-    const { templateId, instanceId } = await createHabit(user, goalId);
-    await prisma.task.update({
-      where: { id: instanceId },
-      data: { dueDate: new Date(`${YESTERDAY}T12:00:00.000Z`), isCompleted: true, isArchived: true },
-    });
-    await prisma.task.update({ where: { id: templateId }, data: { recurringDays: [] } });
-
-    const goal = await getGoal(user, goalId);
-    expect(goal.linkedTaskCount).toBe(1);
-    expect(goal.completedTaskCount).toBe(1);
-  });
-
-  it('judges by the NEWEST day: kept yesterday but not yet today is open', async () => {
-    const user = await createUser();
-    const goalId = await createGoal(user);
-    const { templateId } = await createHabit(user, goalId);
-    await prisma.task.create({
-      data: {
-        userId: user.id,
-        title: 'Code 1h',
-        parentTaskId: templateId,
-        taskGoalId: goalId,
-        dueDate: new Date(`${YESTERDAY}T12:00:00.000Z`),
-        isCompleted: true,
-        isArchived: true,
-      },
-    });
+    const habitId = await createHabit(user, goalId);
+    await logDay(user, habitId, YESTERDAY);
 
     expect((await getGoal(user, goalId)).completedTaskCount).toBe(0);
   });
 
-  it('still counts a habit linked only through its instance (data written before this fix)', async () => {
+  it('holds steady on a day the habit is not scheduled, using its latest day', async () => {
     const user = await createUser();
     const goalId = await createGoal(user);
-    const { templateId, instanceId } = await createHabit(user);
-    await prisma.task.update({ where: { id: instanceId }, data: { taskGoalId: goalId } });
+    const habitId = await createHabit(user, goalId, [dayNameFromLocalDate(YESTERDAY)]);
+    await logDay(user, habitId, YESTERDAY);
 
-    expect((await getGoal(user, goalId)).linkedTaskCount).toBe(1);
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: templateId } })).taskGoalId).toBeNull();
+    expect((await getGoal(user, goalId)).completedTaskCount).toBe(1);
+  });
+
+  it('counts a ticked day even after the schedule stops including it', async () => {
+    // Narrowing a schedule must never lose a completed day.
+    const user = await createUser();
+    const goalId = await createGoal(user);
+    const habitId = await createHabit(user, goalId, [dayNameFromLocalDate(utcDayOffset(-3))]);
+    await logDay(user, habitId, YESTERDAY);
+
+    expect((await getGoal(user, goalId)).completedTaskCount).toBe(1);
+  });
+
+  it("uses the client's today, not the server's", async () => {
+    // Kept yesterday only. For a user whose local day is still yesterday, that
+    // is their latest due day, and done; for one already on today, it is open.
+    const user = await createUser();
+    const goalId = await createGoal(user);
+    const habitId = await createHabit(user, goalId);
+    await logDay(user, habitId, YESTERDAY);
+
+    expect((await getGoal(user, goalId, YESTERDAY)).completedTaskCount).toBe(1);
+    expect((await getGoal(user, goalId, TODAY)).completedTaskCount).toBe(0);
   });
 
   it('stops counting a deleted habit', async () => {
     const user = await createUser();
     const goalId = await createGoal(user);
-    const { templateId } = await createHabit(user, goalId);
+    const habitId = await createHabit(user, goalId);
 
-    const res = await authed(user).delete(`/tasks/${templateId}`);
+    const res = await authed(user).delete(`/tasks/${habitId}`);
     expect(res.status).toBe(200);
 
     expect((await getGoal(user, goalId)).linkedTaskCount).toBe(0);
   });
 });
 
-describe('linking a habit links the template and live instance together', () => {
-  it('POST /task-goals/:id/tasks with the instance links the template, so tomorrow keeps it', async () => {
+describe('linking a recurring task to a goal', () => {
+  it('POST /task-goals/:id/tasks links it', async () => {
     const user = await createUser();
     const goalId = await createGoal(user);
-    const { templateId, instanceId } = await createHabit(user);
+    const habitId = await createHabit(user);
 
-    const res = await authed(user).post(`/task-goals/${goalId}/tasks`).send({ link: [instanceId] });
+    const res = await authed(user).post(`/task-goals/${goalId}/tasks`).send({ link: [habitId] });
+
     expect(res.status).toBe(200);
     expect(res.body.data.linkedTaskCount).toBe(1);
-
-    const template = await prisma.task.findUniqueOrThrow({ where: { id: templateId } });
-    expect(template.taskGoalId).toBe(goalId);
-
-    // Tomorrow's instance inherits the goal from the template.
-    const spawn = await authed(user).post('/tasks/spawn-recurring').send({ localDate: TOMORROW });
-    expect(spawn.status).toBe(200);
-    const tomorrows = await prisma.task.findFirstOrThrow({ where: { parentTaskId: templateId, isArchived: false } });
-    expect(tomorrows.id).not.toBe(instanceId);
-    expect(tomorrows.taskGoalId).toBe(goalId);
-  });
-
-  it('unlinking the instance unlinks the habit', async () => {
-    const user = await createUser();
-    const goalId = await createGoal(user);
-    const { templateId, instanceId } = await createHabit(user, goalId);
-
-    const res = await authed(user).post(`/task-goals/${goalId}/tasks`).send({ unlink: [instanceId] });
-    expect(res.status).toBe(200);
-    expect(res.body.data.linkedTaskCount).toBe(0);
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: templateId } })).taskGoalId).toBeNull();
-  });
-
-  it('PATCH /tasks/:id on the instance moves the template too', async () => {
-    // What the task edit form sends for a habit.
-    const user = await createUser();
-    const goalId = await createGoal(user);
-    const { templateId, instanceId } = await createHabit(user);
-
-    const res = await authed(user).patch(`/tasks/${instanceId}`).send({ taskGoalId: goalId });
-    expect(res.status).toBe(200);
-
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: templateId } })).taskGoalId).toBe(goalId);
-  });
-
-  it('POST /task-goals with the instance links the template', async () => {
-    const user = await createUser();
-    const { templateId, instanceId } = await createHabit(user);
-
-    const res = await authed(user).post('/task-goals').send({ title: 'Get fit', taskIds: [instanceId] });
-    expect(res.status).toBe(201);
-
-    const template = await prisma.task.findUniqueOrThrow({ where: { id: templateId } });
-    expect(template.taskGoalId).toBe(res.body.data.id);
-    expect(res.body.data.linkedTaskCount).toBe(1);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: habitId } })).taskGoalId).toBe(goalId);
   });
 
   it('refuses to link someone else’s habit, writing nothing', async () => {
     const owner = await createUser();
     const intruder = await createUser();
     const goalId = await createGoal(intruder);
-    const { templateId, instanceId } = await createHabit(owner);
+    const habitId = await createHabit(owner);
 
-    const res = await authed(intruder).post(`/task-goals/${goalId}/tasks`).send({ link: [instanceId] });
+    const res = await authed(intruder).post(`/task-goals/${goalId}/tasks`).send({ link: [habitId] });
+
     expect(res.status).toBe(404);
-
-    const rows = await prisma.task.findMany({ where: { id: { in: [templateId, instanceId] } } });
-    expect(rows.every((r) => r.taskGoalId === null)).toBe(true);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: habitId } })).taskGoalId).toBeNull();
   });
 });

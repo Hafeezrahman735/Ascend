@@ -3,6 +3,8 @@ import { prisma } from './prisma';
 import { SESSION_GOAL_EXPR, SESSION_GOAL_JOIN } from './goalAttribution';
 import { EventTypes } from '../middleware/eventBus';
 import { IMMEDIATE, type Effects } from './transaction';
+import { utcDateStr } from './localDate';
+import { loadRecurringState } from './recurringStats';
 
 /**
  * TaskGoal progress + auto-completion.
@@ -91,16 +93,16 @@ export function computeProgress(
  * someone else must never contribute to this user's goal, even if it somehow
  * carries the id.
  *
- * A linked HABIT counts as one item, whatever rows represent it — see
- * loadHabitProgress. It used to be counted as its template (never completed,
- * so the goal could not reach 100%) plus today's instance.
+ * A linked recurring task counts as one item — see loadRecurringProgress.
  *
- * Pass `db` to read inside a transaction, so a write made earlier in it counts.
+ * `today` is the user's local day, which decides whether a recurring task's
+ * latest due day has passed; without it, the UTC day. Pass `db` to read inside
+ * a transaction, so a write made earlier in it counts.
  */
 export async function loadGoalCounts(
   userId: string,
   goalIds: string[],
-  db: Effects['db'] = prisma,
+  { db = prisma, today = utcDateStr(new Date()) }: { db?: Effects['db']; today?: string } = {},
 ): Promise<Map<string, TaskGoalCounts>> {
   const counts = new Map<string, TaskGoalCounts>();
   for (const id of goalIds) {
@@ -109,7 +111,7 @@ export async function loadGoalCounts(
   if (goalIds.length === 0) return counts;
 
   // One-off task counts — grouped, so no task rows cross the wire just to be
-  // counted. Templates and instances are habits, counted below.
+  // counted. Recurring tasks are counted below.
   const taskGroups = await db.task.groupBy({
     by: ['taskGoalId', 'isCompleted'],
     where: {
@@ -117,7 +119,6 @@ export async function loadGoalCounts(
       taskGoalId: { in: goalIds },
       isArchived: false,
       isRecurring: false,
-      parentTaskId: null,
     },
     _count: { _all: true },
   });
@@ -130,7 +131,7 @@ export async function loadGoalCounts(
     if (g.isCompleted) entry.completedTaskCount += g._count._all;
   }
 
-  for (const habit of await loadHabitProgress(userId, goalIds, db)) {
+  for (const habit of await loadRecurringProgress(userId, goalIds, today, db)) {
     const entry = counts.get(habit.goalId);
     if (!entry) continue;
     entry.linkedTaskCount += 1;
@@ -138,7 +139,7 @@ export async function loadGoalCounts(
   }
 
   // Focus time, by each session's CURRENT goal (lib/goalAttribution.ts): the
-  // task's present link, or for a habit instance the template's. Linking an
+  // task's present link. Linking an
   // already-worked task brings its past time; moving or unlinking one takes it
   // away. Archived tasks still count, because their time was really spent; the
   // task-count query above is where excluding archived rows is correct.
@@ -164,105 +165,27 @@ export async function loadGoalCounts(
 }
 
 /**
- * Each active habit linked to one of these goals, and whether it counts as done.
+ * Each live recurring task linked to one of these goals, and whether it counts
+ * as done.
  *
- * A habit has no finish line, so "done" means its most recent scheduled day
- * was completed. That makes a goal reach 100% once every one-off task is done
- * and each habit was kept on its latest day, and holds steady on days the
- * habit is not scheduled (product decision, 2026-10-21).
- *
- * Membership is the template's taskGoalId. A habit linked through its live
- * instance only — what the app wrote before linkHabitCounterparts existed —
- * still counts, through that instance.
+ * A recurring task has no finish line, so "done" means its most recent due day
+ * on or before today was ticked off (lib/recurringStats.ts). A goal therefore
+ * reaches 100% once every one-off task is done and each recurring task was kept
+ * on its latest day, and holds steady on days it is not scheduled (product
+ * decision, 2026-10-21).
  */
-async function loadHabitProgress(
+async function loadRecurringProgress(
   userId: string,
   goalIds: string[],
+  today: string,
   db: Effects['db'],
 ): Promise<{ goalId: string; done: boolean }[]> {
-  const [linkedTemplates, linkedInstances] = await Promise.all([
-    db.task.findMany({
-      where: { userId, isRecurring: true, isArchived: false, taskGoalId: { in: goalIds } },
-      select: { id: true, taskGoalId: true },
-    }),
-    db.task.findMany({
-      where: { userId, parentTaskId: { not: null }, isArchived: false, taskGoalId: { in: goalIds } },
-      select: { parentTaskId: true, taskGoalId: true },
-    }),
-  ]);
-
-  const goalByTemplate = new Map<string, string>();
-  for (const t of linkedTemplates) goalByTemplate.set(t.id, t.taskGoalId!);
-
-  const instanceOnly = linkedInstances.filter((i) => !goalByTemplate.has(i.parentTaskId!));
-  if (instanceOnly.length > 0) {
-    // Only habits that still exist: an instance of a deleted habit is archived
-    // with it, but the template check keeps this independent of that.
-    const active = await db.task.findMany({
-      where: {
-        userId,
-        id: { in: instanceOnly.map((i) => i.parentTaskId!) },
-        isRecurring: true,
-        isArchived: false,
-      },
-      select: { id: true },
-    });
-    const activeIds = new Set(active.map((t) => t.id));
-    for (const i of instanceOnly) {
-      if (activeIds.has(i.parentTaskId!)) goalByTemplate.set(i.parentTaskId!, i.taskGoalId!);
-    }
-  }
-  if (goalByTemplate.size === 0) return [];
-
-  // The newest instance of each habit, archived or not: on a day the habit is
-  // not scheduled, yesterday's instance is already archived and is still the
-  // day that decides.
-  const latest = await db.task.findMany({
-    where: { userId, parentTaskId: { in: [...goalByTemplate.keys()] } },
-    orderBy: [{ parentTaskId: 'asc' }, { dueDate: 'desc' }, { createdAt: 'desc' }],
-    distinct: ['parentTaskId'],
-    select: { parentTaskId: true, isCompleted: true },
+  const tasks = await db.task.findMany({
+    where: { userId, isRecurring: true, isArchived: false, taskGoalId: { in: goalIds } },
+    select: { id: true, taskGoalId: true, recurringDays: true, dueDate: true, createdAt: true },
   });
-  const doneByTemplate = new Map(latest.map((i) => [i.parentTaskId!, i.isCompleted]));
-
-  return [...goalByTemplate].map(([templateId, goalId]) => ({
-    goalId,
-    done: doneByTemplate.get(templateId) ?? false,
-  }));
-}
-
-/**
- * A habit is linked to a goal as a unit: its template and its live instance.
- *
- * The app links whichever row it is showing, which for a habit is today's
- * instance. Instances inherit the TEMPLATE's goal when they spawn, so linking
- * only the instance dropped the habit off its goal the next morning. Every
- * write of taskGoalId goes through this to reach both rows.
- *
- * Returns the given ids plus each habit's template and live instance.
- * Archived instances are left as they were: they are history, and their
- * sessions belong to the goal they were worked under.
- */
-export async function linkHabitCounterparts(userId: string, taskIds: string[]): Promise<string[]> {
-  const ids = [...new Set(taskIds)];
-  if (ids.length === 0) return ids;
-
-  const rows = await prisma.task.findMany({
-    where: { id: { in: ids }, userId },
-    select: { id: true, isRecurring: true, parentTaskId: true },
-  });
-  const templateIds = new Set<string>();
-  for (const r of rows) {
-    if (r.isRecurring) templateIds.add(r.id);
-    if (r.parentTaskId) templateIds.add(r.parentTaskId);
-  }
-  if (templateIds.size === 0) return ids;
-
-  const live = await prisma.task.findMany({
-    where: { userId, parentTaskId: { in: [...templateIds] }, isArchived: false },
-    select: { id: true },
-  });
-  return [...new Set([...ids, ...templateIds, ...live.map((t) => t.id)])];
+  const state = await loadRecurringState(userId, tasks, today, db);
+  return tasks.map((t) => ({ goalId: t.taskGoalId!, done: state.get(t.id)!.latestDueDayDone }));
 }
 
 /**
@@ -279,11 +202,12 @@ export async function linkHabitCounterparts(userId: string, taskIds: string[]): 
  *
  * Pass `effects` to run inside a caller's transaction: the counts then see its
  * earlier writes, and the goal's XP and events commit or roll back with it.
+ * `today` is the user's local day (see loadGoalCounts).
  */
 export async function syncGoalCompletion(
   userId: string,
   goalIds: string[],
-  effects: Effects = IMMEDIATE,
+  { effects = IMMEDIATE, today }: { effects?: Effects; today?: string } = {},
 ): Promise<void> {
   const ids = [...new Set(goalIds.filter(Boolean))];
   if (ids.length === 0) return;
@@ -301,7 +225,7 @@ export async function syncGoalCompletion(
   });
   if (goals.length === 0) return;
 
-  const counts = await loadGoalCounts(userId, goals.map((g) => g.id), db);
+  const counts = await loadGoalCounts(userId, goals.map((g) => g.id), { db, today });
 
   for (const goal of goals) {
     if (goal.isCompleted) continue;

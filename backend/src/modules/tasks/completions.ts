@@ -10,7 +10,7 @@ import { applyCompletionChange, completionDateError } from '../../lib/recurringO
  * Ticking off a recurring task: PUT marks a day done, DELETE marks it not done.
  *
  * Only the HTTP layer lives here — the rules and side effects are in
- * lib/recurringOccurrences.ts, shared with the copy PATCH. Both verbs are
+ * lib/recurringOccurrences.ts. Both verbs are
  * idempotent: repeating one returns 200 with `changed: false` and pays nothing.
  */
 export function setupCompletionRoutes(router: Router): void {
@@ -24,8 +24,10 @@ async function setCompletion(req: Request, res: Response, done: boolean): Promis
   try {
     const userId = authenticate(req);
     const { id, date } = req.params;
+    // `?localDate=` or a body field: a DELETE usually carries no body.
+    const fromQuery = typeof req.query.localDate === 'string' ? req.query.localDate : undefined;
     const { localDate } = bodySchema.parse(req.body ?? {});
-    const today = resolveLocalDate(localDate, new Date(), `${req.method} /tasks/:id/completions`);
+    const today = resolveLocalDate(fromQuery ?? localDate, new Date(), `${req.method} /tasks/:id/completions`);
 
     // One answer for "not yours", "not recurring", "gone" and "never existed",
     // so the endpoint reveals nothing about other users' tasks.
@@ -44,7 +46,7 @@ async function setCompletion(req: Request, res: Response, done: boolean): Promis
       return;
     }
 
-    const { changed, reward } = await applyCompletionChange(userId, id, date, done);
+    const { changed, reward } = await applyCompletionChange(userId, id, date, done, today);
     res.json({ success: true, data: { taskId: id, date, done, changed }, reward });
   } catch (err) {
     if (err instanceof z.ZodError) {

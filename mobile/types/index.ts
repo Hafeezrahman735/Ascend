@@ -190,19 +190,22 @@ export interface Task {
   // Recurring task fields
   isRecurring: boolean;
   recurringDays: DayOfWeek[]; // empty array = every day
-  lastSpawnedDate: string | null;
-  parentTaskId: string | null;
 
-  // On TEMPLATES — lifetime habit stats:
-  currentStreak: number;    // consecutive days completed (resets immediately on a miss)
+  // A recurring task's row for one day, as GET /tasks and the calendar send it.
+  // Its id is the recurring task's own, so edit, delete, the timer and goal
+  // links all act on the task itself; ticking it off goes through
+  // PUT/DELETE /tasks/:id/completions/:occurrenceDate. On such a row dueDate is
+  // the day, the task's own end is `repeatsUntil`, and the session counters
+  // are that day's.
+  isOccurrence: boolean;
+  occurrenceDate: string | null; // 'YYYY-MM-DD'
+  repeatsUntil: string | null;   // 'YYYY-MM-DD', inclusive; null = never ends
+
+  // Recurring tasks — calculated by the server from the completion log.
+  currentStreak: number;    // consecutive due days done
   longestStreak: number;
   totalCompletions: number;
-  totalFocusTimeMs: number; // accumulates instance totalTimeOnTask (seconds), see backend
-
-  // On INSTANCES — read-only copies denormalized from the template at spawn time:
-  lifetimeStreak: number;
-  lifetimeTotalCompletions: number;
-  lifetimeTotalFocusTime: number;
+  totalFocusSeconds: number;
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────

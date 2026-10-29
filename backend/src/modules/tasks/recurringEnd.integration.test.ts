@@ -5,14 +5,12 @@ import { prisma } from '../../lib/prisma';
 /**
  * A recurring task ends on its due date.
  *
- * Before this, a habit repeated forever. Three layers each decided when it
- * happened and none of them had an upper bound: the spawner checked only the
- * weekday, the calendar projection bounded occurrences by createdAt alone, and
- * a dueDate set on a template was read by nothing at all — so a user could set
- * an end date, watch it save, and watch the habit carry on regardless.
+ * Before end dates were enforced, a habit repeated forever: nothing read a
+ * dueDate set on a recurring task, so a user could set an end date, watch it
+ * save, and watch the habit carry on regardless.
  *
- * A template's dueDate is now the last day it repeats, INCLUSIVE. These tests
- * cover the two routes that change behaviour, against a real database.
+ * A recurring task's dueDate is the last day it repeats, INCLUSIVE. These tests
+ * cover the two routes that show it, against a real database.
  */
 
 /** Local date N days from today, as the spawner's 'YYYY-MM-DD'. */
@@ -44,81 +42,48 @@ async function makeHabit(user: TestUser, endsOn: string | null) {
       dueDate: endsOn ? new Date(`${endsOn}T00:00:00.000Z`) : null,
       // Backdated so the createdAt lower bound never masks what is being tested.
       createdAt: new Date(Date.now() - 30 * 86_400_000),
-      // Yesterday, so the row looks like a habit that has been running. The
-      // never-spawned (null) case is covered in recurringVisibility.
-      lastSpawnedDate: dayOffset(-1),
     },
   });
 }
 
-const instanceCount = (templateId: string) =>
-  prisma.task.count({ where: { parentTaskId: templateId } });
+/** Whether today's list has a row for this recurring task. */
+async function listedToday(user: TestUser, taskId: string): Promise<boolean> {
+  const res = await authed(user).get(`/tasks?localDate=${encodeURIComponent(today())}`);
+  expect(res.status).toBe(200);
+  return res.body.data.some((t: { id: string }) => t.id === taskId);
+}
 
-describe('POST /tasks/spawn-recurring — the end date', () => {
-  it('still spawns ON the last day', async () => {
-    // Inclusive. "Ends today" means today's instance is still owed.
+describe('GET /tasks — the end date', () => {
+  it('still lists the task ON its last day', async () => {
+    // Inclusive. "Ends today" means today's occurrence is still owed.
     const user = await createUser();
     const habit = await makeHabit(user, today());
 
-    const res = await authed(user).post('/tasks/spawn-recurring').send({ localDate: today() });
-
-    expect(res.status).toBe(200);
-    expect(await instanceCount(habit.id)).toBe(1);
+    expect(await listedToday(user, habit.id)).toBe(true);
   });
 
-  it('does not spawn after the end date', async () => {
-    // THE regression. The spawner used to look only at the weekday, so a habit
-    // that ended last week kept producing a fresh instance every single day.
+  it('does not list it after the end date', async () => {
+    // A habit that ended last week must not keep producing a row every day.
     const user = await createUser();
     const habit = await makeHabit(user, dayOffset(-3));
 
-    const res = await authed(user).post('/tasks/spawn-recurring').send({ localDate: today() });
-
-    expect(res.status).toBe(200);
-    expect(await instanceCount(habit.id)).toBe(0);
+    expect(await listedToday(user, habit.id)).toBe(false);
   });
 
-  it('keeps spawning a habit with no end date', async () => {
-    // Every template created before end dates existed carries a null dueDate
-    // and must be unaffected.
+  it('lists a task with no end date', async () => {
+    // Every recurring task created before end dates existed carries a null
+    // dueDate and must be unaffected.
     const user = await createUser();
     const habit = await makeHabit(user, null);
 
-    await authed(user).post('/tasks/spawn-recurring').send({ localDate: today() });
-
-    expect(await instanceCount(habit.id)).toBe(1);
+    expect(await listedToday(user, habit.id)).toBe(true);
   });
 
-  it('still spawns before the end date', async () => {
+  it('lists it before the end date', async () => {
     const user = await createUser();
     const habit = await makeHabit(user, dayOffset(7));
 
-    await authed(user).post('/tasks/spawn-recurring').send({ localDate: today() });
-
-    expect(await instanceCount(habit.id)).toBe(1);
-  });
-
-  it('leaves instances already earned before the end alone', async () => {
-    // Work that happened does not vanish because the habit later stopped. The
-    // instance is archived by the usual not-today rule, never deleted.
-    const user = await createUser();
-    const habit = await makeHabit(user, dayOffset(-3));
-    const earned = await prisma.task.create({
-      data: {
-        userId: user.id,
-        title: 'Read for 20 minutes',
-        parentTaskId: habit.id,
-        isCompleted: true,
-        completedAt: new Date(),
-        dueDate: new Date(`${dayOffset(-5)}T00:00:00.000Z`),
-      },
-    });
-
-    await authed(user).post('/tasks/spawn-recurring').send({ localDate: today() });
-
-    const still = await prisma.task.findUnique({ where: { id: earned.id } });
-    expect(still).not.toBeNull();
-    expect(still?.isCompleted).toBe(true);
+    expect(await listedToday(user, habit.id)).toBe(true);
   });
 });
 

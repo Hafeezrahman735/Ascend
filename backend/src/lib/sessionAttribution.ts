@@ -24,7 +24,6 @@ export interface AttributionTask {
   priority: string | null;
   taskGoalId: string | null;
   isRecurring: boolean;
-  parentTaskId: string | null;
 }
 
 export interface AttributionGoal {
@@ -114,10 +113,7 @@ export function buildAttribution(input: {
     primaryTag: tags[0] ?? null,
     tags,
     priority: task.priority ?? null,
-    // Sessions run against spawned instances (which carry parentTaskId), not
-    // against the template (which carries isRecurring). Accept either so the
-    // flag is right whichever row the session landed on.
-    wasRecurring: !!(task.parentTaskId || task.isRecurring),
+    wasRecurring: task.isRecurring,
     localDate,
     localHour,
     localWeekday,

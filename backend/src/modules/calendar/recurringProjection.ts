@@ -1,53 +1,40 @@
 import { dayNameFromLocalDate, utcDateStr } from '../../lib/localDate';
-import { isScheduledOn as scheduleMatches } from '../../lib/recurrence';
 
 /**
- * Projects recurring templates across a date range.
+ * Projects recurring tasks across a date range.
  *
- * A recurring task only ever has a real row for a day that has already been
- * spawned, and spawn-recurring archives every instance that is not due today.
- * So without projection the calendar can only ever show a recurring task on
- * today's date: past days were archived, future days do not exist yet.
+ * A recurring task is a rule plus a log of done days (lib/recurringStats.ts),
+ * so every day it falls on is calculated, past and future alike. Each is
+ * reported with whether it was done.
  *
- * This walks the requested range and reports every day each template is
- * scheduled for, attaching the real instance when one exists (which carries the
- * completion state) and reporting a bare template occurrence when it does not.
- *
- * Uses the same `dayNameFromLocalDate` the spawner uses, so the calendar and the
- * spawner can never disagree about which days a template is scheduled for.
+ * Uses the same `dayNameFromLocalDate` as every other schedule check, so the
+ * calendar and the task list can never disagree about which days a task is on.
  */
 
-export interface TemplateLike {
+export interface RecurringLike {
   id: string;
   recurringDays: string[];
   /**
-   * When the template was created. Occurrences are never projected before this:
+   * When the task was created. Occurrences are never projected before this:
    * without the bound, creating a habit today makes every earlier day in the
    * month render as an un-completed occurrence, indistinguishable from a day the
    * user genuinely missed.
    */
   createdAt: Date;
   /**
-   * The last day this habit repeats, INCLUSIVE, or null for "forever".
-   *
-   * This is the template's own dueDate. Without it the projection ran to the
-   * end of whatever range was asked for, so a habit the user had ended still
-   * drew occurrences on every future month they scrolled to.
+   * The last day this task repeats, INCLUSIVE, or null for "forever". Without
+   * it a habit the user had ended still drew occurrences on every future month.
    */
   dueDate: Date | null;
+  /** A deleted task shows the days it was done, and is not projected. */
+  isArchived: boolean;
 }
 
-export interface InstanceLike {
-  parentTaskId: string | null;
-  dueDate: Date | null;
-}
-
-export interface Occurrence<T extends TemplateLike, I extends InstanceLike> {
+export interface Occurrence<T extends RecurringLike> {
   /** 'YYYY-MM-DD' */
   date: string;
-  template: T | null;
-  /** The real row for this day, or null when nothing has been spawned yet. */
-  instance: I | null;
+  task: T;
+  isCompleted: boolean;
 }
 
 /** Every 'YYYY-MM-DD' from start to end inclusive. */
@@ -68,73 +55,45 @@ export function eachDateInRange(start: string, end: string): string[] {
 }
 
 /**
- * Scheduled on this date, and the template already existed then.
- * The schedule rule itself comes from lib/recurrence so there is one definition.
+ * Every day in range each task is on, plus any done day it is no longer on:
+ * a day that was ticked off always counts, so editing a schedule never wipes
+ * completed work off the calendar.
  */
-export function isScheduledOn(template: TemplateLike, date: string): boolean {
-  if (date < utcDateStr(template.createdAt)) return false;
-  return scheduleMatches(
-    template.recurringDays,
-    date,
-    template.dueDate ? utcDateStr(template.dueDate) : null,
-  );
-}
-
-export function projectRecurring<T extends TemplateLike, I extends InstanceLike>(params: {
-  templates: T[];
-  instances: I[];
+export function projectRecurring<T extends RecurringLike>(params: {
+  tasks: T[];
+  /** Done days per task id. */
+  done: ReadonlyMap<string, ReadonlySet<string>>;
   start: string;
   end: string;
-}): Occurrence<T, I>[] {
-  const { templates, instances, start, end } = params;
+}): Occurrence<T>[] {
+  const { tasks, done, start, end } = params;
+  const none: ReadonlySet<string> = new Set();
 
-  const byTemplateAndDate = new Map<string, I>();
-  for (const instance of instances) {
-    if (!instance.parentTaskId || !instance.dueDate) continue;
-    byTemplateAndDate.set(
-      `${instance.parentTaskId}|${instance.dueDate.toISOString().slice(0, 10)}`,
-      instance,
-    );
-  }
-
-  const out: Occurrence<T, I>[] = [];
-  const claimed = new Set<string>();
-
-  // Precomputed once per date rather than once per (date, template) pair: a
-  // 400-day range across 20 templates is 8000 pairs, and each call otherwise
+  // Precomputed once per date and task rather than once per (date, task) pair:
+  // a 400-day range across 20 tasks is 8000 pairs, and each call otherwise
   // parses a new Date.
   const dates = eachDateInRange(start, end);
   const dayNames = new Map(dates.map((d) => [d, dayNameFromLocalDate(d)]));
-  const createdOn = new Map(templates.map((t) => [t.id, utcDateStr(t.createdAt)]));
-  // Precomputed alongside createdAt for the same reason: an 8000-pair range
-  // should not re-derive either bound per pair.
-  const endsOn = new Map(
-    templates.map((t) => [t.id, t.dueDate ? utcDateStr(t.dueDate) : null] as const),
+  const bounds = new Map(
+    tasks.map((t) => [t.id, {
+      from: utcDateStr(t.createdAt),
+      until: t.dueDate ? utcDateStr(t.dueDate) : null,
+    }] as const),
   );
 
+  const out: Occurrence<T>[] = [];
   for (const date of dates) {
     const dayName = dayNames.get(date)!;
-    for (const template of templates) {
-      if (date < createdOn.get(template.id)!) continue;
-      // Inclusive: a habit ending on the 10th still draws on the 10th.
-      const endsAt = endsOn.get(template.id);
-      if (endsAt && date > endsAt) continue;
-      if (template.recurringDays.length > 0 && !template.recurringDays.includes(dayName)) continue;
-      const key = `${template.id}|${date}`;
-      const instance = byTemplateAndDate.get(key) ?? null;
-      if (instance) claimed.add(key);
-      out.push({ date, template, instance });
+    for (const task of tasks) {
+      const isCompleted = (done.get(task.id) ?? none).has(date);
+      const { from, until } = bounds.get(task.id)!;
+      const scheduled =
+        !task.isArchived &&
+        date >= from &&
+        (!until || date <= until) &&
+        (task.recurringDays.length === 0 || task.recurringDays.includes(dayName));
+      if (scheduled || isCompleted) out.push({ date, task, isCompleted });
     }
   }
-
-  // Instances whose day the template is no longer scheduled for — the schedule
-  // was edited after they were spawned. They are real completed work, so they
-  // stay on the calendar rather than vanishing when a user changes the days.
-  for (const [key, instance] of byTemplateAndDate) {
-    if (claimed.has(key)) continue;
-    const date = key.split('|')[1];
-    out.push({ date, template: null, instance });
-  }
-
   return out;
 }

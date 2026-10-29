@@ -27,7 +27,7 @@ const DAY_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type DayName = (typeof DAY_ORDER)[number];
 
 /**
- * An empty `recurringDays` means every day — the spawner's long-standing rule.
+ * An empty `recurringDays` means every day — the long-standing rule.
  *
  * `endDate` is inclusive: a habit ending on the 10th still fires on the 10th.
  * Null or undefined means it never ends, which is every template created before

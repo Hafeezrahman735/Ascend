@@ -229,7 +229,7 @@ const C = {
 function dueTask(over: Partial<Task> = {}): Task {
   return {
     id: 't1', title: 'T', isCompleted: false, isArchived: false,
-    dueDate: null, parentTaskId: null, tags: [], priority: 'medium',
+    dueDate: null, isOccurrence: false, tags: [], priority: 'medium',
     sessionsOnTask: 0, totalTimeOnTask: 0, sessionDates: [],
     ...over,
   } as unknown as Task;
@@ -302,8 +302,8 @@ describe('getDueChip', () => {
   });
 
   it('hides a stale recurring instance but keeps one due today', () => {
-    expect(getDueChip(dueTask({ dueDate: '2026-08-27', parentTaskId: 'tpl' }), C, NOW)).toBeNull();
-    expect(getDueChip(dueTask({ dueDate: '2026-09-01', parentTaskId: 'tpl' }), C, NOW)?.label)
+    expect(getDueChip(dueTask({ dueDate: '2026-08-27', isOccurrence: true }), C, NOW)).toBeNull();
+    expect(getDueChip(dueTask({ dueDate: '2026-09-01', isOccurrence: true }), C, NOW)?.label)
       .toBe('Due today');
   });
 

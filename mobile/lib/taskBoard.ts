@@ -1,7 +1,7 @@
 import type { Task } from '../types';
 import { daysUntilDue } from '../utils/date';
 import { PRIORITY_RANK } from './planningTasks';
-import { daysUntil, templatesWithoutInstance, type RecurringTemplate } from './recurringDisplay';
+import { daysUntil, templatesWithoutTodayRow, type RecurringTemplate } from './recurringDisplay';
 
 /**
  * How the Tasks tab orders and groups work.
@@ -15,11 +15,10 @@ import { daysUntil, templatesWithoutInstance, type RecurringTemplate } from './r
  * run a focus session on is Not started; one with sessions that is not ticked
  * off is In progress. Completion always wins.
  *
- * Recurring tasks appear exactly once. On a day a habit is scheduled its
- * instance is an ordinary task and buckets like one. On any other day there is
- * no instance, so the template stands in, in Not started, labelled with when it
- * next fires. Before this a habit on an unscheduled day showed only under the
- * All filter, and the main tab had a single slot for them.
+ * Recurring tasks appear exactly once. On a day one is due, its day row is an
+ * ordinary task and buckets like one. On any other day there is no row, so the
+ * recurring task itself stands in, in Not started, labelled with when it next
+ * fires.
  *
  * Pure and free of react-native imports so it can be unit-tested.
  */
@@ -98,7 +97,7 @@ export function buildTaskBoard(params: {
   const urgency = (a: Task, b: Task) => compareByUrgency(a, b, now);
   const asTasks = (list: Task[]): BoardItem[] => list.map((task) => ({ kind: 'task', task }));
 
-  const standIns: BoardItem[] = templatesWithoutInstance(templates, live)
+  const standIns: BoardItem[] = templatesWithoutTodayRow(templates, live)
     .sort((a, b) => compareTemplates(a, b, now))
     .map((template) => ({ kind: 'recurring', template }));
 

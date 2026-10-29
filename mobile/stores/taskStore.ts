@@ -4,7 +4,6 @@ import { api } from '../services/api';
 import { Task, DayOfWeek } from '../types';
 import { useAuthStore } from './authStore';
 import { getLocalDateString } from '../utils/date';
-import { log } from '../lib/log';
 
 const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
 
@@ -40,20 +39,16 @@ function normalizeTask(t: Task): Task {
     sessionDates: Array.isArray(t.sessionDates) ? t.sessionDates : [],
     isRecurring: t.isRecurring ?? false,
     recurringDays: t.recurringDays ?? [],
-    lastSpawnedDate: t.lastSpawnedDate ?? null,
-    parentTaskId: t.parentTaskId ?? null,
     // Tasks cached by an older build predate these, so undefined is expected.
     startMinutes: t.startMinutes ?? null,
     endMinutes: t.endMinutes ?? null,
-    // Template lifetime stats:
+    isOccurrence: t.isOccurrence ?? false,
+    occurrenceDate: t.occurrenceDate ?? null,
+    repeatsUntil: t.repeatsUntil ?? null,
     currentStreak: t.currentStreak ?? 0,
     longestStreak: t.longestStreak ?? 0,
     totalCompletions: t.totalCompletions ?? 0,
-    totalFocusTimeMs: t.totalFocusTimeMs ?? 0,
-    // Instance display copies:
-    lifetimeStreak: t.lifetimeStreak ?? 0,
-    lifetimeTotalCompletions: t.lifetimeTotalCompletions ?? 0,
-    lifetimeTotalFocusTime: t.lifetimeTotalFocusTime ?? 0,
+    totalFocusSeconds: t.totalFocusSeconds ?? 0,
   };
 }
 
@@ -122,17 +117,51 @@ export interface TaskUpdateInput {
   recurringDays?: DayOfWeek[];
 }
 
+/**
+ * Tick off, or un-tick, one day of a recurring task. A recurring task is done
+ * per day, in its completion log; the server rejects a PATCH of isCompleted on
+ * one. The local day goes in the query because a DELETE carries no body.
+ */
+function setOccurrenceDone(id: string, date: string, done: boolean) {
+  const url = `/tasks/${id}/completions/${date}?localDate=${encodeURIComponent(getLocalDateString())}`;
+  return done ? api.put(url, {}) : api.delete(url);
+}
+
 function isTempId(id: string): boolean {
   return id.startsWith('temp-');
 }
 
 /**
- * A recurring TEMPLATE: the habit's definition, never a row in the task list.
- * GET /tasks already excludes these; the client has to apply the same rule to
- * rows it merges in itself, or a task just switched to recurring lingers.
+ * A recurring task as itself, not as one day's row. The list shows recurring
+ * tasks only as day rows from GET /tasks, so a row like this — what POST and
+ * PATCH return — must not be merged into it.
  */
-function isTemplate(t: Task): boolean {
-  return t.isRecurring && !t.parentTaskId;
+function isRecurringTask(t: Task): boolean {
+  return t.isRecurring && !t.isOccurrence;
+}
+
+/**
+ * What an edit may change on a recurring task's day row without a refetch. The
+ * row's dueDate is its day, not the task's end date, and its schedule fields
+ * decide whether it is listed at all, so those wait for the server.
+ */
+function optimisticEdit(row: Task, data: TaskUpdateInput): Task {
+  if (!row.isOccurrence) return { ...row, ...data } as Task;
+  const { dueDate: _dueDate, isRecurring: _isRecurring, recurringDays: _days, ...safe } = data;
+  return { ...row, ...safe } as Task;
+}
+
+/**
+ * Now as a local-time ISO string with its offset, so the date portion is the
+ * user's day: "2026-06-15T23:00:00+05:00", not "2026-06-16T06:00:00.000Z".
+ */
+function localTimestamp(d: Date = new Date()): string {
+  const off = -d.getTimezoneOffset(); // minutes ahead of UTC
+  const sign = off >= 0 ? '+' : '-';
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T` +
+         `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+         `${sign}${pad(off/60)}:${pad(off%60)}`;
 }
 
 export interface CreateTaskResult {
@@ -157,7 +186,6 @@ interface TaskStoreState {
   incrementTaskSession: (id: string, duration: number) => void;
   toggleComplete: (id: string) => Promise<void>;
   clearTasks: (userId?: string) => Promise<void>;
-  spawnRecurringTasks: () => Promise<void>;
   fetchRecurringTemplates: () => Promise<void>;
   refreshRecurring: () => Promise<void>;
 }
@@ -187,7 +215,10 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     const userId = useAuthStore.getState().user?.id;
     if (!silent) set({ isLoading: true, error: null });
     try {
-      const res = await api.get<Task[]>('/tasks');
+      // localDate decides which recurring tasks have a row today, and whether
+      // it is done. Without it the server uses its own UTC day, which is
+      // already tomorrow for anyone west of UTC each evening.
+      const res = await api.get<Task[]>(`/tasks?localDate=${encodeURIComponent(getLocalDateString())}`);
       if (res.success && res.data) {
         // Guard: never overwrite a populated store with an empty server response.
         if (!res.data.length && get().tasks.length > 0) {
@@ -240,15 +271,13 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       isRecurring: data.isRecurring ?? false,
       recurringDays: data.recurringDays ?? [],
       taskGoalId: data.taskGoalId ?? null,
-      lastSpawnedDate: null,
-      parentTaskId: null,
+      isOccurrence: false,
+      occurrenceDate: null,
+      repeatsUntil: null,
       currentStreak: 0,
       longestStreak: 0,
       totalCompletions: 0,
-      totalFocusTimeMs: 0,
-      lifetimeStreak: 0,
-      lifetimeTotalCompletions: 0,
-      lifetimeTotalFocusTime: 0,
+      totalFocusSeconds: 0,
     };
     const withTemp = [tempTask, ...get().tasks];
     set({ tasks: withTemp });
@@ -264,17 +293,16 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     };
 
     try {
-      const res = await api.post<Task>('/tasks', { ...data, localDate: getLocalDateString() });
+      const res = await api.post<Task>('/tasks', data);
       if (!res.success || !res.data) {
         discardTemp();
         return { task: null, error: res.error || 'The task could not be saved.' };
       }
       const confirmed = normalizeTask(res.data);
-      // Recurring tasks: the POST returns the TEMPLATE, which must never appear in
-      // the list. Drop the temp task and pull in whatever now represents the
-      // habit: today's instance if it is scheduled today, else the template
-      // itself via the recurring list.
-      if (isTemplate(confirmed)) {
+      // A recurring task is listed as a day row, which the POST does not return.
+      // Drop the temp task and fetch whatever now represents it: today's row if
+      // it is due today, else its entry in the recurring list.
+      if (isRecurringTask(confirmed)) {
         discardTemp();
         await get().refreshRecurring();
         if (confirmed.taskGoalId) refreshGoals();
@@ -305,21 +333,23 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   updateTask: async (id, data) => {
     const userId = useAuthStore.getState().user?.id;
     const previous = get().tasks;
-    const optimistic = previous.map((t) => (t.id === id ? { ...t, ...data } : t));
+    const optimistic = previous.map((t) => (t.id === id ? optimisticEdit(t, data) : t));
     set({ tasks: optimistic });
     persistTasks(optimistic, userId);
     try {
       const res = await api.patch<Task>(`/tasks/${id}`, data);
       if (res.success && res.data) {
         const saved = normalizeTask(res.data);
-        // Switched to recurring: the row is a template now and leaves the list.
-        // Its instance, or the template standing in for it, comes back through
-        // the recurring refresh the screen runs after any recurring edit.
-        const tasks = isTemplate(saved)
-          ? get().tasks.filter((t) => t.id !== id)
-          : get().tasks.map((t) => (t.id === id ? { ...t, ...saved } : t));
-        set({ tasks });
-        persistTasks(tasks, userId);
+        // A recurring task comes back as itself, not as today's row, so its
+        // row is re-read rather than merged; a task just switched to recurring
+        // is replaced the same way.
+        if (isRecurringTask(saved)) {
+          await get().refreshRecurring();
+        } else {
+          const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...saved } : t));
+          set({ tasks });
+          persistTasks(tasks, userId);
+        }
         // Completion or a goal re-link both move goal progress server-side.
         if (data.isCompleted !== undefined || data.taskGoalId !== undefined) refreshGoals();
         invalidateCalendar();
@@ -339,10 +369,8 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     const previous = get().tasks;
     const previousTemplates = get().recurringTemplates;
     const previousSelectedId = get().selectedTaskId;
-    // Deleting a recurring template ends the habit, and the server archives its
-    // live instance along with it — so it leaves the list here too.
-    const removed = (t: Task) => t.id === id || t.parentTaskId === id;
-    const tasks = previous.filter((t) => !removed(t));
+    // A recurring task's day row carries its id, so deleting the task removes it.
+    const tasks = previous.filter((t) => t.id !== id);
     const selectedStillExists = tasks.some((t) => t.id === previousSelectedId);
     set({
       tasks,
@@ -378,34 +406,27 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     const task = get().tasks.find((t) => t.id === id);
     if (!task) return;
     const nowCompleted = !task.isCompleted;
-    // Build a local-timezone ISO string so the date portion reflects the user's local date,
-    // not UTC. e.g. "2026-06-15T23:00:00+05:00" instead of "2026-06-16T06:00:00.000Z"
-    const completedAt = nowCompleted ? (() => {
-      const d = new Date();
-      const off = -d.getTimezoneOffset(); // minutes ahead of UTC
-      const sign = off >= 0 ? '+' : '-';
-      const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T` +
-             `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
-             `${sign}${pad(off/60)}:${pad(off%60)}`;
-    })() : null;
-    const optimistic = get().tasks.map((t) =>
-      t.id === id ? { ...t, isCompleted: nowCompleted, completedAt: completedAt ?? undefined } : t,
-    );
-    set({ tasks: optimistic });
-    persistTasks(optimistic, userId);
+    const completedAt = nowCompleted ? localTimestamp() : null;
+    const setCompletion = (isCompleted: boolean, at: string | null | undefined): void => {
+      const tasks = get().tasks.map((t) => (t.id === id ? { ...t, isCompleted, completedAt: at ?? undefined } : t));
+      set({ tasks });
+      persistTasks(tasks, userId);
+    };
+    setCompletion(nowCompleted, completedAt);
     try {
-      await api.patch(`/tasks/${id}`, { isCompleted: nowCompleted, completedAt });
+      const res = task.isOccurrence && task.occurrenceDate
+        ? await setOccurrenceDone(id, task.occurrenceDate, nowCompleted)
+        : await api.patch(`/tasks/${id}`, { isCompleted: nowCompleted, completedAt });
+      if (!res.success) throw new Error(res.error || 'Completion was not saved');
+      // The day's streak moved with the tick; read it back.
+      if (task.isOccurrence) await get().fetchTasks(true);
       // The server owns goal progress and may have just auto-completed this
       // task's goal. Reconcile rather than recomputing locally.
       if (task.taskGoalId) refreshGoals();
       invalidateCalendar();
-    } catch {
-      const reverted = get().tasks.map((t) =>
-        t.id === id ? { ...t, isCompleted: task.isCompleted, completedAt: task.completedAt } : t,
-      );
-      set({ tasks: reverted });
-      persistTasks(reverted, userId);
+    } catch (err) {
+      console.warn('[tasks] toggleComplete failed:', err);
+      setCompletion(task.isCompleted, task.completedAt);
     }
   },
 
@@ -433,31 +454,6 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     }
   },
 
-  // Asks the backend to spawn today's instances for any recurring templates that
-  // haven't spawned yet today. Non-critical and never throws.
-  spawnRecurringTasks: async () => {
-    try {
-      // localDate makes the server spawn against the user's calendar day. Without
-      // it the server falls back to its own UTC date, which ends the day early
-      // for anyone west of UTC and resets their habit streak a day sooner.
-      const res = await api.post<{ spawned: number; archived?: number; templateIds: string[] }>(
-        '/tasks/spawn-recurring',
-        { localDate: getLocalDateString() },
-      );
-      // Refetch when anything changed — not just on spawn. A new day can archive a
-      // missed instance without spawning one (non-scheduled day, or already spawned),
-      // and without a refetch that stale instance lingers locally as "overdue".
-      const changed = res.success && res.data && ((res.data.spawned ?? 0) > 0 || (res.data.archived ?? 0) > 0);
-      if (changed) {
-        await get().fetchTasks(true);
-        log('[taskStore] recurring: spawned', res.data!.spawned, 'archived', res.data!.archived ?? 0);
-        invalidateCalendar();
-      }
-    } catch (err) {
-      console.warn('[taskStore] spawnRecurringTasks failed:', err);
-    }
-  },
-
   fetchRecurringTemplates: async () => {
     try {
       // localDate so the server decides scheduledToday against the user calendar
@@ -474,12 +470,10 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     }
   },
 
-  // After anything that changes a habit — creating one, switching a task to
-  // recurring, editing its days or its template — so the list shows whatever
-  // now represents it without waiting for the next app foreground. Spawning
-  // first means a habit that became due today gets its instance straight away.
+  // After anything that changes a recurring task — creating one, switching a
+  // task to recurring, editing its days — and when a new day may have begun,
+  // so the list shows what represents each one today.
   refreshRecurring: async () => {
-    await get().spawnRecurringTasks();
     await Promise.all([get().fetchTasks(true), get().fetchRecurringTemplates()]);
   },
 }));

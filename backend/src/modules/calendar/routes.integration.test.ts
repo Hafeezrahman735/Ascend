@@ -91,21 +91,24 @@ describe('GET /calendar — recurring tasks', () => {
     expect(habitDates(res.body.data.items, 'New habit')).toEqual([today()]);
   });
 
-  it('marks days with no real row as projected', async () => {
+  it("reports each day under the recurring task's own id, done from the log", async () => {
     const user = await createUser();
-    await createRecurring(user, { title: 'Flagged' });
+    const task = await createRecurring(user, { title: 'Flagged' });
+    const ticked = await authed(user)
+      .put(`/tasks/${task.id}/completions/${today()}`)
+      .send({ localDate: today() });
+    expect(ticked.status).toBe(200);
 
-    const res = await authed(user).get(`/calendar?start=${dayOffset(2)}&end=${dayOffset(2)}`);
+    const res = await authed(user).get(`/calendar?start=${today()}&end=${dayOffset(1)}`);
 
-    const item = res.body.data.items.find(
-      (i: { type: string; data: { title?: string } }) =>
-        i.type === 'habit_instance' && i.data?.title === 'Flagged',
+    const days = res.body.data.items.filter(
+      (i: { type: string; data: { title?: string } }) => i.type === 'habit_instance' && i.data?.title === 'Flagged',
     );
-    expect(item).toBeDefined();
-    expect(item.data.isProjected).toBe(true);
-    expect(item.data.isCompleted).toBe(false);
-    // Synthetic id must never look like a real task id.
-    expect(String(item.data.id).startsWith('projected:')).toBe(true);
+    expect(days.map((d: { date: string; data: { id: string; isCompleted: boolean; occurrenceDate: string } }) =>
+      [d.date, d.data.id, d.data.isCompleted, d.data.occurrenceDate])).toEqual([
+      [today(), task.id, true, today()],
+      [dayOffset(1), task.id, false, dayOffset(1)],
+    ]);
   });
 
   it('keeps a one-off task and a recurring task distinct', async () => {

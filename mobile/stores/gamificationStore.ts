@@ -85,7 +85,7 @@ export const useGamificationStore = create<GamificationStoreState>((set, get) =>
 
   // Proactively resets the overall day-streak if a day was missed — the backend
   // zeroes currentStreak when last-active is older than yesterday. Fire-and-forget
-  // on boot/foreground alongside spawnRecurringTasks; never throws.
+  // on boot/foreground alongside the task refresh; never throws.
   checkAndResetDayStreak: async () => {
     try {
       // A session finished offline yesterday is the very thing that keeps the

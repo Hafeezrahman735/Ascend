@@ -123,25 +123,25 @@ describe('seedDemoAccount — the Focus and Profile screens', () => {
 describe('seedDemoAccount — the Tasks screen', () => {
   it('fills Due Soon with real deadlines, keeps habits off it, and gives the goals part-done progress', async () => {
     const { api, timeZone } = await seed();
-    const res = await api.get('/tasks');
+    const res = await api.get(`/tasks?localDate=${dateKeyIn(new Date(), timeZone)}`);
     expect(res.status).toBe(200);
 
     const tasks = res.body.data as {
-      title: string; dueDate: string | null; isCompleted: boolean; parentTaskId: string | null;
+      title: string; dueDate: string | null; isCompleted: boolean; isOccurrence?: boolean;
       sessionsOnTask: number; estimatedMinutes: number | null; totalTimeOnTask: number;
     }[];
     const today = Date.parse(dateKeyIn(new Date(), timeZone));
     const daysLeft = (t: { dueDate: string | null }) => (t.dueDate ? Math.round((Date.parse(t.dueDate.slice(0, 10)) - today) / 86_400_000) : null);
 
-    const dueSoon = tasks.filter((t) => !t.parentTaskId && !t.isCompleted && daysLeft(t) !== null && daysLeft(t)! >= 0 && daysLeft(t)! <= 2);
+    const dueSoon = tasks.filter((t) => !t.isOccurrence && !t.isCompleted && daysLeft(t) !== null && daysLeft(t)! >= 0 && daysLeft(t)! <= 2);
     expect(dueSoon.map((t) => t.title).sort()).toEqual([
       'Build iOS Live Activity for the focus timer',
       'Write integration tests for the auth routes',
       'Write the LinkedIn launch post for Ascend',
     ]);
 
-    // Today's recurring instances are done, bar the one left open to tick off.
-    const habitsToday = tasks.filter((t) => t.parentTaskId);
+    // Today's recurring rows are done, bar the one left open to tick off.
+    const habitsToday = tasks.filter((t) => t.isOccurrence);
     expect(habitsToday.length).toBeGreaterThan(1);
     expect(habitsToday.filter((t) => !t.isCompleted).map((t) => t.title)).toEqual(['Plan tomorrow’s focus blocks']);
 
@@ -166,7 +166,7 @@ describe('seedDemoAccount — the Tasks screen', () => {
   it('serves every recurring shape: open today, ended, not due today, and an end date ahead', async () => {
     const { api, timeZone } = await seed();
     const today = dateKeyIn(new Date(), timeZone);
-    const res = await api.get('/tasks/recurring');
+    const res = await api.get(`/tasks/recurring?localDate=${today}`);
     expect(res.status).toBe(200);
 
     const templates = res.body.data as { title: string; recurringDays: string[]; dueDate: string | null; currentStreak: number; nextOccurrence?: string | null }[];

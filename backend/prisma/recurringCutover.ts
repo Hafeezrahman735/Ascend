@@ -25,6 +25,7 @@ async function main(): Promise<void> {
 
   console.log('─── Summary ───');
   console.log(`  copies deleted:       ${result.copies}`);
+  console.log(`  goal links moved:     ${result.goalLinksMoved}  (habit linked only through its live copy)`);
   console.log(`  completions added:    ${result.completionsAdded}  (one per completed copy day)`);
   console.log(`  sessions re-pointed:  ${result.sessionsRepointed}  (moved onto their recurring task)`);
   console.log(`  sessions detached:    ${result.sessionsDetached}  (copy of a task that no longer exists)`);

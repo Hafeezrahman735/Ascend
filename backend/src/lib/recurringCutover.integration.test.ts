@@ -21,18 +21,31 @@ async function makeHabit(user: TestUser) {
   });
 }
 
-async function makeCopy(user: TestUser, parentTaskId: string, day: string, isCompleted: boolean) {
-  return prisma.task.create({
-    data: {
-      userId: user.id,
-      title: 'Read',
-      parentTaskId,
-      dueDate: new Date(`${day}T00:00:00.000Z`),
-      isCompleted,
-      completedAt: isCompleted ? new Date(`${day}T18:00:00.000Z`) : null,
-    },
-  });
+/**
+ * A daily copy as spawn-recurring wrote it. Raw SQL, because parent_task_id is
+ * retired from the Prisma client (@ignore) and only the database still has it.
+ * Times are written as UTC wall-clock strings, as Prisma stores them; a Date
+ * parameter would be shifted into the session's time zone.
+ */
+async function makeCopy(
+  user: TestUser,
+  parentTaskId: string,
+  day: string,
+  isCompleted: boolean,
+  { taskGoalId = null as string | null, isArchived = false } = {},
+) {
+  const [row] = await prisma.$queryRaw<{ id: string }[]>`
+    INSERT INTO tasks (id, user_id, title, parent_task_id, due_date, is_completed, completed_at,
+                       task_goal_id, is_archived, updated_at)
+    VALUES (gen_random_uuid()::text, ${user.id}::uuid, 'Read', ${parentTaskId},
+            ${`${day} 00:00:00`}::timestamp, ${isCompleted},
+            ${isCompleted ? `${day} 18:00:00` : null}::timestamp, ${taskGoalId}, ${isArchived}, now())
+    RETURNING id`;
+  return row;
 }
+
+const copyCount = async () =>
+  (await prisma.$queryRaw<{ n: number }[]>`SELECT COUNT(*)::int AS n FROM tasks WHERE parent_task_id IS NOT NULL`)[0].n;
 
 async function makeSession(user: TestUser, taskId: string) {
   return prisma.session.create({
@@ -66,8 +79,8 @@ describe('runRecurringCutover', () => {
 
     const result = await runRecurringCutover({ dryRun: true });
 
-    expect(result).toEqual({ copies: 3, completionsAdded: 1, sessionsRepointed: 1, sessionsDetached: 1 });
-    expect(await prisma.task.count({ where: { parentTaskId: { not: null } } })).toBe(3);
+    expect(result).toEqual({ copies: 3, goalLinksMoved: 0, completionsAdded: 1, sessionsRepointed: 1, sessionsDetached: 1 });
+    expect(await copyCount()).toBe(3);
     expect(await prisma.recurringCompletion.count({ where: { taskId: habit.id } })).toBe(0);
   });
 
@@ -76,8 +89,8 @@ describe('runRecurringCutover', () => {
 
     const result = await runRecurringCutover({ dryRun: false });
 
-    expect(result).toEqual({ copies: 3, completionsAdded: 1, sessionsRepointed: 1, sessionsDetached: 1 });
-    expect(await prisma.task.count({ where: { parentTaskId: { not: null } } })).toBe(0);
+    expect(result).toEqual({ copies: 3, goalLinksMoved: 0, completionsAdded: 1, sessionsRepointed: 1, sessionsDetached: 1 });
+    expect(await copyCount()).toBe(0);
 
     const log = await prisma.recurringCompletion.findMany({ where: { taskId: habit.id } });
     expect(log.map((c) => c.date)).toEqual([MON]);
@@ -101,6 +114,43 @@ describe('runRecurringCutover', () => {
     expect(await prisma.recurringCompletion.count({ where: { taskId: habit.id } })).toBe(1);
 
     const second = await runRecurringCutover({ dryRun: false });
-    expect(second).toEqual({ copies: 0, completionsAdded: 0, sessionsRepointed: 0, sessionsDetached: 0 });
+    expect(second).toEqual({ copies: 0, goalLinksMoved: 0, completionsAdded: 0, sessionsRepointed: 0, sessionsDetached: 0 });
+  });
+
+  it("gives a habit linked only through its live copy that copy's goal", async () => {
+    // What the app wrote before habits were linked as a unit: only today's
+    // copy carried the goal. Deleting the copy would drop the habit off it.
+    const user = await createUser();
+    const habit = await makeHabit(user);
+    const goal = await prisma.taskGoal.create({ data: { userId: user.id, title: 'Fitness' } });
+    await makeCopy(user, habit.id, TUE, false, { taskGoalId: goal.id });
+
+    const dry = await runRecurringCutover({ dryRun: true });
+    expect(dry.goalLinksMoved).toBe(1);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: habit.id } })).taskGoalId).toBeNull();
+
+    await runRecurringCutover({ dryRun: false });
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: habit.id } })).taskGoalId).toBe(goal.id);
+  });
+
+  it('ignores an archived goal, an archived copy and a habit that has its own goal', async () => {
+    const user = await createUser();
+    const archivedGoal = await prisma.taskGoal.create({ data: { userId: user.id, title: 'Old', isArchived: true } });
+    const live = await prisma.taskGoal.create({ data: { userId: user.id, title: 'Live' } });
+    const own = await prisma.taskGoal.create({ data: { userId: user.id, title: 'Own' } });
+
+    const stale = await makeHabit(user);
+    await makeCopy(user, stale.id, TUE, false, { taskGoalId: archivedGoal.id });
+    const pastOnly = await makeHabit(user);
+    await makeCopy(user, pastOnly.id, MON, true, { taskGoalId: live.id, isArchived: true });
+    const linked = await prisma.task.create({
+      data: { userId: user.id, title: 'Read', isRecurring: true, taskGoalId: own.id },
+    });
+    await makeCopy(user, linked.id, TUE, false, { taskGoalId: live.id });
+
+    const result = await runRecurringCutover({ dryRun: false });
+
+    expect(result.goalLinksMoved).toBe(0);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: linked.id } })).taskGoalId).toBe(own.id);
   });
 });

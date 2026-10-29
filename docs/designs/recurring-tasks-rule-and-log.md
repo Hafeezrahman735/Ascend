@@ -1209,6 +1209,16 @@ client tick ──► PUT /tasks/:id/completions/:date ─┐      older build: 
 > - **T5** drops the copy-id mapping and the copy counters: sessions point at the recurring task.
 > - **T6** and **T7** ship with T4/T5 as one release; the backup, reconciliation and 426 gates are dropped. `applyCompletionChange` stops marking copies in that release.
 > - No `occurrenceTaskId` column.
+>
+> **T4-T7 as built (2026-10-29).**
+> - `GET /tasks?localDate=` returns a recurring task as a day row on days it is due: its own id, `isOccurrence: true`, `occurrenceDate`, `dueDate` = the day, `repeatsUntil` = its end, that day's session counters, and the streak fields. `GET /tasks/recurring` and `GET /tasks/:id` carry the same streak fields. All calculated in `lib/recurringStats.ts` (one pass, current-days rule, a done day always counts).
+> - `PATCH` rejects a change of `isCompleted` on a recurring task (400); ticking goes through the completion endpoints, which also accept `?localDate=`.
+> - `spawn-recurring` is removed (404 for older builds, which ignore the failure). The timer never adds to a recurring task's counters.
+> - Goals: `loadGoalCounts`/`syncGoalCompletion` take the user's `today` (`?localDate=` or `tz` on goal routes, the session's local day on the timer).
+> - The calendar projects from the log; a deleted task keeps its done days on the calendar.
+> - The cutover script also gives a task its live copy's goal when it had none (replaces `backfillHabitGoalLinks`).
+> - **Retired columns are `@ignore`d, not dropped:** the pre-deploy `db push` refuses drops, and dropping first would break the running server. Dropping them is a follow-up in TODOS.md.
+> - **Release order per environment:** run `prisma/recurringCutover.ts` (dry run first), deploy, then run it once more to remove any copy the old server spawned in between.
 
 These come from the findings above. Effort assumes features at about 30x and tests at about 50x faster with CC.
 
@@ -1224,19 +1234,19 @@ These come from the findings above. Effort assumes features at about 30x and tes
   - Surfaced by: D2, D5, OV5, OV6, D9.
   - Files: `backend/prisma/recurringMigration.ts`.
   - Verify: script integration tests against local Postgres.
-- [ ] **T4 (P1, human: ~1.5d / CC: ~1h): backend/read paths. Add the calculations (current-days rule, local today from `localDate` or `tz`), legacy fields for older builds, and `GET /tasks?occurrences=1`.**
+- [x] **T4 (P1, human: ~1.5d / CC: ~1h): backend/read paths. Add the calculations (current-days rule, local today from `localDate` or `tz`), legacy fields for older builds, and `GET /tasks?occurrences=1`.**
   - Surfaced by: D7, D8, D11, OV4.
   - Files: `backend/src/modules/tasks/routes.ts`, `backend/src/modules/taskgoals/routes.ts`, `backend/src/lib/goalProgress.ts`, `backend/src/modules/calendar/routes.ts`.
   - Verify: the R5 walk-through, streak unit tests and the New York `tz` test.
-- [ ] **T5 (P1, human: ~4h / CC: ~20min): backend/timer. Map a copy id to its parent with `occurrenceTaskId`; keep copy counters only during the window; never increment a recurring task's own counters.**
+- [x] **T5 (P1, human: ~4h / CC: ~20min): backend/timer. Map a copy id to its parent with `occurrenceTaskId`; keep copy counters only during the window; never increment a recurring task's own counters.**
   - Surfaced by: D3, OV12.
   - Files: `backend/src/modules/timer/routes.ts`.
   - Verify: the R1 counting tests.
-- [ ] **T6 (P1, human: ~1.5d / CC: ~1h): mobile. Add today rows (`isOccurrence`), completion calls, the timer using the recurring id, and `taskBoard` bucketing.**
+- [x] **T6 (P1, human: ~1.5d / CC: ~1h): mobile. Add today rows (`isOccurrence`), completion calls, the timer using the recurring id, and `taskBoard` bucketing.**
   - Surfaced by: D10.
   - Files: `mobile/stores/taskStore.ts`, `mobile/lib/taskBoard.ts`, `mobile/lib/recurringDisplay.ts`, `mobile/app/(tabs)/tasks.tsx`.
   - Verify: mobile unit tests and a manual check on staging.
-- [ ] **T7 (P1, human: ~1d / CC: ~45min): backend cleanup (stage 5). Return 426 on the removed endpoints; drop the copies, `parentTaskId`, the counters and `lastSpawnedDate`; update the demo seed. Gated on the backup, reconciliation and recovery plan.**
+- [x] **T7 (P1, human: ~1d / CC: ~45min): backend cleanup (stage 5). Return 426 on the removed endpoints; drop the copies, `parentTaskId`, the counters and `lastSpawnedDate`; update the demo seed. Gated on the backup, reconciliation and recovery plan.**
   - Surfaced by: D9, D10, OV11, OV13.
   - Files: `backend/prisma/schema.prisma`, `backend/src/modules/tasks/routes.ts`, `backend/src/lib/demoAccount/*`.
   - Verify: the full suites, the restored-backup reconciliation and `prisma migrate diff`.

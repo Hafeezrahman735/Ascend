@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
-import { resolveLocalDate, dayNameFromLocalDate, utcDateStr } from '../../lib/localDate';
+import { resolveLocalDate } from '../../lib/localDate';
 import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
-import { linkHabitCounterparts, syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
+import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
+import { loadRecurringState, occurrenceRow, repeatsUntil, withRecurringStats } from '../../lib/recurringStats';
 import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
@@ -13,24 +14,7 @@ import { eventBus, EventTypes } from '../../middleware/eventBus';
 
 const PRIORITY_VALUES = ['low', 'medium', 'high', 'urgent'] as const;
 
-/**
- * A recurring template's last day, as 'YYYY-MM-DD', or null for "never ends".
- *
- * dueDate is stored at UTC midnight, so utcDateStr reads back the same calendar
- * day it was written as. Reading local fields off the instant instead is a day
- * early west of UTC, which is the bug already recorded against Task.dueDate.
- */
-const repeatsUntil = (dueDate: Date | null): string | null =>
-  dueDate ? utcDateStr(dueDate) : null;
 const DAY_VALUES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-
-// Returns the [start, end) UTC-day bounds for an ISO date string 'YYYY-MM-DD'.
-function dayBounds(isoDate: string): { start: Date; end: Date } {
-  const start = new Date(`${isoDate}T00:00:00.000Z`);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 1);
-  return { start, end };
-}
 
 /** Minutes from local midnight. 0 = 00:00, 1439 = 23:59. */
 const timeOfDay = z.number().int().min(0).max(1439);
@@ -44,10 +28,9 @@ const timeOfDay = z.number().int().min(0).max(1439);
  *  - both ends or neither — the timeline draws blocks, and a block needs a height
  *  - end after start      — a zero or negative interval has nothing to draw
  *
- * Recurring TEMPLATES are exempt from the first rule. A template is never drawn
- * on a calendar — it is hidden from GET /tasks and the calendar projects its
- * instances instead — so its schedule is the recurrence, not a single day. The
- * instances it spawns each get their own dueDate, and inherit the time slot.
+ * Recurring tasks are exempt from the first rule: their dueDate is the last day
+ * they repeat, not the day they happen. Each day's occurrence row takes the
+ * time slot on its own day (lib/recurringStats.ts).
  */
 function validateSchedule(
   startMinutes: number | null | undefined,
@@ -79,10 +62,17 @@ const createTaskSchema = z.object({
   // Was missing entirely, so a goal picked in the create form was silently
   // dropped by zod and the user had to create-then-edit to attach it.
   taskGoalId: z.string().nullable().optional(),
-  // The client's calendar day, so a recurring task spawns on the user's "today"
-  // rather than the server's. See lib/localDate.ts.
-  localDate: z.string().optional().nullable(),
 });
+
+/**
+ * The caller's local today, from `?localDate=` (or the body's `localDate`),
+ * falling back to the UTC day. See lib/localDate.ts.
+ */
+function requestToday(req: Request, context: string): string {
+  const fromQuery = typeof req.query.localDate === 'string' ? req.query.localDate : undefined;
+  const fromBody = typeof req.body?.localDate === 'string' ? req.body.localDate : undefined;
+  return resolveLocalDate(fromQuery ?? fromBody, new Date(), context);
+}
 
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(100).optional(),
@@ -144,49 +134,6 @@ export function setupTaskRoutes(router: Router): void {
         },
       });
 
-      // If recurring, spawn today's instance immediately so it shows up right away.
-      if (data.isRecurring) {
-        const today = resolveLocalDate(data.localDate, new Date(), 'POST /tasks');
-        const todayDayName = dayNameFromLocalDate(today);
-        const shouldSpawnToday =
-          data.recurringDays.length === 0 || data.recurringDays.includes(todayDayName as typeof DAY_VALUES[number]);
-
-        if (shouldSpawnToday) {
-          await prisma.task.create({
-            data: {
-              userId,
-              title: data.title,
-              description: data.description || null,
-              tags: data.tags,
-              estimatedMinutes: data.estimatedMinutes || null,
-              startMinutes: data.startMinutes ?? null,
-              endMinutes: data.endMinutes ?? null,
-              priority: data.priority,
-              dueDate: new Date(today),
-              parentTaskId: task.id,
-              isRecurring: false, // instances are not themselves recurring
-              recurringDays: [],
-              // Instances inherit the template's goal link. Templates are hidden
-              // from GET /tasks, so without this a recurring task linked to a
-              // goal contributed nothing to it — ever.
-              taskGoalId: data.taskGoalId ?? null,
-              sessionsOnTask: 0,
-              totalTimeOnTask: 0,
-              sessionDates: [],
-              // Brand-new habit — no lifetime history yet.
-              lifetimeStreak: 0,
-              lifetimeTotalCompletions: 0,
-              lifetimeTotalFocusTime: 0,
-            },
-          });
-
-          await prisma.task.update({
-            where: { id: task.id },
-            data: { lastSpawnedDate: today },
-          });
-        }
-      }
-
       res.json({ success: true, data: task });
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -203,13 +150,26 @@ export function setupTaskRoutes(router: Router): void {
     try {
       const userId = authenticate(req);
 
-      const tasks = await prisma.task.findMany({
-        // Exclude recurring templates — they are definitions, not actionable tasks.
-        where: { userId, isArchived: false, isRecurring: false },
-        orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
-      });
+      const today = requestToday(req, 'GET /tasks');
 
-      res.json({ success: true, data: tasks });
+      const [tasks, recurring] = await Promise.all([
+        prisma.task.findMany({
+          where: { userId, isArchived: false, isRecurring: false },
+          orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
+        }),
+        prisma.task.findMany({
+          where: { userId, isArchived: false, isRecurring: true },
+          orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
+        }),
+      ]);
+
+      // A recurring task appears as today's row only on a day it is due. On
+      // other days GET /tasks/recurring lists it with its next occurrence.
+      const dueToday = recurring.filter((t) => isScheduledOn(t.recurringDays, today, repeatsUntil(t)));
+      const state = await loadRecurringState(userId, dueToday, today);
+      const todayRows = dueToday.map((t) => occurrenceRow(t, state.get(t.id)!, today));
+
+      res.json({ success: true, data: [...tasks, ...todayRows] });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('List tasks error:', err);
@@ -217,194 +177,33 @@ export function setupTaskRoutes(router: Router): void {
     }
   });
 
-  // Returns all recurring templates for the current user (manage/edit screen).
+  // Returns every live recurring task with its schedule and streaks.
   // Registered before '/tasks/:id' so 'recurring' is not captured as an id.
   router.get('/tasks/recurring', async (req: Request, res: Response) => {
     try {
       const userId = authenticate(req);
-      const templates = await prisma.task.findMany({
+      const tasks = await prisma.task.findMany({
         where: { userId, isRecurring: true, isArchived: false },
         orderBy: { createdAt: 'desc' },
       });
 
-      // The schedule is answered here, not inferred on the client.
-      //
-      // The client used to decide "this habit is dormant" from the ABSENCE of an
-      // instance row, which is also what a failed spawn, a cold-start race and a
-      // deleted instance look like. In those states it rendered today's habit as
-      // dimmed and uncompletable while labelling it "Due today". Scheduling is a
-      // property of the template, so the server states it.
-      const today = resolveLocalDate(
-        typeof req.query.localDate === 'string' ? req.query.localDate : undefined,
-        new Date(),
-      );
+      // The schedule is answered here, not inferred on the client: scheduling
+      // is a property of the task, so the server states it. Past the task's
+      // last day it is neither scheduled today nor ever again, and the client
+      // renders that as "no longer repeats" rather than a stale next date.
+      const today = requestToday(req, 'GET /tasks/recurring');
+      const state = await loadRecurringState(userId, tasks, today);
 
       res.json({
         success: true,
-        data: templates.map((t) => ({
-          ...t,
-          // A template's dueDate is the last day it repeats. Past it, the
-          // habit is neither scheduled today nor ever again, and the client
-          // renders that as "no longer repeats" rather than a stale next date.
-          scheduledToday: isScheduledOn(t.recurringDays, today, repeatsUntil(t.dueDate)),
-          nextOccurrence: nextOccurrence(t.recurringDays, today, repeatsUntil(t.dueDate)),
+        data: tasks.map((t) => ({
+          ...withRecurringStats(t, state.get(t.id)!, today),
+          nextOccurrence: nextOccurrence(t.recurringDays, today, repeatsUntil(t)),
         })),
       });
     } catch (err) {
       if (handleAuthError(res, err)) return;
-      console.error('List recurring templates error:', err);
-      res.status(500).json({ success: false, error: 'Internal server error' });
-    }
-  });
-
-  // Spawns today's instances for all recurring templates not yet spawned today.
-  // Called on app boot, task screen mount, and foreground. Idempotent.
-  router.post('/tasks/spawn-recurring', async (req: Request, res: Response) => {
-    try {
-      const userId = authenticate(req);
-      // "Today" is the CLIENT's calendar day. Using the server's UTC date here
-      // ended the day early for anyone west of UTC: their in-progress habit was
-      // archived as missed and the streak reset while it was still that evening.
-      const { localDate } = z
-        .object({ localDate: z.string().optional().nullable() })
-        .parse(req.body ?? {});
-      const today = resolveLocalDate(localDate, new Date(), 'POST /tasks/spawn-recurring');
-      const todayDayName = dayNameFromLocalDate(today);
-      const { start: todayStart, end: todayEnd } = dayBounds(today);
-
-      const templates = await prisma.task.findMany({
-        where: {
-          userId,
-          isRecurring: true,
-          isArchived: false,
-          // The null branch is load-bearing. `NOT (lastSpawnedDate = today)` is
-          // NULL in SQL for a template that has never spawned, so on its own it
-          // skipped every habit created on an unscheduled day, and every task
-          // switched to recurring, forever.
-          OR: [{ lastSpawnedDate: null }, { NOT: { lastSpawnedDate: today } }],
-        },
-      });
-
-      const spawned: string[] = [];
-      let archived = 0;
-
-      for (const template of templates) {
-        // ── 1. Archive ALL previous instances of this template that aren't today's ──
-        // Covers completed AND uncompleted — only today's instance should ever be
-        // visible in the active list. This is what prevents pileup of missed days
-        // and stops a not-completed instance from lingering as "overdue" the next day.
-        const staleInstances = await prisma.task.findMany({
-          where: {
-            userId,
-            parentTaskId: template.id,
-            isArchived: false,
-            NOT: { dueDate: { gte: todayStart, lt: todayEnd } },
-          },
-          select: { id: true },
-        });
-        if (staleInstances.length > 0) {
-          await prisma.task.updateMany({
-            where: { id: { in: staleInstances.map((t) => t.id) } },
-            data: { isArchived: true },
-          });
-          archived += staleInstances.length;
-        }
-
-        // ── 2. Immediate streak reset if the last spawned instance was missed ──
-        let effectiveStreak = template.currentStreak;
-        if (template.lastSpawnedDate && template.lastSpawnedDate !== today) {
-          const { start: lastStart, end: lastEnd } = dayBounds(template.lastSpawnedDate);
-          // Query includes archived instances on purpose: a prior spawn run (e.g. an
-          // in-between non-scheduled day) may already have archived the last instance,
-          // so we must look it up directly rather than rely on `staleInstances`.
-          const lastInstance = await prisma.task.findFirst({
-            where: {
-              userId,
-              parentTaskId: template.id,
-              dueDate: { gte: lastStart, lt: lastEnd },
-            },
-          });
-          const wasMissed = !lastInstance || !lastInstance.isCompleted;
-
-          if (wasMissed && template.currentStreak !== 0) {
-            await prisma.task.update({
-              where: { id: template.id },
-              data: { currentStreak: 0 },
-            });
-            effectiveStreak = 0;
-          }
-        }
-
-        // ── 3. Spawn today's instance if scheduled ──
-        // The template's dueDate is the last day it repeats, inclusive. Without
-        // this check a habit the user gave an end date to kept spawning a fresh
-        // instance every scheduled day forever, because the spawner only ever
-        // looked at the weekday.
-        const endsOn = repeatsUntil(template.dueDate);
-        const shouldSpawn =
-          (!endsOn || today <= endsOn) &&
-          (template.recurringDays.length === 0 ||
-            template.recurringDays.includes(todayDayName));
-        if (!shouldSpawn) continue;
-
-        // Safety check — never create a duplicate instance for today.
-        const existing = await prisma.task.findFirst({
-          where: {
-            userId,
-            parentTaskId: template.id,
-            dueDate: { gte: todayStart, lt: todayEnd },
-          },
-        });
-        if (existing) {
-          await prisma.task.update({
-            where: { id: template.id },
-            data: { lastSpawnedDate: today },
-          });
-          continue;
-        }
-
-        await prisma.task.create({
-          data: {
-            userId,
-            title: template.title,
-            description: template.description,
-            tags: template.tags,
-            estimatedMinutes: template.estimatedMinutes,
-            // The time slot is part of the habit: "gym at 07:00" must spawn at 07:00.
-            startMinutes: template.startMinutes,
-            endMinutes: template.endMinutes,
-            priority: template.priority,
-            dueDate: new Date(today),
-            parentTaskId: template.id,
-            isRecurring: false,
-            recurringDays: [],
-            // Carry the template's goal link onto each spawned instance — the
-            // template itself is excluded from GET /tasks, so the instance is
-            // the only thing that can count toward the goal.
-            taskGoalId: template.taskGoalId,
-            sessionsOnTask: 0,
-            totalTimeOnTask: 0,
-            sessionDates: [],
-            // Denormalized lifetime stats — copied for instant display in the stats
-            // modal, so it needs no extra network round trip.
-            lifetimeStreak: effectiveStreak,
-            lifetimeTotalCompletions: template.totalCompletions,
-            lifetimeTotalFocusTime: template.totalFocusTimeMs,
-          },
-        });
-
-        await prisma.task.update({
-          where: { id: template.id },
-          data: { lastSpawnedDate: today },
-        });
-
-        spawned.push(template.id);
-      }
-
-      res.json({ success: true, data: { spawned: spawned.length, archived, templateIds: spawned } });
-    } catch (err) {
-      if (handleAuthError(res, err)) return;
-      console.error('Spawn recurring error:', err);
+      console.error('List recurring tasks error:', err);
       res.status(500).json({ success: false, error: 'Internal server error' });
     }
   });
@@ -454,7 +253,13 @@ export function setupTaskRoutes(router: Router): void {
         timeZone,
       });
 
-      res.json({ success: true, data: { ...task, analytics } });
+      if (!task.isRecurring) {
+        res.json({ success: true, data: { ...task, analytics } });
+        return;
+      }
+      const today = requestToday(req, 'GET /tasks/:id');
+      const state = await loadRecurringState(userId, [task], today);
+      res.json({ success: true, data: { ...withRecurringStats(task, state.get(task.id)!, today), analytics } });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       console.error('Get task error:', err);
@@ -471,6 +276,19 @@ export function setupTaskRoutes(router: Router): void {
       const existing = await prisma.task.findFirst({ where: { id, userId } });
       if (!existing) {
         res.status(404).json({ success: false, error: 'Task not found' });
+        return;
+      }
+
+      // A recurring task is done per DAY, in its completion log; the row's own
+      // isCompleted means nothing for it. Ticking one goes through
+      // PUT/DELETE /tasks/:id/completions/:date, which pays XP exactly once.
+      // Re-sending the unchanged value, as an edit form does, is harmless.
+      const isRecurring = data.isRecurring ?? existing.isRecurring;
+      if (isRecurring && data.isCompleted !== undefined && data.isCompleted !== existing.isCompleted) {
+        res.status(400).json({
+          success: false,
+          error: 'Tick off a recurring task with PUT /tasks/:id/completions/:date',
+        });
         return;
       }
 
@@ -518,46 +336,6 @@ export function setupTaskRoutes(router: Router): void {
         data: updateData,
       });
 
-      // Recurring habit stats: roll into the parent template on completion toggles.
-      // Streak *resetting* on a missed day now happens entirely in spawn-recurring —
-      // this block only increments on completion or undoes today's increment on
-      // uncomplete, and never looks backward at previous days. Guarded on an actual
-      // completion-state change so repeated/unrelated PATCHes don't double-count.
-      if (
-        task.parentTaskId &&
-        data.isCompleted !== undefined &&
-        existing.isCompleted !== data.isCompleted
-      ) {
-        const template = await prisma.task.findUnique({ where: { id: task.parentTaskId } });
-        if (template) {
-          if (data.isCompleted === true) {
-            const newStreak = template.currentStreak + 1;
-            await prisma.task.update({
-              where: { id: template.id },
-              data: {
-                currentStreak: newStreak,
-                longestStreak: Math.max(template.longestStreak, newStreak),
-                totalCompletions: template.totalCompletions + 1,
-                totalFocusTimeMs: template.totalFocusTimeMs + (task.totalTimeOnTask ?? 0),
-              },
-            });
-          } else {
-            // Uncompleting is a full undo of the completion above. It previously
-            // rolled back only the streak and left totalCompletions /
-            // totalFocusTimeMs untouched, so toggling complete → incomplete →
-            // complete inflated the lifetime counters without bound.
-            await prisma.task.update({
-              where: { id: template.id },
-              data: {
-                currentStreak: Math.max(0, template.currentStreak - 1),
-                totalCompletions: Math.max(0, template.totalCompletions - 1),
-                totalFocusTimeMs: Math.max(0, template.totalFocusTimeMs - (task.totalTimeOnTask ?? 0)),
-              },
-            });
-          }
-        }
-      }
-
       // ── Gamification on completion ──
       // Finishing work now earns XP, not just spending time on it. Un-checking
       // revokes exactly what completing granted, so the pair is a true undo and
@@ -583,36 +361,14 @@ export function setupTaskRoutes(router: Router): void {
         }
       }
 
-      // A habit's template and live instance move between goals together — see
-      // linkHabitCounterparts. Their previous goals are affected as well.
-      const counterpartGoals: (string | null)[] = [];
-      if (data.taskGoalId !== undefined) {
-        const counterparts = (await linkHabitCounterparts(userId, [id])).filter((t) => t !== id);
-        if (counterparts.length > 0) {
-          const before = await prisma.task.findMany({
-            where: { id: { in: counterparts }, userId },
-            select: { taskGoalId: true },
-          });
-          counterpartGoals.push(...before.map((t) => t.taskGoalId));
-          await prisma.task.updateMany({
-            where: { id: { in: counterparts }, userId },
-            data: { taskGoalId: task.taskGoalId },
-          });
-        }
-      }
-
       // Anything that changed completion or moved the task between goals can move
       // goal progress. Recompute both the old and new goal so a task leaving a
-      // goal updates that goal too. Completing a habit's instance counts toward
-      // the goal its TEMPLATE is on, which older data may not have copied down.
+      // goal updates that goal too.
       if (data.isCompleted !== undefined || data.taskGoalId !== undefined) {
-        const template = task.parentTaskId
-          ? await prisma.task.findFirst({ where: { id: task.parentTaskId, userId }, select: { taskGoalId: true } })
-          : null;
         await syncGoalCompletion(
           userId,
-          [existing.taskGoalId, task.taskGoalId, template?.taskGoalId ?? null, ...counterpartGoals]
-            .filter((g): g is string => !!g),
+          [existing.taskGoalId, task.taskGoalId].filter((g): g is string => !!g),
+          { today: requestToday(req, 'PATCH /tasks/:id') },
         );
       }
 
@@ -650,17 +406,6 @@ export function setupTaskRoutes(router: Router): void {
         where: { id },
         data: { isArchived: true },
       });
-
-      // Deleting a recurring task ends the habit, so its live instance goes too.
-      // The spawner only archives instances of templates it still selects, so an
-      // instance left here would sit in the list indefinitely. Their sessions
-      // are kept: that focus time happened.
-      if (existing.isRecurring) {
-        await prisma.task.updateMany({
-          where: { userId, parentTaskId: id, isArchived: false },
-          data: { isArchived: true },
-        });
-      }
 
       res.json({ success: true, data: { id } });
     } catch (err) {

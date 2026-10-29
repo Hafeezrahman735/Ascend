@@ -42,8 +42,7 @@ async function hydrateForUser(userId: string): Promise<void> {
 // Non-blocking refresh. Deliberately unawaited — these populate screens the
 // user has not reached yet.
 function refreshBackgroundData(): void {
-  useTaskStore.getState().fetchTasks(true);
-  useTaskStore.getState().spawnRecurringTasks();
+  useTaskStore.getState().refreshRecurring();
   // Reset the overall day-streak immediately if a day was missed (mirrors
   // the immediate recurring-streak reset), before fetchProfile reads it.
   useGamificationStore.getState().checkAndResetDayStreak();

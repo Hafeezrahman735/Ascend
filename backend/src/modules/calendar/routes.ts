@@ -146,33 +146,20 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
     const { start, end } = parseRange(req);
     const bounds = rangeBounds(start, end);
 
-    const [tasks, recurringInstances, recurringTemplates, goals, notes, events, connection] = await Promise.all([
-      // Standalone tasks: not recurring templates, not spawned instances.
+    const [tasks, completions, goals, notes, events, connection] = await Promise.all([
+      // One-off tasks. Recurring tasks are projected below.
       prisma.task.findMany({
         where: {
           userId,
           isArchived: false,
           isRecurring: false,
-          parentTaskId: null,
           dueDate: bounds,
         },
       }),
-      // Recurring instances in range. Archived ones are INCLUDED on purpose:
-      // spawn-recurring archives every instance that is not due today, so
-      // filtering them out erased all completed history from the calendar.
-      // They carry the completion state for days already past.
-      prisma.task.findMany({
-        where: {
-          userId,
-          parentTaskId: { not: null },
-          dueDate: bounds,
-        },
-      }),
-      // The recurring templates themselves, so the range can be projected onto
-      // days that have no instance row yet (future days, and non-scheduled days
-      // that were never spawned).
-      prisma.task.findMany({
-        where: { userId, isRecurring: true, isArchived: false },
+      // Done days of recurring tasks in range.
+      prisma.recurringCompletion.findMany({
+        where: { userId, date: { gte: start, lte: end } },
+        select: { taskId: true, date: true },
       }),
       // TaskGoal deadlines. (The old session-target Goal model was removed; goals
       // are TaskGoal now, and `deadline` is a plain @db.Date calendar day.)
@@ -197,37 +184,46 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
       }),
     ]);
 
+    // Live recurring tasks, plus deleted ones with a done day in range: a
+    // deleted habit's completed days stay on the calendar as history.
+    const recurring = await prisma.task.findMany({
+      where: {
+        userId,
+        isRecurring: true,
+        OR: [{ isArchived: false }, { id: { in: [...new Set(completions.map((c) => c.taskId))] } }],
+      },
+    });
+    const done = new Map<string, Set<string>>();
+    for (const c of completions) {
+      if (!done.has(c.taskId)) done.set(c.taskId, new Set());
+      done.get(c.taskId)!.add(c.date);
+    }
+
     const items: { type: string; date: string; data: unknown }[] = [
       ...tasks.map((t) => ({ type: 'task', date: toDateKey(t.dueDate!), data: t })),
-      // Recurring tasks are projected across the range rather than read
-      // straight from the instance rows: a real row exists only for days
-      // already spawned, so the calendar could otherwise only ever show them
-      // on today. A day with no row yet is reported from the template, flagged
-      // isProjected so the client can tell "scheduled" from "actually done".
-      ...projectRecurring({
-        templates: recurringTemplates,
-        instances: recurringInstances,
-        start,
-        end,
-      }).map(({ date, template, instance }) => ({
+      // One row per day each recurring task is on. The id is the recurring
+      // task's own, so ticking a day off from the calendar targets
+      // PUT /tasks/:id/completions/:date like the task list does.
+      //
+      // Deliberately narrow: spreading the whole task shipped its description
+      // and tags once per day, and a 400-day range across 20 tasks is 8000 of
+      // these. The calendar reads the fields below and nothing else.
+      ...projectRecurring({ tasks: recurring, done, start, end }).map(({ date, task, isCompleted }) => ({
         type: 'habit_instance',
         date,
-        data: instance
-          ? { ...instance, isProjected: false }
-          : {
-              // Deliberately narrow. A projected day has no row, so spreading the
-              // whole template shipped its description, tags and lifetime stats
-              // once per scheduled day — a 400-day range across 20 templates is
-              // 8000 of these. The calendar only reads title and isCompleted.
-              // Synthetic id is prefixed so it can never be mistaken for a real
-              // task id in a later write.
-              id: `projected:${template!.id}:${date}`,
-              title: template!.title,
-              parentTaskId: template!.id,
-              dueDate: new Date(`${date}T00:00:00.000Z`),
-              isCompleted: false,
-              isProjected: true,
-            },
+        data: {
+          id: task.id,
+          title: task.title,
+          priority: task.priority,
+          startMinutes: task.startMinutes,
+          endMinutes: task.endMinutes,
+          estimatedMinutes: task.estimatedMinutes,
+          isRecurring: true,
+          isOccurrence: true,
+          occurrenceDate: date,
+          dueDate: new Date(`${date}T00:00:00.000Z`),
+          isCompleted,
+        },
       })),
       ...goals.map((g) => ({ type: 'goal_deadline', date: toDateKey(g.deadline!), data: g })),
       ...notes.map((n) => ({ type: 'note', date: n.date as string, data: n })),

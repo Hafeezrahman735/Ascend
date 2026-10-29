@@ -175,19 +175,15 @@ describe('backfillSessionAttribution', () => {
     expect(after.localHour).toBe(before.localHour);
   });
 
-  it('marks a spawned habit instance as recurring', async () => {
+  it('marks a session on a recurring task as recurring', async () => {
     const user = await createUser();
-    const templateId = await createTask(user, {
+    const taskId = await createTask(user, {
       title: 'Daily revision',
       isRecurring: true,
       recurringDays: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
     });
-    await authed(user).post('/tasks/spawn-recurring').send({});
-    const instance = await prisma.task.findFirstOrThrow({
-      where: { userId: user.id, parentTaskId: templateId }, select: { id: true },
-    });
 
-    const sessionId = await logSession(user, instance.id);
+    const sessionId = await logSession(user, taskId);
     await stripAttribution(user.id);
 
     const result = await backfillSessionAttribution(prisma);

@@ -104,7 +104,7 @@ export async function backfillSessionAttribution(
           where: { id: { in: taskIds } },
           select: {
             id: true, title: true, tags: true, priority: true,
-            taskGoalId: true, isRecurring: true, parentTaskId: true,
+            taskGoalId: true, isRecurring: true,
           },
         })
       : [];

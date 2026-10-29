@@ -277,6 +277,12 @@ scope cut on 2026-10-22:
 
 ## From /plan-eng-review — recurring tasks as a rule plus a log (2026-10-27)
 
+- [ ] **Drop the retired recurring-task columns.** `parent_task_id`, `last_spawned_date`,
+      `recurring_streak`, `longest_streak`, `total_completions`, `total_focus_time_ms` and the
+      three `lifetime_*` columns are `@ignore`d in `backend/prisma/schema.prisma`, with the
+      `parent_task_id` index. Once production runs the rule-and-log release and its cutover,
+      delete those lines and apply the drop by hand (`db push --accept-data-loss`, staging then
+      production), per CLAUDE.md. **Why wait:** dropping before the deploy breaks the running server.
 - [ ] **"Skip today" for recurring tasks.** Today a day you can't do either breaks the
       streak or forces deleting the whole recurring task (`mobile/app/(tabs)/tasks.tsx:2378`).
       With the completion log (`docs/designs/recurring-tasks-rule-and-log.md`), a skip is a

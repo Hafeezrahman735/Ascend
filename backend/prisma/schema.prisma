@@ -245,24 +245,24 @@ model Task {
   isRecurring     Boolean  @default(false) @map("is_recurring")
   recurringDays   String[] @default([]) @map("recurring_days")
   // Valid values: 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'. Empty array means every day.
-  lastSpawnedDate String?  @map("last_spawned_date")
-  // ISO date string 'YYYY-MM-DD' — the last date an instance was spawned (lives on the template)
-  parentTaskId    String?  @map("parent_task_id")
-  // If set, this task is an instance spawned from the template with this ID
+  // A recurring task's dueDate is the last day it repeats, inclusive. Its done
+  // days live in RecurringCompletion; streaks and totals are calculated
+  // (lib/recurringStats.ts).
 
-  // ── Habit-tracker lifetime stats — live on the TEMPLATE ──
-  // currentStreak keeps the existing `recurring_streak` column (renamed field only)
-  // so production data is preserved with a purely additive db push. It resets to 0
-  // immediately at spawn time when a day is missed (see spawn-recurring route).
-  currentStreak    Int @default(0) @map("recurring_streak")
-  longestStreak    Int @default(0) @map("longest_streak")
-  totalCompletions Int @default(0) @map("total_completions")
-  totalFocusTimeMs Int @default(0) @map("total_focus_time_ms")
-
-  // ── Denormalized onto INSTANCES at spawn time — read-only display copies ──
-  lifetimeStreak           Int @default(0) @map("lifetime_streak")
-  lifetimeTotalCompletions Int @default(0) @map("lifetime_total_completions")
-  lifetimeTotalFocusTime   Int @default(0) @map("lifetime_total_focus_time")
+  // ── Retired with the daily copies (docs/designs/recurring-tasks-rule-and-log.md) ──
+  // @ignore keeps the columns in the database but out of the client, so the
+  // pre-deploy `db push` has nothing to drop and code cannot use them. Remove
+  // these lines, and the index below, once production runs code that does not
+  // select them; that drop is lossy and is applied by hand (see CLAUDE.md).
+  lastSpawnedDate          String? @map("last_spawned_date") @ignore
+  parentTaskId             String? @map("parent_task_id") @ignore
+  currentStreak            Int     @default(0) @map("recurring_streak") @ignore
+  longestStreak            Int     @default(0) @map("longest_streak") @ignore
+  totalCompletions         Int     @default(0) @map("total_completions") @ignore
+  totalFocusTimeMs         Int     @default(0) @map("total_focus_time_ms") @ignore
+  lifetimeStreak           Int     @default(0) @map("lifetime_streak") @ignore
+  lifetimeTotalCompletions Int     @default(0) @map("lifetime_total_completions") @ignore
+  lifetimeTotalFocusTime   Int     @default(0) @map("lifetime_total_focus_time") @ignore
 
   sessions    Session[]             @relation("TaskSessions")
   completions RecurringCompletion[]

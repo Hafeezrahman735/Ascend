@@ -325,11 +325,9 @@ export const ALL_DAY_EVENT_WEIGHT = 180;
 export function itemWeight(item: CalendarItem): number {
   if (item.type === 'note') return 0;
 
-  // Recurring tasks are weighted FLAT, ignoring any time they carry. A future
-  // occurrence is a projected placeholder with no startMinutes at all (see the
-  // calendar route), so weighting by duration would make today's spawned copy
-  // heavier than the identical one next Tuesday — and next Tuesday would darken
-  // by itself when it spawned. The cost is real and accepted: a two-hour daily
+  // Recurring tasks are weighted FLAT, ignoring any time they carry, so every
+  // day of one weighs the same and a week's heat does not depend on which days
+  // happen to carry a time slot. The cost is real and accepted: a two-hour daily
   // habit weighs the same as a five-minute one.
   if (item.type === 'habit_instance') return HABIT_WEIGHT;
 

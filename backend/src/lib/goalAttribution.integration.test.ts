@@ -4,7 +4,6 @@ import { prisma } from './prisma';
 import { shiftDateKey } from './localParts';
 import { utcDateStr } from './localDate';
 import { loadCurrentGoals, SESSION_GOAL_EXPR, SESSION_GOAL_JOIN } from './goalAttribution';
-import { backfillHabitGoalLinks } from './backfillHabitGoalLinks';
 
 /**
  * Goal time follows a task's CURRENT goal (owner decision, 2026-10-23).
@@ -111,22 +110,17 @@ describe('goal time follows the task’s current goal', () => {
     expect(r.totals.seconds).toBe(25 * MIN);
   });
 
-  it('moves a habit’s whole history, including archived days with a stale goal', async () => {
+  it('moves a recurring task’s whole history with it', async () => {
     const user = await createUser();
     const a = await createGoal(user, 'A');
     const b = await createGoal(user, 'B');
     const created = await authed(user).post('/tasks')
-      .send({ title: 'Daily', isRecurring: true, recurringDays: EVERY_DAY, localDate: TODAY, taskGoalId: a });
-    const templateId = created.body.data.id as string;
-    const instance = await prisma.task.findFirstOrThrow({ where: { parentTaskId: templateId, isArchived: false } });
-    await logSession(user, instance.id, 30);
-    // Yesterday's day: archived, spawned under goal A, and never relinked.
-    const archived = await prisma.task.create({
-      data: { userId: user.id, title: 'Daily', parentTaskId: templateId, taskGoalId: a, isArchived: true },
-    });
-    await logSession(user, archived.id, 15);
+      .send({ title: 'Daily', isRecurring: true, recurringDays: EVERY_DAY, taskGoalId: a });
+    const habitId = created.body.data.id as string;
+    await logSession(user, habitId, 30);
+    await logSession(user, habitId, 15);
 
-    await link(user, b, instance.id);
+    await link(user, b, habitId);
 
     expect(await goalSeconds(user, a)).toBe(0);
     expect(await goalSeconds(user, b)).toBe(45 * MIN);
@@ -203,20 +197,16 @@ describe('goal time follows the task’s current goal', () => {
 });
 
 describe('the SQL and JS forms of the rule agree', () => {
-  it('resolves the same goal for plain tasks, habit instances and free sessions', async () => {
+  it('resolves the same goal for plain tasks, recurring tasks and free sessions', async () => {
     const user = await createUser();
     const a = await createGoal(user, 'A');
     const b = await createGoal(user, 'B');
     const plain = await createTask(user, 'Plain', a);
     const created = await authed(user).post('/tasks')
-      .send({ title: 'Habit', isRecurring: true, recurringDays: EVERY_DAY, localDate: TODAY, taskGoalId: b });
-    const instance = await prisma.task.findFirstOrThrow({ where: { parentTaskId: created.body.data.id, isArchived: false } });
-    const stale = await prisma.task.create({
-      data: { userId: user.id, title: 'Habit', parentTaskId: created.body.data.id, taskGoalId: a, isArchived: true },
-    });
+      .send({ title: 'Habit', isRecurring: true, recurringDays: EVERY_DAY, taskGoalId: b });
     await logSession(user, plain, 5);
-    await logSession(user, instance.id, 5);
-    await logSession(user, stale.id, 5);
+    await logSession(user, created.body.data.id, 5);
+    await logSession(user, created.body.data.id, 5);
     await logSession(user, null, 5);
 
     const sql = await prisma.$queryRaw<{ id: string; task_id: string | null; goal_id: string | null }[]>`
@@ -231,39 +221,5 @@ describe('the SQL and JS forms of the rule agree', () => {
     }
     expect(new Set(sql.map((r) => r.goal_id))).toEqual(new Set([a, b, null]));
     expect(sql.filter((r) => r.goal_id === b)).toHaveLength(2);
-  });
-});
-
-describe('backfillHabitGoalLinks', () => {
-  it('gives an unlinked template the goal of its live instance, and nothing on a dry run', async () => {
-    const user = await createUser();
-    const goalId = await createGoal(user, 'Fitness');
-    const created = await authed(user).post('/tasks')
-      .send({ title: 'Run', isRecurring: true, recurringDays: EVERY_DAY, localDate: TODAY });
-    const templateId = created.body.data.id as string;
-    // The pre-fix shape: only today's instance carries the goal.
-    await prisma.task.updateMany({ where: { parentTaskId: templateId, isArchived: false }, data: { taskGoalId: goalId } });
-
-    const dry = await backfillHabitGoalLinks({ dryRun: true });
-    expect(dry).toEqual({ scanned: 1, linked: 1 });
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: templateId } })).taskGoalId).toBeNull();
-
-    const real = await backfillHabitGoalLinks({ dryRun: false });
-    expect(real.linked).toBe(1);
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: templateId } })).taskGoalId).toBe(goalId);
-  });
-
-  it('leaves a genuinely unlinked habit alone, and ignores an archived goal', async () => {
-    const user = await createUser();
-    const archivedGoal = await createGoal(user, 'Old');
-    await authed(user).post('/tasks').send({ title: 'Free habit', isRecurring: true, recurringDays: EVERY_DAY, localDate: TODAY });
-    const second = await authed(user).post('/tasks')
-      .send({ title: 'Stale', isRecurring: true, recurringDays: EVERY_DAY, localDate: TODAY });
-    await prisma.task.updateMany({ where: { parentTaskId: second.body.data.id, isArchived: false }, data: { taskGoalId: archivedGoal } });
-    await prisma.taskGoal.update({ where: { id: archivedGoal }, data: { isArchived: true } });
-
-    const result = await backfillHabitGoalLinks({ dryRun: false });
-
-    expect(result).toEqual({ scanned: 2, linked: 0 });
   });
 });

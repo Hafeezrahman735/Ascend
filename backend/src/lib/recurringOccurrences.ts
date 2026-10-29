@@ -1,19 +1,16 @@
-import type { Task } from '@prisma/client';
 import { isScheduledOn } from './recurrence';
 import { utcDateStr } from './localDate';
+import { repeatsUntil, type Rule } from './recurringStats';
 import { awardXp, type XpAward } from './gamification';
 import { syncGoalCompletion } from './goalProgress';
 import { taskCompletionXP } from './xp';
 import { EventTypes } from '../middleware/eventBus';
-import { runInTransaction, type Effects } from './transaction';
+import { runInTransaction } from './transaction';
 
 /**
- * A recurring task as one rule plus a log of the days it was done.
- *
- * Replaces the daily copies that spawn-recurring creates. During the move
- * (stages 1-4 of docs/designs/recurring-tasks-rule-and-log.md) both exist:
- * the log is the record, and the copy for a day is kept in step with it so an
- * older build on another device shows the same tick.
+ * Ticking off a day of a recurring task: which days may be changed, and the
+ * change itself with its side effects. The calculations live in
+ * lib/recurringStats.ts.
  */
 
 const YYYY_MM_DD = /^\d{4}-\d{2}-\d{2}$/;
@@ -49,8 +46,6 @@ function earliestCreationDay(createdAt: Date): string {
   return utcDateStr(new Date(createdAt.getTime() - EARLIEST_UTC_OFFSET_MS));
 }
 
-type CompletionTask = Pick<Task, 'recurringDays' | 'dueDate' | 'createdAt'>;
-
 /**
  * Why `date` cannot be ticked off or un-ticked for this task, or null if it can.
  *
@@ -58,14 +53,14 @@ type CompletionTask = Pick<Task, 'recurringDays' | 'dueDate' | 'createdAt'>;
  * the one before: the same 24-hour back-dating limit sessions have
  * (MAX_BACKDATE_MS), so a streak cannot be rebuilt after the fact.
  */
-export function completionDateError(task: CompletionTask, date: string, today: string): string | null {
+export function completionDateError(task: Rule, date: string, today: string): string | null {
   if (!isCalendarDate(date)) return 'Date must be a valid YYYY-MM-DD day';
   if (date > today) return 'Date is in the future';
   if (daysBetween(date, today) > 1) return 'Date is more than one day ago';
   if (date < earliestCreationDay(task.createdAt)) return 'Date is before the task was created';
 
-  const repeatsUntil = task.dueDate ? utcDateStr(task.dueDate) : null;
-  if (repeatsUntil && date > repeatsUntil) return 'Date is after the task stops repeating';
+  const lastDay = repeatsUntil(task);
+  if (lastDay && date > lastDay) return 'Date is after the task stops repeating';
   if (!isScheduledOn(task.recurringDays, date)) return 'Task is not scheduled on this day';
   return null;
 }
@@ -81,21 +76,23 @@ export interface CompletionChange {
  *
  * The write decides. Inserting the log row with ON CONFLICT DO NOTHING (or
  * deleting it) reports whether the day actually changed, and only then are XP,
- * tasksCompleted, the day's copy and the goal touched. Reading first and writing
- * after would let two devices ticking at once both see "not done" and both pay.
+ * tasksCompleted and the goal touched. Reading first and writing after would
+ * let two devices ticking at once both see "not done" and both pay.
  *
  * Everything runs in one transaction, so a failure leaves nothing half-applied,
  * and the feed events go out only after it commits. The task row is locked
  * first, so ticks on the same task queue rather than interleave.
  *
  * The caller has already checked the task is the user's, recurring and live,
- * and that `date` passes completionDateError.
+ * and that `date` passes completionDateError. `today` is the client's local
+ * day, which decides the goal's progress.
  */
 export async function applyCompletionChange(
   userId: string,
   taskId: string,
   date: string,
   done: boolean,
+  today: string,
 ): Promise<CompletionChange> {
   return runInTransaction(async (effects) => {
     const { db } = effects;
@@ -110,8 +107,6 @@ export async function applyCompletionChange(
     if (!changed) return { changed, reward: null };
 
     const task = await db.task.findUniqueOrThrow({ where: { id: taskId } });
-    const copyGoalId = await markCopy(effects, taskId, date, done);
-
     const xp = taskCompletionXP(task.priority);
     const reward = await awardXp(userId, done ? xp : -xp, {
       tasksCompletedDelta: done ? 1 : -1,
@@ -126,40 +121,8 @@ export async function applyCompletionChange(
       });
     }
 
-    await syncGoalCompletion(
-      userId,
-      [task.taskGoalId, copyGoalId].filter((g): g is string => !!g),
-      effects,
-    );
+    if (task.taskGoalId) await syncGoalCompletion(userId, [task.taskGoalId], { effects, today });
 
     return { changed, reward };
   });
-}
-
-/**
- * Keep the day's copy, if spawn-recurring made one, in step with the log, so
- * an older build shows the tick. Archived copies too: yesterday's is archived
- * by this morning's spawn and is still the copy for that day.
- *
- * Returns the copy's goal, which older data may hold instead of the task.
- */
-async function markCopy(
-  { db }: Effects,
-  taskId: string,
-  date: string,
-  done: boolean,
-): Promise<string | null> {
-  const start = new Date(`${date}T00:00:00.000Z`);
-  const end = new Date(start.getTime() + DAY_MS);
-  const copy = await db.task.findFirst({
-    where: { parentTaskId: taskId, dueDate: { gte: start, lt: end } },
-    select: { id: true, taskGoalId: true },
-  });
-  if (!copy) return null;
-
-  await db.task.update({
-    where: { id: copy.id },
-    data: { isCompleted: done, completedAt: done ? new Date() : null },
-  });
-  return copy.taskGoalId;
 }

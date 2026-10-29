@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  templatesWithoutInstance, daysUntil, nextOccurrenceLabel,
+  templatesWithoutTodayRow, daysUntil, nextOccurrenceLabel,
   type RecurringTemplate,
 } from './recurringDisplay';
 import type { Task } from '../types';
@@ -22,40 +22,31 @@ const template = (
 // 2026-08-18 is a Tuesday.
 const TODAY = new Date('2026-08-18T12:00:00');
 
-describe('templatesWithoutInstance', () => {
-  it('shows a template the server says is not scheduled today', () => {
+describe('templatesWithoutTodayRow', () => {
+  it('shows a recurring task with no row today', () => {
     const t = template({ id: 'mw', scheduledToday: false });
-    expect(templatesWithoutInstance([t], []).map((x) => x.id)).toEqual(['mw']);
+    expect(templatesWithoutTodayRow([t], []).map((x) => x.id)).toEqual(['mw']);
   });
 
-  it('shows a template scheduled today that has no instance', () => {
-    // Dropping these is how recurring tasks vanished: a habit the spawner
-    // skipped had no instance and was filtered out here too, so it showed
-    // nowhere at all.
-    const dueButUnspawned = template({ id: 'daily', scheduledToday: true });
-    expect(templatesWithoutInstance([dueButUnspawned], []).map((x) => x.id)).toEqual(['daily']);
-  });
-
-  it('hides a template that already has a live instance', () => {
-    const t = template({ id: 'daily', scheduledToday: false });
-    expect(templatesWithoutInstance([t], [task({ id: 'i', parentTaskId: 'daily' })])).toEqual([]);
-  });
-
-  it('treats an archived instance as absent', () => {
-    const t = template({ id: 'daily', scheduledToday: false });
-    const archived = task({ id: 'i', parentTaskId: 'daily', isArchived: true });
-    expect(templatesWithoutInstance([t], [archived]).map((x) => x.id)).toEqual(['daily']);
-  });
-
-  it('does not double-list a habit whose instance is completed but still live', () => {
-    // Completion does not archive, so the instance still stands in for it.
+  it('hides one that has its day row in the list', () => {
     const t = template({ id: 'daily', scheduledToday: true });
-    const done = task({ id: 'i', parentTaskId: 'daily', isCompleted: true });
-    expect(templatesWithoutInstance([t], [done])).toEqual([]);
+    const row = task({ id: 'daily', isRecurring: true, isOccurrence: true });
+    expect(templatesWithoutTodayRow([t], [row])).toEqual([]);
   });
 
-  it('ignores archived templates', () => {
-    expect(templatesWithoutInstance([template({ id: 'x', scheduledToday: false, isArchived: true })], []))
+  it('does not double-list one whose day row is ticked off', () => {
+    const t = template({ id: 'daily', scheduledToday: true });
+    const done = task({ id: 'daily', isRecurring: true, isOccurrence: true, isCompleted: true });
+    expect(templatesWithoutTodayRow([t], [done])).toEqual([]);
+  });
+
+  it('is not fooled by a one-off task that happens to share nothing but a title', () => {
+    const t = template({ id: 'daily', scheduledToday: false });
+    expect(templatesWithoutTodayRow([t], [task({ id: 'other' })]).map((x) => x.id)).toEqual(['daily']);
+  });
+
+  it('ignores archived recurring tasks', () => {
+    expect(templatesWithoutTodayRow([template({ id: 'x', scheduledToday: false, isArchived: true })], []))
       .toEqual([]);
   });
 });

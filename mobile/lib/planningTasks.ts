@@ -19,18 +19,18 @@ import { calendarItemKey, itemIsDone, itemTitle } from './calendarItems';
  * it is scheduled. This list answers "what do I still have to do", where that
  * same habit is ONE commitment. See the recurring rules below.
  *
- * Recurring tasks are included: `habit_instance` is the wire name for a spawned
- * recurring TASK, not a separate "habits" feature (see TYPE_META). Goal
+ * Recurring tasks are included: `habit_instance` is the wire name for one day
+ * of a recurring TASK, not a separate "habits" feature (see TYPE_META). Goal
  * deadlines are not — a deadline is a date you are working toward, not a thing
  * you sit down and do.
  *
  * ── Why recurring tasks are treated differently ──────────────────────────────
  *
  * Two subsystems hold opposite, individually-correct rules. The Tasks tab
- * archives every instance not due today (spawn-recurring), so a habit exists
- * only for today and a missed day leaves no row. The calendar PROJECTS the
- * template across the whole requested range (backend recurringProjection.ts) so
- * day and week views can draw the habit on every scheduled day.
+ * lists a recurring task only for today, so a missed day leaves no row. The
+ * calendar PROJECTS it across the whole requested range (backend
+ * recurringProjection.ts) so day and week views can draw it on every
+ * scheduled day.
  *
  * Reading those projections as a to-do list produced exactly the thing the
  * product is designed to avoid: a daily habit rendered seven rows in one week,
@@ -74,7 +74,7 @@ function isTaskItem(item: CalendarItem): boolean {
  *
  * `item.data` is cast, not validated, so a field the server did not send is
  * `undefined` here and TypeScript cannot see it. That matters: a projected
- * recurring day carries only id/title/parentTaskId/dueDate/isCompleted, so
+ * recurring day carries only a few of a task's fields, so
  * reading `priority` and `isRecurring` straight off it silently produced a row
  * with no repeat icon and `PRIORITY_RANK[undefined] - PRIORITY_RANK[undefined]`
  * = NaN in the comparator. Both are defaulted here rather than at the call site
@@ -99,10 +99,10 @@ function toWeekTask(item: CalendarItem, todayKey: string): WeekTask {
   };
 }
 
-/** The template a recurring occurrence belongs to, real or projected. */
+/** The recurring task a calendar day belongs to: a day row carries its id. */
 function templateIdOf(item: CalendarItem): string | null {
-  const parent = (item.data as Task).parentTaskId;
-  return parent ?? null;
+  const task = item.data as Task;
+  return task.isOccurrence ? task.id : null;
 }
 
 /**

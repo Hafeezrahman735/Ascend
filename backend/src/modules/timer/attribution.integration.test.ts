@@ -180,24 +180,15 @@ describe('POST /timer/complete attribution', () => {
     expect(session.durationSeconds).toBe(25 * MIN);
   });
 
-  it('marks a habit instance as recurring', async () => {
+  it('marks a session on a recurring task as recurring', async () => {
     const user = await createUser();
-    const templateId = await createTask(user, {
+    const taskId = await createTask(user, {
       title: 'Daily revision',
       isRecurring: true,
       recurringDays: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
     });
 
-    const spawn = await authed(user).post('/tasks/spawn-recurring').send({});
-    expect(spawn.status).toBe(200);
-
-    const instance = await prisma.task.findFirst({
-      where: { userId: user.id, parentTaskId: templateId },
-      select: { id: true },
-    });
-    expect(instance).not.toBeNull();
-
-    const session = await readSession(await logSession(user, { taskId: instance!.id }));
+    const session = await readSession(await logSession(user, { taskId }));
     expect(session.wasRecurring).toBe(true);
   });
 });

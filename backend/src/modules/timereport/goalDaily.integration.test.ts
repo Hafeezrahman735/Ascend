@@ -7,9 +7,8 @@ import { prisma } from '../../lib/prisma';
 /**
  * GET /time-report/goals/:id/daily — one goal's focus by local day.
  *
- * The contract: it follows each task's CURRENT goal (the template's for a
- * habit instance), exactly like /task-goals, so the series adds up to the
- * goal's totalFocusSeconds there.
+ * The contract: it follows each task's CURRENT goal, exactly like
+ * /task-goals, so the series adds up to the goal's totalFocusSeconds there.
  */
 
 const MIN = 60;
@@ -19,8 +18,8 @@ async function goal(user: TestUser, title = 'Launch') {
   return prisma.taskGoal.create({ data: { userId: user.id, title } });
 }
 
-async function task(user: TestUser, title: string, taskGoalId: string | null = null, parentTaskId: string | null = null) {
-  return prisma.task.create({ data: { userId: user.id, title, taskGoalId, parentTaskId } });
+async function task(user: TestUser, title: string, taskGoalId: string | null = null, isRecurring = false) {
+  return prisma.task.create({ data: { userId: user.id, title, taskGoalId, isRecurring } });
 }
 
 function session(user: TestUser, iso: string, minutes: number, taskId: string | null, stamped = true) {
@@ -74,18 +73,16 @@ describe('GET /time-report/goals/:id/daily', () => {
     expect(goals.body.data.find((x: { id: string }) => x.id === g.id).totalFocusSeconds).toBe(d.totalSeconds);
   });
 
-  it('follows a task to its new goal, and a habit instance to its template’s goal', async () => {
+  it('follows a task to its new goal, recurring tasks included', async () => {
     const user = await createUser();
     const from = await goal(user, 'From');
     const to = await goal(user, 'To');
     const mover = await task(user, 'Mover', from.id);
-    const template = await task(user, 'Habit', to.id);
-    // The instance was spawned while linked elsewhere; the template decides.
-    const instance = await task(user, 'Habit', from.id, template.id);
+    const habit = await task(user, 'Habit', to.id, true);
     await prisma.session.createMany({
       data: [
         session(user, '2026-07-02T10:00:00Z', 30, mover.id),
-        session(user, '2026-07-03T10:00:00Z', 25, instance.id),
+        session(user, '2026-07-03T10:00:00Z', 25, habit.id),
       ],
     });
 

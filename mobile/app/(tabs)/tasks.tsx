@@ -272,25 +272,24 @@ function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }
           </View>
         ) : null}
 
-        {/* Habit history — recurring instances only. Both numbers are read
-            straight off the instance (denormalized at spawn), no extra fetch.
-            Two full-width cards became one row of cells: they are the same
-            kind of fact as everything above, so they now look like it. The 🔥
-            and ⏱️ emoji are gone — every other glyph in this sheet is an
-            Ionicon, and a screen reader announced the old ones by name. */}
-        {task.parentTaskId && (
+        {/* Recurring history — on a recurring task's day row. The server
+            calculates these from the completion log and sends them on the row,
+            so there is no extra fetch. The 🔥 and ⏱️ emoji are gone — every
+            other glyph in this sheet is an Ionicon, and a screen reader
+            announced the old ones by name. */}
+        {task.isOccurrence && (
           <View style={{ flexDirection: 'row', gap: Space.sm, marginBottom: Space.lg }}>
             <BentoCell
               style={{ flex: 1 }} Colors={Colors} feature
               icon="flame-outline" label="Current streak"
-              value={`${task.lifetimeStreak}d`}
-              sub="consecutive days"
+              value={`${task.currentStreak}d`}
+              sub={`best ${task.longestStreak}d`}
             />
             <BentoCell
               style={{ flex: 1 }} Colors={Colors}
               icon="infinite-outline" label="Lifetime focus"
-              value={formatSeconds(task.lifetimeTotalFocusTime)}
-              sub={`${task.lifetimeTotalCompletions} completions`}
+              value={formatSeconds(task.totalFocusSeconds)}
+              sub={`${task.totalCompletions} completions`}
             />
           </View>
         )}
@@ -385,6 +384,22 @@ type FormSaveData = {
   priority?: 'low' | 'medium' | 'high' | 'urgent'; taskGoalId?: string | null;
   isRecurring?: boolean; recurringDays?: DayOfWeek[];
 };
+
+/**
+ * The form's date field as 'YYYY-MM-DD', or null. On a recurring task it is
+ * the last day it repeats, which a day row carries as `repeatsUntil` because
+ * its own dueDate is the row's day. Saving the row's day back would end the
+ * task today.
+ *
+ * Substring because dueDate is a Prisma DateTime and arrives as a full ISO
+ * string, while parseLocalDate and the date picker expect 'YYYY-MM-DD'.
+ */
+function formDate(task: Task | null): string | null {
+  if (!task) return null;
+  if (task.isOccurrence) return task.repeatsUntil;
+  return task.dueDate?.substring(0, 10) ?? null;
+}
+
 function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goals, onSave, onClose, onDelete }: {
   visible: boolean; task: Task | null; existingTags: string[]; sessionLengthMinutes: number;
   goals: TaskGoal[]; onSave: (data: FormSaveData) => void; onClose: () => void; onDelete?: () => void;
@@ -414,7 +429,6 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
   const [titleError, setTitleError] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringDays, setRecurringDays] = useState<DayOfWeek[]>([]); // empty = every day
-  const [editingTemplate, setEditingTemplate] = useState<Task | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -429,13 +443,11 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       // Date, which rendered as the literal text "Invalid Date" and was handed
       // straight to the native picker. GoalFormModal has always guarded this;
       // the task form never did.
-      setDueDate(task?.dueDate?.substring(0, 10) ?? ''); setTags(task?.tags ?? []);
+      setDueDate(formDate(task) ?? ''); setTags(task?.tags ?? []);
       setEstimatedMinutes(task?.estimatedMinutes ?? 0); setPriority(task?.priority ?? 'medium');
       setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTagEditorOpen(false); setTitleError(false);
-      // Recurring lives on the template; an instance carries it via parentTaskId.
       setIsRecurring(task?.isRecurring ?? false);
       setRecurringDays(task?.recurringDays ?? []);
-      setEditingTemplate(null);
       setStartMinutes(task?.startMinutes ?? null);
       setEndMinutes(task?.endMinutes ?? null);
       setShowTimePicker(null);
@@ -445,22 +457,6 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       setDatePickerFloor(null);
     }
   }, [visible, task]);
-
-  // Editing a recurring instance — load the parent template's recurring settings.
-  useEffect(() => {
-    if (visible && task?.parentTaskId) {
-      api.get<Task>(`/tasks/${task.parentTaskId}`)
-        .then((res) => { if (res.success && res.data) setEditingTemplate(res.data); })
-        .catch(() => {});
-    }
-  }, [visible, task?.parentTaskId]);
-
-  useEffect(() => {
-    if (editingTemplate) {
-      setIsRecurring(editingTemplate.isRecurring);
-      setRecurringDays(editingTemplate.recurringDays ?? []);
-    }
-  }, [editingTemplate]);
 
   const allTagChips = useMemo(() => Array.from(new Set([...existingTags, ...tags])), [existingTags, tags]);
   const toggleTag = (tag: string) => setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
@@ -476,7 +472,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       const newDesc = description.trim() || null;
       if (newDesc !== (task.description ?? null)) update.description = newDesc;
       const newDue = dueDate || null;
-      if (newDue !== (task.dueDate ?? null)) update.dueDate = newDue;
+      if (newDue !== formDate(task)) update.dueDate = newDue;
       if (JSON.stringify([...tags].sort()) !== JSON.stringify([...(task.tags ?? [])].sort())) update.tags = tags;
       const newEst = estimatedMinutes > 0 ? estimatedMinutes : null;
       if (newEst !== (task.estimatedMinutes ?? null)) update.estimatedMinutes = newEst;
@@ -484,7 +480,7 @@ function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goal
       if (endMinutes !== (task.endMinutes ?? null)) update.endMinutes = endMinutes;
       if (priority !== task.priority) update.priority = priority;
       if (taskGoalId !== (task.taskGoalId ?? null)) update.taskGoalId = taskGoalId;
-      // Always carry recurring settings — the screen routes them to the template.
+      // Always carry recurring settings, so a task can be switched either way.
       update.isRecurring = isRecurring;
       update.recurringDays = recurringDays;
       onSave(update);
@@ -1206,9 +1202,8 @@ const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, on
   const tagStyle = useTagStyle(categoryTag ?? '');
   const progressFrac = !dormant && task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
   const linkedGoal = task.taskGoalId ? goals.find((g) => g.id === task.taskGoalId) : null;
-  // The recurring badge used to gate on parentTaskId, which templates do not
-  // have, so a dormant row lost every recurring signal and read as a broken task.
-  const isRecurringRow = !!task.parentTaskId || task.isRecurring;
+  // A day row and a dormant recurring task both carry isRecurring.
+  const isRecurringRow = task.isRecurring;
 
   return (
     <TouchableOpacity activeOpacity={0.75} onPress={() => onTap(task)} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
@@ -2094,9 +2089,8 @@ export default function TasksScreen() {
   const AMBER = Colors.warning;
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const tasks = useTasksList();
-  // Recurring templates, so a habit with no instance today still has a row.
-  // GET /tasks omits templates and spawn-recurring archives every instance not
-  // due today; without these a habit vanished on its unscheduled days.
+  // Every recurring task, so one with no row today still appears. GET /tasks
+  // lists a recurring task only on the days it is due.
   const recurringTemplates = useTaskStore((s) => s.recurringTemplates);
   const selectedTaskId = useSelectedTaskId();
   const taskActions = useTaskActions();
@@ -2154,15 +2148,15 @@ export default function TasksScreen() {
     if (useTaskStore.getState().tasks.length === 0) {
       useTaskStore.getState().hydrateTasks(userId).then(() => useTaskStore.getState().fetchTasks(true));
     }
-    // Safety net — spawn today's recurring instances if boot missed it.
-    useTaskStore.getState().spawnRecurringTasks();
+    // Today's recurring rows depend on the day, so read them fresh.
+    useTaskStore.getState().refreshRecurring();
     // Sibling: proactively reset the overall day-streak on a missed day.
     useGamificationStore.getState().checkAndResetDayStreak();
   }, []);
 
-  // When the app returns to foreground, spawn for a potentially new day.
+  // When the app returns to foreground it may be a new day, with new rows.
   useAppForeground(() => {
-    useTaskStore.getState().spawnRecurringTasks();
+    useTaskStore.getState().refreshRecurring();
     useGamificationStore.getState().checkAndResetDayStreak();
   });
 
@@ -2337,32 +2331,14 @@ export default function TasksScreen() {
 
   const handleFormSave = useCallback(async (data: FormSaveData) => {
     setShowFormModal(false);
-    const { isRecurring, recurringDays, ...rest } = data;
-    // Any edit that touches a habit can change what represents it today: a new
-    // instance, the template standing in, or neither.
-    const touchesRecurring = !!formTask && (!!isRecurring || formTask.isRecurring || !!formTask.parentTaskId);
+    const { isRecurring } = data;
+    // Any edit that touches a recurring task can change what represents it
+    // today: its day row, its entry in the recurring list, or neither.
+    const touchesRecurring = !!formTask && (!!isRecurring || formTask.isRecurring);
     if (formTask) {
-      if (formTask.parentTaskId) {
-        // Editing a recurring instance: recurring settings live on the template.
-        await api.patch(`/tasks/${formTask.parentTaskId}`, {
-          isRecurring,
-          recurringDays,
-          title: rest.title,
-          estimatedMinutes: rest.estimatedMinutes,
-          priority: rest.priority,
-          tags: rest.tags,
-          // The time slot belongs to the habit, so future spawns inherit the
-          // change rather than only today’s instance moving.
-          startMinutes: rest.startMinutes,
-          endMinutes: rest.endMinutes,
-        });
-        await useTaskStore.getState().fetchRecurringTemplates();
-        // Still apply edits to the visible instance itself.
-        await taskActions.updateTask(formTask.id, rest);
-      } else {
-        // Regular task — pass recurring through so it can be promoted to recurring.
-        await taskActions.updateTask(formTask.id, data);
-      }
+      // A recurring task's day row carries the task's own id, so the edit goes
+      // to the task itself, schedule and all.
+      await taskActions.updateTask(formTask.id, data);
     } else {
       // No cast: taskGoalId must survive to the server, and the types now say so.
       await createTaskWithRetry(data);
@@ -2372,11 +2348,8 @@ export default function TasksScreen() {
   }, [formTask, taskActions, createTaskWithRetry]);
 
   const handleDeleteTask = useCallback((task: Task) => {
-    // A recurring instance is one day of a habit; deleting it used to archive
-    // that day alone, and the spawner would not replace it until tomorrow, so
-    // the habit vanished for the rest of the day. Delete means the habit.
-    const templateId = task.parentTaskId ?? (task.isRecurring ? task.id : null);
-    const [title, message] = templateId
+    // A recurring task's day row is the task itself: delete means the task.
+    const [title, message] = task.isRecurring
       ? ['Delete recurring task?', "This stops the task repeating and removes it from your list. Focus time you've already logged on it is kept. This can't be undone."]
       : ['Delete task?', "This removes the task from your list. Focus time you've already logged on it is kept. This can't be undone."];
     Alert.alert(
@@ -2386,7 +2359,7 @@ export default function TasksScreen() {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: async () => {
             // Focus time is kept either way, so there are no totals to refresh.
-            await taskActions.deleteTask(templateId ?? task.id);
+            await taskActions.deleteTask(task.id);
             setShowFormModal(false); setFormTask(null);
           } },
       ],

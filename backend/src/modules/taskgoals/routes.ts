@@ -4,10 +4,11 @@ import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
 import {
-  computeProgress, linkHabitCounterparts, loadGoalCounts, syncGoalCompletion, userOwnsTasks,
+  computeProgress, loadGoalCounts, syncGoalCompletion, userOwnsTasks,
 } from '../../lib/goalProgress';
 import { computeTimePace, type TimePace } from '../../lib/timePace';
 import { localPartsOf, safeTimeZone } from '../../lib/localParts';
+import { resolveLocalDate } from '../../lib/localDate';
 
 export const taskGoalsRouter = Router();
 
@@ -131,6 +132,16 @@ function requestTimeZone(req: Request): string {
   return safeTimeZone(typeof req.query.tz === 'string' ? req.query.tz : undefined);
 }
 
+/**
+ * The caller's local today: `?localDate=` when sent, otherwise today in `?tz`.
+ * Decides whether a linked recurring task's latest due day has passed.
+ */
+function requestToday(req: Request): string {
+  const { localDate } = req.query;
+  if (typeof localDate === 'string') return resolveLocalDate(localDate, new Date(), 'task-goals');
+  return localPartsOf(new Date(), requestTimeZone(req)).dateKey;
+}
+
 /** Shape one goal for the wire, with server-computed progress attached. */
 function serializeGoal(
   goal: {
@@ -191,19 +202,16 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
   try {
     const userId = authenticate(req);
     const data = createSchema.parse(req.body);
-    const requested = [...new Set(data.taskIds ?? [])];
+    const taskIds = [...new Set(data.taskIds ?? [])];
 
     // All-or-nothing, checked BEFORE anything is written. The alternative —
     // create the goal, then attach in a second request — leaves a goal that
     // silently lacks the tasks the user just picked, and a rollback that can
     // itself fail. One transaction removes the state instead of handling it.
-    if (requested.length > 0 && !(await userOwnsTasks(userId, requested))) {
+    if (taskIds.length > 0 && !(await userOwnsTasks(userId, taskIds))) {
       res.status(404).json({ success: false, error: 'One or more tasks were not found' });
       return;
     }
-    // A habit picked by its instance takes its template along, and vice versa.
-    const taskIds = await linkHabitCounterparts(userId, requested);
-
     // Task.taskGoalId holds ONE goal, so linking a task moves it off whatever
     // goal it was on. Capture those goals first: losing an unfinished task can
     // push the goal it left to 100%.
@@ -240,9 +248,9 @@ taskGoalsRouter.post('/task-goals', async (req: Request, res: Response) => {
     // Linking an already-completed task can put the new goal at 100% on its
     // first breath, and a goal that just lost a task can cross it too.
     const affected = [goal.id, ...losing.map((t) => t.taskGoalId!)];
-    await syncGoalCompletion(userId, affected);
+    await syncGoalCompletion(userId, affected, { today: requestToday(req) });
 
-    const counts = await loadGoalCounts(userId, [goal.id]);
+    const counts = await loadGoalCounts(userId, [goal.id], { today: requestToday(req) });
     const fresh = await prisma.taskGoal.findFirst({ where: { id: goal.id, userId } });
 
     res.status(201).json({
@@ -268,7 +276,7 @@ taskGoalsRouter.get('/task-goals', async (req: Request, res: Response) => {
 
     // Two grouped queries for every goal at once, instead of pulling each goal's
     // task rows just to count them.
-    const counts = await loadGoalCounts(userId, goals.map((g) => g.id));
+    const counts = await loadGoalCounts(userId, goals.map((g) => g.id), { today: requestToday(req) });
 
     const data = goals.map((g) =>
       serializeGoal(g, counts.get(g.id) ?? NO_COUNTS, requestTimeZone(req)),
@@ -308,7 +316,7 @@ taskGoalsRouter.patch('/task-goals/:id', async (req: Request, res: Response) => 
 
     const goal = await prisma.taskGoal.update({ where: { id }, data: update });
 
-    const counts = await loadGoalCounts(userId, [goal.id]);
+    const counts = await loadGoalCounts(userId, [goal.id], { today: requestToday(req) });
     res.json({
       success: true,
       data: serializeGoal(goal, counts.get(goal.id) ?? NO_COUNTS, requestTimeZone(req)),
@@ -369,33 +377,28 @@ taskGoalsRouter.post('/task-goals/:id/tasks', async (req: Request, res: Response
       res.status(404).json({ success: false, error: 'One or more tasks were not found' });
       return;
     }
-    // Widened only after validation, so the contradiction and ownership checks
-    // above judge exactly what the client sent.
-    const linkRows = await linkHabitCounterparts(userId, link);
-    const unlinkRows = await linkHabitCounterparts(userId, unlink);
-
     // Task.taskGoalId holds one goal, so linking MOVES a task. The goals it
     // moves away from change too, and losing an unfinished task can push one of
     // them to 100%.
-    const losing = linkRows.length > 0
+    const losing = link.length > 0
       ? await prisma.task.findMany({
-          where: { id: { in: linkRows }, userId, taskGoalId: { not: null } },
+          where: { id: { in: link }, userId, taskGoalId: { not: null } },
           select: { taskGoalId: true },
         })
       : [];
 
     const writes = [];
-    if (linkRows.length > 0) {
+    if (link.length > 0) {
       writes.push(prisma.task.updateMany({
-        where: { id: { in: linkRows }, userId },
+        where: { id: { in: link }, userId },
         data:  { taskGoalId: id },
       }));
     }
-    if (unlinkRows.length > 0) {
+    if (unlink.length > 0) {
       // Scoped to THIS goal: this endpoint can never clear a task's link to a
       // goal it was not called on.
       writes.push(prisma.task.updateMany({
-        where: { id: { in: unlinkRows }, userId, taskGoalId: id },
+        where: { id: { in: unlink }, userId, taskGoalId: id },
         data:  { taskGoalId: null },
       }));
     }
@@ -406,10 +409,10 @@ taskGoalsRouter.post('/task-goals/:id/tasks', async (req: Request, res: Response
       id,
       ...losing.map((t) => t.taskGoalId).filter((g): g is string => !!g && g !== id),
     ])];
-    await syncGoalCompletion(userId, affected);
+    await syncGoalCompletion(userId, affected, { today: requestToday(req) });
 
     const fresh = await prisma.taskGoal.findFirst({ where: { id, userId } });
-    const counts = await loadGoalCounts(userId, [id]);
+    const counts = await loadGoalCounts(userId, [id], { today: requestToday(req) });
 
     res.json({
       success: true,

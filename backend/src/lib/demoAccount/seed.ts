@@ -243,83 +243,50 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
       taskRows.set(t.key, { id: row.id, title: t.title, tag: t.tag, priority: t.priority, goalId: goal?.id ?? null });
     }
 
-    // ── Habits: a template, plus today's instance ─────────────────────────
-    // The shape POST /tasks/spawn-recurring leaves behind. Past instances are
-    // not written: spawn archives them, and nothing reads archived rows.
-    // Today's is written completed, because the streaks run through today —
-    // except for the one habit marked pendingToday, left open to tick off.
-    // A template's dueDate is its "repeat until" day, as in lib/recurrence.
-    const habitRows = new Map<HabitKey, { templateId: string; instanceId: string | null; goalId: string | null }>();
+    // ── Recurring tasks: the rule, plus a log row per day done ──────────
+    // Today's is done, because the streaks run through today — except for the
+    // one habit marked pendingToday, left open to tick off. A recurring task's
+    // dueDate is its "repeat until" day, as in lib/recurrence.
+    const habitRows = new Map<HabitKey, { taskId: string; goalId: string | null }>();
     for (const h of HABITS) {
       const history = main.habits.get(h.key)!;
-      const all = statsFor((s) => s.strand.kind === 'habit' && s.strand.key === h.key);
       const todays = statsFor((s) => s.strand.kind === 'habit' && s.strand.key === h.key && s.dateKey === today);
       const goal = h.goal ? goalIds.get(h.goal) ?? null : null;
-      const shared = {
-        userId: user.id,
-        title: h.title,
-        tags: [h.tag],
-        priority: 'medium',
-        estimatedMinutes: h.minutes,
-        startMinutes: h.startHour * 60,
-        endMinutes: h.startHour * 60 + h.minutes,
-        taskGoalId: goal?.id ?? null,
-      };
 
       const endDate = habitEndDate(h, today);
-      const template = await tx.task.create({
+      const task = await tx.task.create({
         data: {
-          ...shared,
+          userId: user.id,
+          title: h.title,
+          tags: [h.tag],
+          priority: 'medium',
+          estimatedMinutes: h.minutes,
+          startMinutes: h.startHour * 60,
+          endMinutes: h.startHour * 60 + h.minutes,
+          taskGoalId: goal?.id ?? null,
           isRecurring: true,
           recurringDays: h.days,
           dueDate: endDate ? calendarDay(endDate) : null,
-          lastSpawnedDate: today,
-          currentStreak: history.currentStreak,
-          longestStreak: history.longestStreak,
-          totalCompletions: history.completedOn.length,
-          // Seconds, despite the name — the complete route adds totalTimeOnTask
-          // to it and the client formats it with formatSeconds.
-          totalFocusTimeMs: all.seconds,
           createdAt: noonOf(h.startedDaysAgo),
         },
       });
 
-      let instanceId: string | null = null;
-      if (history.scheduledToday) {
-        // Done after its session today, or a while ago if it had none.
-        const doneAt = history.pendingToday
-          ? null
-          : todays.last
-            ? new Date(todays.last.getTime() + 2 * MINUTE_MS)
-            : new Date(Math.max(zonedInstant(today, 0, 30, timeZone).getTime(), now.getTime() - 150 * MINUTE_MS));
-        if (doneAt) taskCompletions.push(doneAt);
-        const instance = await tx.task.create({
-          data: {
-            ...shared,
-            dueDate: calendarDay(today),
-            parentTaskId: template.id,
-            isCompleted: doneAt !== null,
-            completedAt: doneAt,
-            sessionsOnTask: todays.count,
-            totalTimeOnTask: todays.seconds,
-            sessionDates: todays.dates,
-            lifetimeStreak: history.currentStreak,
-            lifetimeTotalCompletions: history.completedOn.length,
-            lifetimeTotalFocusTime: all.seconds,
-            createdAt: zonedInstant(today, 0, 5, timeZone),
-          },
-        });
-        instanceId = instance.id;
-      }
-      habitRows.set(h.key, { templateId: template.id, instanceId, goalId: goal?.id ?? null });
-    }
+      // Today's tick lands after its session today, or a while ago if it had
+      // none; earlier days an hour after the habit's slot.
+      const doneAt = (dateKey: string): Date => {
+        if (dateKey !== today) return zonedInstant(dateKey, Math.min(23, h.startHour + 1), 0, timeZone);
+        return todays.last
+          ? new Date(todays.last.getTime() + 2 * MINUTE_MS)
+          : new Date(Math.max(zonedInstant(today, 0, 30, timeZone).getTime(), now.getTime() - 150 * MINUTE_MS));
+      };
+      const completions = history.completedOn.map((date) => ({
+        userId: user.id, taskId: task.id, date, completedAt: doneAt(date),
+      }));
+      await tx.recurringCompletion.createMany({ data: completions });
+      // Each tick counted as a task completed, as it does in the live app.
+      taskCompletions.push(...completions.map((c) => c.completedAt));
 
-    // Earlier habit completions happened on instances that are archived now.
-    // They still count as tasks completed, as each one did in the live app.
-    for (const h of HABITS) {
-      for (const dateKey of main.habits.get(h.key)!.completedOn) {
-        if (dateKey !== today) taskCompletions.push(zonedInstant(dateKey, Math.min(23, h.startHour + 1), 0, timeZone));
-      }
+      habitRows.set(h.key, { taskId: task.id, goalId: goal?.id ?? null });
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────
@@ -335,15 +302,14 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
       if (s.strand.kind === 'task') {
         const t = taskRows.get(s.strand.key)!;
         taskId = t.id;
-        attributionTask = { title: t.title, tags: [t.tag], priority: t.priority, taskGoalId: t.goalId, isRecurring: false, parentTaskId: null };
+        attributionTask = { title: t.title, tags: [t.tag], priority: t.priority, taskGoalId: t.goalId, isRecurring: false };
         goal = t.goalId ? [...goalIds.values()].find((g) => g.id === t.goalId) ?? null : null;
       } else if (s.strand.kind === 'habit') {
         const key = s.strand.key;
         const habit = HABITS.find((h) => h.key === key)!;
         const rows = habitRows.get(habit.key)!;
-        // Only today's instance still exists to link to.
-        taskId = s.dateKey === today ? rows.instanceId : null;
-        attributionTask = { title: habit.title, tags: [habit.tag], priority: 'medium', taskGoalId: rows.goalId, isRecurring: false, parentTaskId: rows.templateId };
+        taskId = rows.taskId;
+        attributionTask = { title: habit.title, tags: [habit.tag], priority: 'medium', taskGoalId: rows.goalId, isRecurring: true };
         goal = rows.goalId ? [...goalIds.values()].find((g) => g.id === rows.goalId) ?? null : null;
       }
 

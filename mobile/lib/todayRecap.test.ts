@@ -33,7 +33,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 function task(over: Partial<Task> = {}): Task {
   return {
     id: 't1', title: 'T', isCompleted: false, isArchived: false,
-    completedAt: null, dueDate: null, parentTaskId: null, tags: [],
+    completedAt: null, dueDate: null, isOccurrence: false, tags: [],
     priority: 'medium', sessionsOnTask: 0, totalTimeOnTask: 0, sessionDates: [],
     ...over,
   } as unknown as Task;

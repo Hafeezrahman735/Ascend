@@ -10,7 +10,6 @@ function task(over: Partial<AttributionTask> = {}): AttributionTask {
     priority: 'high',
     taskGoalId: null,
     isRecurring: false,
-    parentTaskId: null,
     ...over,
   };
 }
@@ -82,11 +81,7 @@ describe('task attribution', () => {
 });
 
 describe('recurring flag', () => {
-  it('is true for a spawned habit instance, which carries parentTaskId', () => {
-    expect(build({ task: task({ parentTaskId: 'template_1' }) }).wasRecurring).toBe(true);
-  });
-
-  it('is true for the template itself, which carries isRecurring', () => {
+  it('is true for a recurring task', () => {
     expect(build({ task: task({ isRecurring: true }) }).wasRecurring).toBe(true);
   });
 

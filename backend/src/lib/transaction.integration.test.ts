@@ -82,7 +82,7 @@ describe('scoring helpers inside a transaction', () => {
     await runInTransaction(async (effects) => {
       await lockUser(effects.db, user.id);
       await effects.db.task.update({ where: { id: taskId }, data: { isCompleted: true } });
-      await syncGoalCompletion(user.id, [goalId], effects);
+      await syncGoalCompletion(user.id, [goalId], { effects });
 
       // Held until commit: nothing announced while the work could still roll back.
       expect(feed).toEqual([]);

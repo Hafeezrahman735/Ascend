@@ -14,8 +14,7 @@ import { dayNameFromLocalDate } from '../../lib/localDate';
  *    however many devices send it at the same moment;
  *  - "not yours", "not recurring", "deleted" and "unknown" all look the same;
  *  - only a scheduled day, today or yesterday, inside the task's life, counts;
- *  - while copies exist, the day's copy follows the log, so goal progress
- *    (still read from the copies) moves with it.
+ *  - a tick moves the goal the task is linked to.
  */
 
 function utcDayOffset(days: number): string {
@@ -116,34 +115,11 @@ describe('PUT /tasks/:id/completions/:date', () => {
     await waitForFeed(user, 'task_completed', 1);
   });
 
-  it("marks the day's copy done, so an older build shows the tick", async () => {
-    const user = await createUser();
-    const habit = await makeHabit(user);
-    const copy = await prisma.task.create({
-      data: { userId: user.id, title: habit.title, parentTaskId: habit.id, dueDate: new Date(TODAY) },
-    });
-
-    await put(user, habit.id, TODAY);
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: copy.id } })).isCompleted).toBe(true);
-
-    await del(user, habit.id, TODAY);
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: copy.id } })).isCompleted).toBe(false);
-    await waitForFeed(user, 'task_completed', 1);
-  });
-
   it('moves goal progress', async () => {
     const user = await createUser();
     const goal = await authed(user).post('/task-goals').send({ title: 'Read more' });
     expect(goal.status).toBe(201);
     const habit = await makeHabit(user, { taskGoalId: goal.body.data.id });
-    // Goal progress still reads the newest copy until the read paths move (T4).
-    await prisma.task.create({
-      data: {
-        userId: user.id, title: habit.title, parentTaskId: habit.id,
-        dueDate: new Date(TODAY), taskGoalId: goal.body.data.id,
-      },
-    });
-
     await put(user, habit.id, TODAY);
 
     const stored = await prisma.taskGoal.findUniqueOrThrow({ where: { id: goal.body.data.id } });
@@ -169,6 +145,20 @@ describe('DELETE /tasks/:id/completions/:date', () => {
 
     expect(await logRows(habit.id)).toBe(0);
     expect(await userStats(user)).toEqual({ xp: 0, tasksCompleted: 0 });
+    await waitForFeed(user, 'task_completed', 1);
+  });
+});
+
+describe('completion routes — localDate in the query', () => {
+  it('reads the day from ?localDate= when there is no body, as the app sends a DELETE', async () => {
+    const user = await createUser();
+    const habit = await makeHabit(user);
+    await put(user, habit.id, TODAY);
+
+    const res = await authed(user).delete(`/tasks/${habit.id}/completions/${TODAY}?localDate=${TODAY}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.changed).toBe(true);
     await waitForFeed(user, 'task_completed', 1);
   });
 });

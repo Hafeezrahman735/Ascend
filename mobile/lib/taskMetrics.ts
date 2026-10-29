@@ -111,9 +111,9 @@ export function getDueChip(
   // reachable, because tasks hydrate from an unvalidated AsyncStorage cache.
   if (daysLeft === null) return null;
 
-  // A past-due recurring instance is a stale row awaiting the next spawn, not a
-  // missed deadline. One due today is a habit you still have time to do.
-  if (task.parentTaskId && daysLeft < 0) return null;
+  // A past-due recurring day row is stale (cached before midnight, refreshed on
+  // foreground), not a missed deadline. One due today is still to do.
+  if (task.isOccurrence && daysLeft < 0) return null;
 
   if (daysLeft < 0) {
     const label = formatOverdue(daysLeft);

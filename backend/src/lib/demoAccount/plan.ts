@@ -146,7 +146,7 @@ export interface HabitHistory {
 /**
  * A habit's streak counts consecutive SCHEDULED occurrences, not calendar days
  * — a weekday habit is not broken by a Saturday. Counted here from the
- * completion list the same way spawn-recurring would have left it.
+ * completion list by the same rule as lib/recurringStats.ts.
  */
 export function habitHistory(habit: HabitSpec, today: string): HabitHistory {
   const occ = occurrences(habit, today);
