@@ -16,6 +16,7 @@ import { socialRouter } from './modules/social/routes';
 import { achievementsRouter } from './modules/achievements/routes';
 import { notificationsRouter } from './modules/notifications/routes';
 import { setupTaskRoutes } from './modules/tasks/routes';
+import { setupCompletionRoutes } from './modules/tasks/completions';
 import { taskGoalsRouter } from './modules/taskgoals/routes';
 import { timeReportRouter } from './modules/timereport/routes';
 import { calendarRouter, calendarPublicRouter } from './modules/calendar/routes';
@@ -220,6 +221,7 @@ app.use('/', notificationsRouter);
 
 const taskRouter = Router();
 setupTaskRoutes(taskRouter);
+setupCompletionRoutes(taskRouter);
 app.use('/', taskRouter);
 app.use('/', taskGoalsRouter);
 app.use('/', timeReportRouter);

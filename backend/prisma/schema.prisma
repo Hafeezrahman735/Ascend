@@ -8,54 +8,55 @@ datasource db {
 }
 
 model User {
-  id                    String                       @id @default(uuid()) @db.Uuid
-  username              String                       @unique @db.VarChar(50)
-  email                 String                       @unique @db.VarChar(255)
-  passwordHash          String                       @map("password_hash") @db.VarChar(255)
-  avatarUrl             String?                      @map("avatar_url")
-  avatarEmoji           String?                      @map("avatar_emoji")
-  privacySetting        PrivacySetting               @default(public) @map("privacy_setting")
-  pushToken             String?                      @map("push_token")
-  createdAt             DateTime                     @default(now()) @map("created_at")
-  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  id                   String                       @id @default(uuid()) @db.Uuid
+  username             String                       @unique @db.VarChar(50)
+  email                String                       @unique @db.VarChar(255)
+  passwordHash         String                       @map("password_hash") @db.VarChar(255)
+  avatarUrl            String?                      @map("avatar_url")
+  avatarEmoji          String?                      @map("avatar_emoji")
+  privacySetting       PrivacySetting               @default(public) @map("privacy_setting")
+  pushToken            String?                      @map("push_token")
+  createdAt            DateTime                     @default(now()) @map("created_at")
+  updatedAt            DateTime                     @updatedAt @map("updated_at")
   /// When this account accepted the Terms of Use, and which version it accepted.
   /// Null means never accepted: the auth guard routes those accounts to the
   /// terms gate before the app, which is how accounts created before the terms
   /// existed get caught. Bumping CURRENT_TERMS_VERSION re-prompts everyone, so
   /// it is not a value to change casually.
-  termsAcceptedAt       DateTime?                    @map("terms_accepted_at")
-  termsVersion          String?                      @map("terms_version")
-  notificationPrefs     String?                      @map("notification_prefs")
-  publicProfile         Boolean                      @default(true) @map("public_profile")
-  showOnLeaderboard     Boolean                      @default(true) @map("show_on_leaderboard")
-  shareFocusStats       Boolean                      @default(true) @map("share_focus_stats")
-  currentStreak         Int                          @default(0) @map("current_streak")
-  lastActiveDate        DateTime?                    @map("last_active_date")
-  longestStreak         Int                          @default(0) @map("longest_streak")
-  totalFocusTime        Int                          @default(0) @map("total_focus_time")
-  totalSessions         Int                          @default(0) @map("total_sessions")
+  termsAcceptedAt      DateTime?                    @map("terms_accepted_at")
+  termsVersion         String?                      @map("terms_version")
+  notificationPrefs    String?                      @map("notification_prefs")
+  publicProfile        Boolean                      @default(true) @map("public_profile")
+  showOnLeaderboard    Boolean                      @default(true) @map("show_on_leaderboard")
+  shareFocusStats      Boolean                      @default(true) @map("share_focus_stats")
+  currentStreak        Int                          @default(0) @map("current_streak")
+  lastActiveDate       DateTime?                    @map("last_active_date")
+  longestStreak        Int                          @default(0) @map("longest_streak")
+  totalFocusTime       Int                          @default(0) @map("total_focus_time")
+  totalSessions        Int                          @default(0) @map("total_sessions")
   // Running count of tasks completed, maintained alongside the XP award in
   // modules/tasks/routes.ts. Denormalized rather than COUNTed on read because
   // it is checked on every achievement evaluation.
-  tasksCompleted        Int                          @default(0) @map("tasks_completed")
-  xp                    Int                          @default(0)
-  feedEvents            FeedEvent[]
-  following             Follow[]                     @relation("UserFollower")
-  followers             Follow[]                     @relation("UserFollowing")
-  notes                 Note[]
-  events                Event[]
-  calendarLinks         ExternalCalendarConnection[]
-  notifications         Notification[]
-  refreshTokens         RefreshToken[]
-  passwordResets        PasswordResetToken[]
-  sessions              Session[]
-  socialPosts           SocialPost[]                 @relation("PostAuthor")
-  groupMemberships      StudyGroupMember[]
-  createdGroups         StudyGroup[]                 @relation("GroupCreator")
-  taskGoals             TaskGoal[]
-  tasks                 Task[]
-  timerState            TimerState?
-  userAchievs           UserAchievement[]
+  tasksCompleted       Int                          @default(0) @map("tasks_completed")
+  xp                   Int                          @default(0)
+  feedEvents           FeedEvent[]
+  following            Follow[]                     @relation("UserFollower")
+  followers            Follow[]                     @relation("UserFollowing")
+  notes                Note[]
+  events               Event[]
+  calendarLinks        ExternalCalendarConnection[]
+  notifications        Notification[]
+  refreshTokens        RefreshToken[]
+  passwordResets       PasswordResetToken[]
+  recurringCompletions RecurringCompletion[]
+  sessions             Session[]
+  socialPosts          SocialPost[]                 @relation("PostAuthor")
+  groupMemberships     StudyGroupMember[]
+  createdGroups        StudyGroup[]                 @relation("GroupCreator")
+  taskGoals            TaskGoal[]
+  tasks                Task[]
+  timerState           TimerState?
+  userAchievs          UserAchievement[]
 
   /// The focus leaderboard is the only thing that sorts users, and it always
   /// filters on showOnLeaderboard first, then orders by (or counts across)
@@ -263,13 +264,36 @@ model Task {
   lifetimeTotalCompletions Int @default(0) @map("lifetime_total_completions")
   lifetimeTotalFocusTime   Int @default(0) @map("lifetime_total_focus_time")
 
-  sessions Session[] @relation("TaskSessions")
-  taskGoal TaskGoal? @relation(fields: [taskGoalId], references: [id])
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions    Session[]             @relation("TaskSessions")
+  completions RecurringCompletion[]
+  taskGoal    TaskGoal?             @relation(fields: [taskGoalId], references: [id])
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([parentTaskId])
   @@map("tasks")
+}
+
+/// One row per day a recurring task was ticked off: the completion log that
+/// replaces the daily copies (docs/designs/recurring-tasks-rule-and-log.md).
+///
+/// The unique (taskId, date) key is what makes a tick pay out exactly once:
+/// lib/recurringOccurrences.ts inserts with ON CONFLICT DO NOTHING, and only
+/// an insert that actually added a row awards XP.
+model RecurringCompletion {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id") @db.Uuid
+  taskId      String   @map("task_id")
+  /// 'YYYY-MM-DD', the user's local day — the same convention as Note.date.
+  date        String   @db.VarChar(10)
+  completedAt DateTime @default(now()) @map("completed_at")
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, date])
+  /// Streaks are calculated from all of a user's completions in one query.
+  @@index([userId, date])
+  @@map("recurring_completions")
 }
 
 model TaskGoal {

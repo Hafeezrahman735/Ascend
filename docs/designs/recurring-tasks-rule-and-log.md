@@ -1209,7 +1209,7 @@ These come from the findings above. Effort assumes features at about 30x and tes
   - Surfaced by: Q1, OV3.
   - Files: `backend/src/lib/gamification.ts`, `backend/src/lib/goalProgress.ts`, `backend/src/modules/achievements/handler.ts`.
   - Verify: `npm test && npm run test:integration` stay green unchanged, plus the rollback and goal-in-same-request tests.
-- [ ] **T2 (P1, human: ~1d / CC: ~1h): backend/tasks. Add `RecurringCompletion`, `lib/recurringOccurrences.ts` (`applyCompletionChange` with the insert deciding) and `modules/tasks/completions.ts` with the 404/400 rules.**
+- [x] **T2 (P1, human: ~1d / CC: ~1h): backend/tasks. Add `RecurringCompletion`, `lib/recurringOccurrences.ts` (`applyCompletionChange` with the insert deciding) and `modules/tasks/completions.ts` with the 404/400 rules.**
   - Surfaced by: D4, D6, D8, OV14.
   - Files: `backend/prisma/schema.prisma`, `backend/src/lib/recurringOccurrences.ts`, `backend/src/modules/tasks/completions.ts`.
   - Verify: completion endpoint integration tests, including the concurrency test.
