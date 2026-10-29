@@ -3,8 +3,8 @@ import {
   eventBus,
   EventTypes,
 } from '../../middleware/eventBus';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
+import { IMMEDIATE, type Effects } from '../../lib/transaction';
 import { ensureAchievementCatalogue } from '../../lib/achievementCatalogue';
 import { localHourIn } from '../../lib/localParts';
 
@@ -29,23 +29,22 @@ const MARATHON_SECONDS = 4 * 3600;
  *
  * Losing the race is a normal outcome, not a failure: it just means the
  * achievement is already unlocked, so we skip it and emit no duplicate event.
- * Any other error still propagates.
+ *
+ * The insert skips the duplicate (ON CONFLICT DO NOTHING) rather than catching
+ * P2002, because inside a transaction a failed statement aborts the whole
+ * transaction — the XP and goal writes around it would be lost too.
  */
 async function tryUnlockAchievement(
+  db: Effects['db'],
   userId: string,
   achievementId: string,
 ): Promise<{ unlockedAt: Date } | null> {
-  try {
-    return await prisma.userAchievement.create({
-      data: { userId, achievementId, isShared: false },
-      select: { unlockedAt: true },
-    });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      return null;
-    }
-    throw err;
-  }
+  const unlockedAt = new Date();
+  const { count } = await db.userAchievement.createMany({
+    data: [{ userId, achievementId, isShared: false, unlockedAt }],
+    skipDuplicates: true,
+  });
+  return count === 1 ? { unlockedAt } : null;
 }
 
 /**
@@ -108,12 +107,17 @@ export const BEHAVIOURAL_KEYS = new Set([
   'marathon',
 ]);
 
+/**
+ * Unlock every threshold achievement the stats have reached. Pass `effects` to
+ * run inside a caller's transaction; the feed events then wait for its commit.
+ */
 export async function checkAchievements(
   userId: string,
   stats: AchievementStats,
+  effects: Effects = IMMEDIATE,
 ): Promise<{ id: string; key: string; title: string; description: string; icon: string; xpReward: number; category: string; threshold: number; unlockedAt: Date }[]> {
   const allAchievements = await ensureAchievementCatalogue();
-  const userAchievements = await prisma.userAchievement.findMany({
+  const userAchievements = await effects.db.userAchievement.findMany({
     where: { userId },
   });
   const unlockedKeys = new Set(userAchievements.map((ua) => ua.achievementId));
@@ -130,7 +134,7 @@ export async function checkAchievements(
       achievementProgress(achievement.category, stats) >= achievement.threshold;
 
     if (shouldUnlock) {
-      const unlocked = await tryUnlockAchievement(userId, achievement.id);
+      const unlocked = await tryUnlockAchievement(effects.db, userId, achievement.id);
       if (!unlocked) continue; // already unlocked by a concurrent session
 
       newlyUnlocked.push({
@@ -145,7 +149,7 @@ export async function checkAchievements(
         unlockedAt: unlocked.unlockedAt,
       });
 
-      eventBus.emit(EventTypes.FEED_CREATE, {
+      effects.events.emit(EventTypes.FEED_CREATE, {
         userId,
         eventType: 'achievement_unlocked',
         payload: {
@@ -242,7 +246,7 @@ export async function handleSessionCompleted(
     }
 
     if (shouldUnlock) {
-      const unlocked = await tryUnlockAchievement(userId, achievement.id);
+      const unlocked = await tryUnlockAchievement(prisma, userId, achievement.id);
       if (!unlocked) continue; // already unlocked by a concurrent event
 
       eventBus.emit(EventTypes.ACHIEVEMENT_UNLOCKED, {

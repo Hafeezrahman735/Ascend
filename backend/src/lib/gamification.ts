@@ -3,8 +3,9 @@ import { calculateXP } from './xp';
 import { getRankTitle } from './rank';
 import { updateStreak } from './streak';
 import { utcDateStr } from './localDate';
-import { eventBus, EventTypes } from '../middleware/eventBus';
+import { EventTypes } from '../middleware/eventBus';
 import { checkAchievements } from '../modules/achievements/handler';
+import { IMMEDIATE, type Effects } from './transaction';
 
 export interface XpAward {
   xpEarned: number;
@@ -29,16 +30,20 @@ export interface XpAward {
  *
  * `deltaXp` may be negative: un-checking a task revokes what completing it
  * granted, so the two are a true undo pair and repeated toggling can't farm XP.
+ *
+ * Pass `effects` to run inside a caller's transaction (see lib/transaction.ts):
+ * every read, write and event then goes through it, achievements included.
  */
 export async function awardXp(
   userId: string,
   deltaXp: number,
-  options: { tasksCompletedDelta?: number } = {},
+  options: { tasksCompletedDelta?: number; effects?: Effects } = {},
 ): Promise<XpAward | null> {
-  const { tasksCompletedDelta = 0 } = options;
+  const { tasksCompletedDelta = 0, effects = IMMEDIATE } = options;
+  const { db } = effects;
   if (deltaXp === 0 && tasksCompletedDelta === 0) return null;
 
-  const before = await prisma.user.findUnique({
+  const before = await db.user.findUnique({
     where: { id: userId },
     select: { xp: true, currentStreak: true, totalSessions: true, totalFocusTime: true },
   });
@@ -50,7 +55,7 @@ export async function awardXp(
   const nextRank = getRankTitle(nextXp);
   const rankedUp = nextRank !== previousRank && nextXp > before.xp;
 
-  const updated = await prisma.user.update({
+  const updated = await db.user.update({
     where: { id: userId },
     data: {
       xp: nextXp,
@@ -63,11 +68,11 @@ export async function awardXp(
 
   // Guard the floor separately — `increment` cannot clamp.
   if (updated.tasksCompleted < 0) {
-    await prisma.user.update({ where: { id: userId }, data: { tasksCompleted: 0 } });
+    await db.user.update({ where: { id: userId }, data: { tasksCompleted: 0 } });
   }
 
   if (rankedUp) {
-    eventBus.emit(EventTypes.FEED_CREATE, {
+    effects.events.emit(EventTypes.FEED_CREATE, {
       userId,
       eventType: 'rank_up',
       payload: { rank: nextRank },
@@ -83,7 +88,7 @@ export async function awardXp(
           totalFocusTime: before.totalFocusTime,
           xp: nextXp,
           tasksCompleted: Math.max(0, updated.tasksCompleted),
-        })
+        }, effects)
       : [];
 
   return { xpEarned: deltaXp, totalXP: nextXp, rank: nextRank, rankedUp, newlyUnlocked };

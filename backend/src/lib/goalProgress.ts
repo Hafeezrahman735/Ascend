@@ -1,7 +1,8 @@
 import { Prisma, ProgressMode } from '@prisma/client';
 import { prisma } from './prisma';
 import { SESSION_GOAL_EXPR, SESSION_GOAL_JOIN } from './goalAttribution';
-import { eventBus, EventTypes } from '../middleware/eventBus';
+import { EventTypes } from '../middleware/eventBus';
+import { IMMEDIATE, type Effects } from './transaction';
 
 /**
  * TaskGoal progress + auto-completion.
@@ -93,10 +94,13 @@ export function computeProgress(
  * A linked HABIT counts as one item, whatever rows represent it — see
  * loadHabitProgress. It used to be counted as its template (never completed,
  * so the goal could not reach 100%) plus today's instance.
+ *
+ * Pass `db` to read inside a transaction, so a write made earlier in it counts.
  */
 export async function loadGoalCounts(
   userId: string,
   goalIds: string[],
+  db: Effects['db'] = prisma,
 ): Promise<Map<string, TaskGoalCounts>> {
   const counts = new Map<string, TaskGoalCounts>();
   for (const id of goalIds) {
@@ -106,7 +110,7 @@ export async function loadGoalCounts(
 
   // One-off task counts — grouped, so no task rows cross the wire just to be
   // counted. Templates and instances are habits, counted below.
-  const taskGroups = await prisma.task.groupBy({
+  const taskGroups = await db.task.groupBy({
     by: ['taskGoalId', 'isCompleted'],
     where: {
       userId,
@@ -126,7 +130,7 @@ export async function loadGoalCounts(
     if (g.isCompleted) entry.completedTaskCount += g._count._all;
   }
 
-  for (const habit of await loadHabitProgress(userId, goalIds)) {
+  for (const habit of await loadHabitProgress(userId, goalIds, db)) {
     const entry = counts.get(habit.goalId);
     if (!entry) continue;
     entry.linkedTaskCount += 1;
@@ -138,7 +142,7 @@ export async function loadGoalCounts(
   // already-worked task brings its past time; moving or unlinking one takes it
   // away. Archived tasks still count, because their time was really spent; the
   // task-count query above is where excluding archived rows is correct.
-  const sessionGroups = await prisma.$queryRaw<{ goal_id: string; sessions: number; seconds: number }[]>`
+  const sessionGroups = await db.$queryRaw<{ goal_id: string; sessions: number; seconds: number }[]>`
     SELECT ${SESSION_GOAL_EXPR} AS goal_id,
            COUNT(*)::int AS sessions,
            COALESCE(SUM(s.duration_seconds), 0)::int AS seconds
@@ -174,13 +178,14 @@ export async function loadGoalCounts(
 async function loadHabitProgress(
   userId: string,
   goalIds: string[],
+  db: Effects['db'],
 ): Promise<{ goalId: string; done: boolean }[]> {
   const [linkedTemplates, linkedInstances] = await Promise.all([
-    prisma.task.findMany({
+    db.task.findMany({
       where: { userId, isRecurring: true, isArchived: false, taskGoalId: { in: goalIds } },
       select: { id: true, taskGoalId: true },
     }),
-    prisma.task.findMany({
+    db.task.findMany({
       where: { userId, parentTaskId: { not: null }, isArchived: false, taskGoalId: { in: goalIds } },
       select: { parentTaskId: true, taskGoalId: true },
     }),
@@ -193,7 +198,7 @@ async function loadHabitProgress(
   if (instanceOnly.length > 0) {
     // Only habits that still exist: an instance of a deleted habit is archived
     // with it, but the template check keeps this independent of that.
-    const active = await prisma.task.findMany({
+    const active = await db.task.findMany({
       where: {
         userId,
         id: { in: instanceOnly.map((i) => i.parentTaskId!) },
@@ -212,7 +217,7 @@ async function loadHabitProgress(
   // The newest instance of each habit, archived or not: on a day the habit is
   // not scheduled, yesterday's instance is already archived and is still the
   // day that decides.
-  const latest = await prisma.task.findMany({
+  const latest = await db.task.findMany({
     where: { userId, parentTaskId: { in: [...goalByTemplate.keys()] } },
     orderBy: [{ parentTaskId: 'asc' }, { dueDate: 'desc' }, { createdAt: 'desc' }],
     distinct: ['parentTaskId'],
@@ -271,12 +276,20 @@ export async function linkHabitCounterparts(userId: string, taskIds: string[]): 
  * A goal is never auto-UNcompleted. Un-checking a task shouldn't silently revoke
  * an achievement the user was already congratulated for; toggleGoalComplete
  * remains available as a manual override.
+ *
+ * Pass `effects` to run inside a caller's transaction: the counts then see its
+ * earlier writes, and the goal's XP and events commit or roll back with it.
  */
-export async function syncGoalCompletion(userId: string, goalIds: string[]): Promise<void> {
+export async function syncGoalCompletion(
+  userId: string,
+  goalIds: string[],
+  effects: Effects = IMMEDIATE,
+): Promise<void> {
   const ids = [...new Set(goalIds.filter(Boolean))];
   if (ids.length === 0) return;
+  const { db } = effects;
 
-  const goals = await prisma.taskGoal.findMany({
+  const goals = await db.taskGoal.findMany({
     where: { id: { in: ids }, userId, isArchived: false },
     select: {
       id: true,
@@ -288,7 +301,7 @@ export async function syncGoalCompletion(userId: string, goalIds: string[]): Pro
   });
   if (goals.length === 0) return;
 
-  const counts = await loadGoalCounts(userId, goals.map((g) => g.id));
+  const counts = await loadGoalCounts(userId, goals.map((g) => g.id), db);
 
   for (const goal of goals) {
     if (goal.isCompleted) continue;
@@ -311,7 +324,7 @@ export async function syncGoalCompletion(userId: string, goalIds: string[]): Pro
 
     // Conditional update: only the transition from not-completed wins, so two
     // concurrent recomputes can't both emit the event.
-    const result = await prisma.taskGoal.updateMany({
+    const result = await db.taskGoal.updateMany({
       where: { id: goal.id, userId, isCompleted: false },
       data: { isCompleted: true, completedAt: new Date() },
     });
@@ -322,15 +335,15 @@ export async function syncGoalCompletion(userId: string, goalIds: string[]): Pro
     // the achievements handler, which would otherwise form an import cycle.
     const { awardXp } = await import('./gamification');
     const { GOAL_COMPLETION_XP } = await import('./xp');
-    await awardXp(userId, GOAL_COMPLETION_XP);
+    await awardXp(userId, GOAL_COMPLETION_XP, { effects });
 
-    eventBus.emit(EventTypes.FEED_CREATE, {
+    effects.events.emit(EventTypes.FEED_CREATE, {
       userId,
       eventType: 'goal_completed',
       payload: { goalTitle: goal.title, xpEarned: GOAL_COMPLETION_XP },
     });
 
-    eventBus.emit(EventTypes.TASK_GOAL_COMPLETED, {
+    effects.events.emit(EventTypes.TASK_GOAL_COMPLETED, {
       userId,
       goalId: goal.id,
       title: goal.title,

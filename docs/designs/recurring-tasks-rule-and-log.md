@@ -1205,7 +1205,7 @@ client tick ──► PUT /tasks/:id/completions/:date ─┐      older build: 
 
 These come from the findings above. Effort assumes features at about 30x and tests at about 50x faster with CC.
 
-- [ ] **T1 (P1, human: ~1d / CC: ~45min): backend/lib. Thread a transaction client through `awardXp`, `checkAchievements`, `syncGoalCompletion`, `loadGoalCounts` and `loadHabitProgress`; emit events after commit.**
+- [x] **T1 (P1, human: ~1d / CC: ~45min): backend/lib. Thread a transaction client through `awardXp`, `checkAchievements`, `syncGoalCompletion`, `loadGoalCounts` and `loadHabitProgress`; emit events after commit.**
   - Surfaced by: Q1, OV3.
   - Files: `backend/src/lib/gamification.ts`, `backend/src/lib/goalProgress.ts`, `backend/src/modules/achievements/handler.ts`.
   - Verify: `npm test && npm run test:integration` stay green unchanged, plus the rollback and goal-in-same-request tests.
