@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useShallow } from 'zustand/react/shallow';
-import { useSocialStore } from '../stores/socialStore';
+import { useSocialStore, FOCUS_LEADERBOARD_PERIOD } from '../stores/socialStore';
 import { api } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useGamification } from '../store/hooks';
@@ -1139,9 +1139,7 @@ const SCOPES = [
 
 type Scope = typeof SCOPES[number]['key'];
 
-// The board is all-time only. The month/all-time toggle was removed, so this is
-// the single value sent to the server; the endpoint still takes the parameter.
-const LEADERBOARD_PERIOD = 'all_time';
+const LEADERBOARD_PERIOD = FOCUS_LEADERBOARD_PERIOD;
 
 export default function CommunityScreen() {
   const Colors = useTheme();

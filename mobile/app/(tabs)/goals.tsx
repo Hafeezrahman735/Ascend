@@ -43,6 +43,7 @@ import {
 } from '../../lib/rank';
 import type { RankTier } from '../../lib/rank';
 import RankSection from '../../components/profile/CurrentRankSection';
+import CommunityCard from '../../components/profile/CommunityCard';
 import { sectionLabel, fmtXP } from '../../components/profile/shared';
 import AchievementsRow from '../../components/achievements/AchievementsRow';
 import type { StreakState } from '../../types/profile';
@@ -759,7 +760,7 @@ function StreakSection({
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
-export default function ProfileScreen() {
+export default function YouScreen() {
   const Colors = useTheme();
   const router = useRouter();
   const authUser = useAuthStore((s) => s.user);
@@ -910,6 +911,7 @@ export default function ProfileScreen() {
         />
         <StreakSection streakState={{ ...streakState, ...serverDerivedStreak }} reduceMotion={reduceMotion} />
         <RankSection xp={xp} currentRank={currentRank} />
+        <CommunityCard />
 
         <AchievementsRow />
 

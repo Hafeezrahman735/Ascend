@@ -119,6 +119,31 @@ interface SocialState {
 
 let leaderboardFetchId = 0;
 
+/**
+ * The board is all-time only (the month toggle was removed); the endpoint still
+ * takes the parameter. Shared by Community and the rank tile on You.
+ */
+export const FOCUS_LEADERBOARD_PERIOD = 'all_time';
+
+export interface FocusLeaderboardPage {
+  entries: FocusLeaderboardEntry[];
+  myEntry: FocusLeaderboardEntry | null;
+}
+
+/**
+ * One request to /social/focus-leaderboard, parsed. Returns null on a failed
+ * response; throws on a network error. Deliberately writes nothing to the
+ * store, so You can read its own global rank without changing what the
+ * Community leaderboard (and its Friends filter) shows.
+ */
+export async function requestFocusLeaderboard(scope: string, period: string): Promise<FocusLeaderboardPage | null> {
+  const response = await api.get<FocusLeaderboardPage>(
+    `/social/focus-leaderboard?scope=${encodeURIComponent(scope)}&period=${encodeURIComponent(period)}`,
+  );
+  if (!response.success || !response.data) return null;
+  return { entries: response.data.entries ?? [], myEntry: response.data.myEntry ?? null };
+}
+
 export const useSocialStore = create<SocialState>((set, get) => ({
   isLoading: false,
   isLoadingFollowers: false,
@@ -447,17 +472,10 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     const id = ++leaderboardFetchId;
     set({ isLoading: true });
     try {
-      const response = await api.get<{
-        entries: FocusLeaderboardEntry[];
-        myEntry: FocusLeaderboardEntry | null;
-      }>(`/social/focus-leaderboard?scope=${encodeURIComponent(scope)}&period=${encodeURIComponent(period)}`);
+      const page = await requestFocusLeaderboard(scope, period);
       if (id !== leaderboardFetchId) return;
-      if (response.success && response.data) {
-        set({
-          focusLeaderboard: response.data.entries ?? [],
-          myFocusEntry: response.data.myEntry ?? null,
-          isLoading: false,
-        });
+      if (page) {
+        set({ focusLeaderboard: page.entries, myFocusEntry: page.myEntry, isLoading: false });
       } else {
         set({ focusLeaderboard: [], myFocusEntry: null, isLoading: false });
       }
