@@ -762,17 +762,143 @@ None.
 - Parallelization: 4 lanes, 2 parallel / 2 sequential
 - Lake Score: 2/2
 
+## Design review (2026-10-30)
+
+Target: docs/designs/ascend-direction-freelancer-planner.md. No DESIGN.md; calibrated against `mobile/constants/{spacing,typography,Colors}.ts`. Mockups: not generated (designer has no OpenAI key). Outside voice: native Claude design reviewer (Codex not installed), 12 findings.
+
+### Design decisions
+
+- **DD1 Today order (Pass 1, design D1, founder answer 2026-10-30: custom option C "Start below summary").** Top to bottom: (1) date + "Today" title, bell then + on the right; (2) stat strip; (3) summary card (hero); (4) full-width Start button, existing primary button styling, aligned with the cards' 20px side padding, spaced so it reads as a deliberate action rather than another card; (5) Tasks; (6) Goals; (7) Time. Stat strip and summary card behaviour unchanged. Supersedes the CEO build text "directly under Today's header, above the hero card".
+- **DD2 Start tap (Pass 1, design D2, founder answer 2026-10-30: "Open Focus ready to start").** Tapping the button selects the top task and switches to the Focus tab; it does NOT start the timer (the user presses play there, `focus.tsx:345`). Label "Focus on: <task>" (one line, truncated with an ellipsis) instead of "Start: <task>"; with no task it reads "Open focus timer" (pending DD for the first-run case). Running/paused label "Back to focus: <task>" unchanged. Supersedes the CEO wording "Start: Write case study".
+- **DD3 One start action (Pass 1, design D3, founder answer 2026-10-30: "Card informs, button acts").** The summary card loses its start buttons: the "Due soon" card's start action (`tasks.tsx:1715`) and "Start focusing →" (`tasks.tsx:1883`). Its rows stay tappable and open the task. The Focus button is the only start action at the top of Today.
+- **DD4 Community card on You (Pass 1, design D4, founder answer 2026-10-30: "Below rank and streak"; reopens CEO D3's "at the top").** Order on You: rank/XP hero, streak section, Community card, achievements, your posts.
+- **DD5 Community is purely social (Pass 1, design D5, founder answer 2026-10-30: "Remove both").** The feed screen's own-day recap card and its start-session button (`index.tsx:1300-1310, 1487`) are removed in the move; Community keeps feed, leaderboard, groups and create-post. Supersedes the eng note that they "move with it unchanged".
+- **DD6 First run (Pass 2, design D6, founder answer 2026-10-30: "Add your first task").** No tasks at all: the button reads "+ Add your first task" and opens the create sheet (`openCreate`). Tasks exist but none open: "Open focus timer", opens Focus empty. The start-focus picker returns three cases plus the session case: no tasks, none open, a target task, session running/paused; its unit test gains the no-tasks row.
+- **DD7 Focus button states (Pass 2, design D7, founder answer 2026-10-30: "Distinct states").** Loading: a 52px skeleton bar (`Colors.raised`) holds the place until tasks load. Idle: primary purple, "Focus on: <task>", one line, truncated. Running: teal accent fill, "Back to focus · <task> · 18:42" with live elapsed time in JetBrains Mono. Paused: outlined teal, "Resume · <task>". Every tap only opens Focus (DD2), where play/resume is the next tap.
+- **DD8 Refused task switches (Pass 2, design D8 "Explain every refusal" + D9 "Truthful copy + TODO", founder answers 2026-10-30).** Focus picker during a running/paused session: task rows at 40% opacity, not tappable, with the line "Finish this session to switch tasks. Stopping early discards its time." Any other refused switch (task details "load timer", hero/Today paths): a toast, "A session is running on <task>. Finish it to switch tasks." D8's original line "Time so far is saved" was withdrawn by D9: stopping or skipping a focus phase records nothing (`timerStore.ts:364, 398`). Saving a stopped session's time is a TODO.
+- **DD9 Community card invites sharing (Pass 2, design D10, founder answer 2026-10-30, written response; reopens E5's "N new").** The card drops the unread count; the bell on Today stays the only place for unread notifications. The card's action is a "Share update" button that opens the existing post composer (`CreatePostSheet`, `index.tsx:827`, extracted to `mobile/components/social/CreatePostSheet.tsx` so You can open it): the user writes what project or task they're working on, can attach time spent and progress as stats (the composer's existing attached-stats option), and publishes to the community. Tapping the rest of the card opens Community. The card keeps its leaderboard rank line from E5-DATA ("#4 on the leaderboard"; hidden when opted out or unranked), since the answer did not remove it. Layout: people icon, title "Community", rank line, "Share update" button (secondary style, 44pt tall), chevron for the card.
+- **DD10 Time tab empty and loading (Pass 2, design D11, founder answer 2026-10-30: "Designed empty + skeleton").** Zero sessions ever: centered block with a clock icon, "Where your hours go" (Space Grotesk), "Your focus sessions show up here by task, goal and day.", and a primary button "Start a focus session" that opens Focus. Loading: grey skeleton bars in the report's layout. Screen title "Time"; default period this week.
+- **DD11 Time tab icon (Pass 5, design D12, founder answer 2026-10-30: "Bar-chart glyph").** `TimeTabIcon`: three vertical bars of different heights on a baseline, same stroke width and focused-thickening rule as the other `TabIcons`; checked side by side with Focus and Calendar at 24px.
+- **DD12 Accessibility of new controls (Pass 6, design D13, founder answer 2026-10-30: "Full spec for new controls").** 44pt targets (`hitSlop` on the 40×40 bell and +); bell label "Notifications, N unread"; Focus button label per state ("Focus on <task>" / "Back to focus, session running, N minutes" / "Resume, paused" / "Add your first task"); Community card and "Share update" are separate buttons; disabled picker rows use `accessibilityState={{ disabled: true }}` with the explanation read first; toasts announced via `AccessibilityInfo.announceForAccessibility`; text scales with Dynamic Type and the button title wraps to two lines at large sizes.
+- Inbox (Pass 2, no decision needed): the existing empty state "No notifications yet" (`index.tsx:1731-1733`) and mark-read-on-open (`index.tsx:1651-1653`) move unchanged with `NotificationsSheet`.
+
+### Design passes (scores)
+
+- Pass 1 Information Architecture: 4 -> 9 (DD1-DD5). Not 10: DD1 places the action after the context, by founder choice.
+- Pass 2 Interaction States: 3 -> 9 (DD6-DD10, inbox unchanged). Not 10: partial-session time loss is honest copy plus a TODO, not a fix.
+- Pass 3 Journey: 5 -> 8 (storyboard below). Not 10: existing feed users get no notice of the move (E3 declined; accepted risk).
+- Pass 4 AI Slop: 7 -> 7. No new issues in scope; existing stacked-card layout, emoji section labels and purple-leaning dark theme are outside this plan.
+- Pass 5 Design System: 6 -> 8 (DD11; tokens mapped). Not 10: no DESIGN.md (recommend /design-consultation).
+- Pass 6 Responsive & Accessibility: 3 -> 9 (DD12). Focus button stays above the fold on a 667pt iPhone SE under DD1.
+- Pass 7 Unresolved decisions: 0 new; E2 and E4 deferred, E3 declined earlier.
+
+Journey storyboard:
+
+| Step | User does | User feels | Plan specifies |
+|---|---|---|---|
+| 1 | New user opens Ascend | "What is this for?" | Today with "+ Add your first task" (DD6) |
+| 2 | Adds a task | Oriented | Button reads "Focus on: <task>" (DD2) |
+| 3 | Taps it, presses play | In control | Two deliberate taps (DD2) |
+| 4 | Wanders mid-session | Unsure it is running | Teal button with elapsed time on Today (DD7); pill deferred (E2) |
+| 5 | Tries to switch task | Briefly blocked | Toast and picker copy (DD8) |
+| 6 | Opens Time | Curious | Designed empty or report (DD10) |
+| 7 | Daily feed user updates | Low point: feed moved | You -> Community card (DD4, DD9); tip declined (E3) |
+
+### NOT in scope (design)
+
+- Running-timer pill on every tab: deferred (E2, TODOS.md).
+- "Show Community" switch: deferred (E4, TODOS.md).
+- One-time "social moved" tip: declined (E3).
+- Saving a stopped session's time: TODO (design D9).
+- Restyling the existing stacked-card layout, emoji labels and palette: outside a navigation plan.
+- DESIGN.md: recommend /design-consultation.
+
+### What already exists (design)
+
+- `mobile/constants/spacing.ts` (`Space`, `Radius`), `typography.ts` (Space Grotesk, Inter, Fraunces, JetBrains Mono), `Colors.ts` (dark and light themes).
+- Today's empty Tasks card ("Nothing planned yet. What has to move today?"), `ZoneHeader`, `PillStrip`, `BentoCell`, the 40×40 primary + button.
+- The post composer `CreatePostSheet` with attached stats (reused by "Share update", DD9).
+- The inbox empty state and mark-read-on-open (moved unchanged).
+- `TabIcons` stroke conventions (DD11).
+
+### Implementation Tasks (design)
+
+Synthesized from this review's decisions. Assumption: features ~30x human-to-CC.
+
+- [ ] **DT1 (P1, human: ~2h / CC: ~10min)** — mobile/today — Today order (DD1), "Today" title, bell then +; remove the summary card's start actions (DD3)
+  - Surfaced by: Pass 1 — DD1, DD3
+  - Files: `mobile/app/(tabs)/index.tsx`
+  - Verify: staging: order matches DD1; summary card has no start button; rows open the task
+- [ ] **DT2 (P1, human: ~3h / CC: ~15min)** — mobile/today — Focus button: four visual states (DD7), labels (DD2, DD6), first-run create path; picker returns no-tasks / none-open / target / session
+  - Surfaced by: Pass 1-2 — DD2, DD6, DD7
+  - Files: `mobile/app/(tabs)/index.tsx`, `mobile/lib/startFocusTarget.ts`, `mobile/lib/startFocusTarget.test.ts`
+  - Verify: vitest rows incl. no tasks at all; staging: skeleton, idle, running (teal, elapsed), paused (Resume)
+- [ ] **DT3 (P1, human: ~2h / CC: ~10min)** — mobile/focus — Refusal feedback: disabled picker look and copy, toast on refused switch (DD8)
+  - Surfaced by: Pass 2 — DD8 (D8, D9)
+  - Files: `mobile/app/(tabs)/focus.tsx`, `mobile/app/(tabs)/index.tsx`
+  - Verify: staging: start a session, open picker (rows disabled, copy shown), tap "load timer" in a task's details (toast)
+- [ ] **DT4 (P1, human: ~3h / CC: ~15min)** — mobile/you — Community card below rank and streak (DD4) with rank line and "Share update" opening the extracted composer (DD9); remove recap card and start entry from Community (DD5)
+  - Surfaced by: Pass 1-2 — DD4, DD5, DD9
+  - Files: `mobile/app/(tabs)/goals.tsx`, `mobile/components/social/CreatePostSheet.tsx`, `mobile/app/community.tsx`
+  - Verify: staging: Share update posts with attached time; card tap opens Community; Community has no recap card
+- [ ] **DT5 (P1, human: ~2h / CC: ~10min)** — mobile/time — Time tab empty state and skeleton (DD10); `TimeTabIcon` bar glyph (DD11)
+  - Surfaced by: Pass 2, 5 — DD10, DD11
+  - Files: `mobile/components/timeReport/TimeAnalyticsView.tsx`, `mobile/components/TabIcons.tsx`
+  - Verify: fresh account shows the empty state; icons distinct at 24px next to Focus and Calendar
+- [ ] **DT6 (P1, human: ~2h / CC: ~10min)** — mobile/a11y — Accessibility spec for new controls (DD12)
+  - Surfaced by: Pass 6 — DD12
+  - Files: `mobile/app/(tabs)/index.tsx`, `mobile/app/(tabs)/goals.tsx`, `mobile/app/(tabs)/focus.tsx`
+  - Verify: VoiceOver and TalkBack pass over Today, You and the Focus picker; 44pt targets
+
+JSONL task artifact: not written (jq is not installed).
+
+### Approved Mockups
+
+None generated: the designer has no OpenAI API key (`~/.claude/skills/gstack/design/dist/design setup`).
+
+## Design Review Completion Summary
+
+```
+  +====================================================================+
+  |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
+  +====================================================================+
+  | System Audit         | no DESIGN.md; tokens in mobile/constants;   |
+  |                      | UI scope: Today, You, Community, Time, bar  |
+  | Step 0               | 5/10 initial; all 7 dimensions              |
+  | Pass 1  (Info Arch)  | 4/10 -> 9/10 after fixes                    |
+  | Pass 2  (States)     | 3/10 -> 9/10 after fixes                    |
+  | Pass 3  (Journey)    | 5/10 -> 8/10 after fixes                    |
+  | Pass 4  (AI Slop)    | 7/10 -> 7/10 after fixes                    |
+  | Pass 5  (Design Sys) | 6/10 -> 8/10 after fixes                    |
+  | Pass 6  (Responsive) | 3/10 -> 9/10 after fixes                    |
+  | Pass 7  (Decisions)  | 0 new; 2 deferred earlier (E2, E4)          |
+  +--------------------------------------------------------------------+
+  | NOT in scope         | written (6 items)                           |
+  | What already exists  | written                                     |
+  | TODOS.md updates     | 1 item (save a stopped session's time)      |
+  | Approved Mockups     | 0 generated, 0 approved                     |
+  | Decisions made       | 13 added to plan (design D1-D13)            |
+  | Decisions deferred   | 0                                           |
+  | Overall design score | 3/10 -> 7/10                                |
+  +====================================================================+
+```
+
+Overall is the lowest pass: Pass 4 at 7/10, held there by existing visual patterns outside this navigation plan.
+
+### Unresolved Decisions
+None.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 6 | CLEAR | 5 proposals, 2 accepted, 2 deferred |
-| Outside Review | native Claude subagent (Codex not installed) | Independent 2nd opinion | 4 | unavailable (native fallback) | 9 findings (native); 9 resolved; 0 unresolved; no completed external review |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 8 | ISSUES OPEN | 9 issues, 0 critical gaps (all resolved or mapped to tasks) |
-| Design Review | `/plan-design-review` | UI/UX gaps | 5 | stale (2026-08-27) | score not recorded |
+| Outside Review | native Claude subagent (Codex not installed) | Independent 2nd opinion | 4 | unavailable (native fallback) | 9 findings (native, eng phase); 9 resolved; no completed external review |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 8 | ISSUES OPEN | 9 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 6 | ISSUES OPEN | score: 3/10 → 7/10, 13 decisions |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-- **OUTSIDE COVERAGE:** codex, plan-review phase (CEO and eng): unavailable (codex CLI not installed). Native Claude fallback completed both times (10 and 9 findings); native findings never count as outside coverage.
-- **VERDICT:** CEO CLEARED; eng review ran with every decision resolved, status issues_open because its 9 findings are mapped work (tasks E1-E6), so eng review required before it reads CLEAR.
+- **OUTSIDE COVERAGE:** codex unavailable (not installed) for the CEO, eng and design phases. Native Claude reviewers completed each time (CEO 10, eng 9, design 12 findings); native findings never count as outside coverage.
+- **VERDICT:** CEO CLEARED; design review issues_open (overall 7/10, held by existing visual patterns outside scope; 0 unresolved); eng review issues_open with all findings mapped to tasks; eng review required.
 
 NO UNRESOLVED DECISIONS

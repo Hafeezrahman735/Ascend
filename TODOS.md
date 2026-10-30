@@ -296,6 +296,15 @@ scope cut on 2026-10-22:
 
 Plan: `docs/designs/ascend-direction-freelancer-planner.md`.
 
+- [ ] **Save a stopped session's time.** Stopping or skipping a focus phase records
+      nothing (`mobile/stores/timerStore.ts:364` "without recording session", `:398` reset),
+      so minutes worked before an early stop are lost. For a time-tracking product that is a
+      real gap; the Today-as-home plan only made the copy say so honestly.
+      **Pros:** time actually worked is never dropped; refusal copy can say "time so far is saved".
+      **Cons:** needs a product decision (minimum length? count toward streak and XP?) and a
+      `POST /timer/complete` path for partial sessions with its integration test.
+      **Start in** `mobile/stores/timerStore.ts` (`skip`, `reset`) and `backend/src/modules/timer/routes.ts`.
+      **Depends on:** nothing. Raised by /plan-design-review D9 (2026-10-30).
 - [ ] **Running-timer pill on every tab.** Once Today is home instead of the social feed,
       nothing outside the Focus tab shows that a session is running. A pill with the task
       and time left, tapping through to Focus, keeps the block visible.
