@@ -780,6 +780,7 @@ Target: docs/designs/ascend-direction-freelancer-planner.md. No DESIGN.md; calib
 - **DD10 Time tab empty and loading (Pass 2, design D11, founder answer 2026-10-30: "Designed empty + skeleton").** Zero sessions ever: centered block with a clock icon, "Where your hours go" (Space Grotesk), "Your focus sessions show up here by task, goal and day.", and a primary button "Start a focus session" that opens Focus. Loading: grey skeleton bars in the report's layout. Screen title "Time"; default period this week.
 - **DD11 Time tab icon (Pass 5, design D12, founder answer 2026-10-30: "Bar-chart glyph").** `TimeTabIcon`: three vertical bars of different heights on a baseline, same stroke width and focused-thickening rule as the other `TabIcons`; checked side by side with Focus and Calendar at 24px.
 - **DD12 Accessibility of new controls (Pass 6, design D13, founder answer 2026-10-30: "Full spec for new controls").** 44pt targets (`hitSlop` on the 40×40 bell and +); bell label "Notifications, N unread"; Focus button label per state ("Focus on <task>" / "Back to focus, session running, N minutes" / "Resume, paused" / "Add your first task"); Community card and "Share update" are separate buttons; disabled picker rows use `accessibilityState={{ disabled: true }}` with the explanation read first; toasts announced via `AccessibilityInfo.announceForAccessibility`; text scales with Dynamic Type and the button title wraps to two lines at large sizes.
+- **DD13 Community card buttons (founder, 2026-10-30, after the mockups; supersedes DD9's card layout).** The card on You is a Community row ("Community / Feed, groups and posts", chevron) that opens the Community screen on its feed, and two tiles side by side below it: "#4 on Leaderboard" (rank large in JetBrains Mono, teal) opens Community on its Leaderboard tab; "Share update" (filled primary) opens Community and then its post form (the existing composer). Opted out of the leaderboard or unranked: the left tile reads "Leaderboard" with a trophy icon and no number. The rank moves from the row's meta line (DD9) to the left tile, and Share update now goes through Community instead of opening the composer on You. The Community screen therefore needs to accept an initial tab (feed or leaderboard) and an "open the post form" flag.
 - Inbox (Pass 2, no decision needed): the existing empty state "No notifications yet" (`index.tsx:1731-1733`) and mark-read-on-open (`index.tsx:1651-1653`) move unchanged with `NotificationsSheet`.
 
 ### Design passes (scores)
@@ -854,7 +855,14 @@ JSONL task artifact: not written (jq is not installed).
 
 ### Approved Mockups
 
-None generated: the designer has no OpenAI API key (`~/.claude/skills/gstack/design/dist/design setup`).
+Built on a Claude Design canvas (HTML/CSS artboards, Ascend dark-theme tokens; no image API): https://claude.ai/artifact/BAqmqfLYvyk9eD2YB9e6yh (private until shared).
+
+| Screen/Section | Mockup | Direction | Notes |
+|----------------|--------|-----------|-------|
+| Today | canvas board "Today A — Native cards" (`project/Main.dc.html`) | Approved 2026-10-30: separate cards; the summary stays its own swipeable card | Button state tweak shows idle, running, paused, loading and first run (DD2, DD6, DD7) |
+| You — Community card | canvas board "You D — Tiles, rank emphasized" (`project/YouD.dc.html`) | Approved 2026-10-30 | Implements DD13; opted-out tweak shows the "Leaderboard" tile |
+
+Not chosen: Today B and C; You A, B and C. Open from the mockups: the existing muted text colour `#6B6899` on 9-12px labels is below 4.5:1 contrast (DD12); the approved boards keep it as the app has it today.
 
 ## Design Review Completion Summary
 
@@ -876,7 +884,7 @@ None generated: the designer has no OpenAI API key (`~/.claude/skills/gstack/des
   | NOT in scope         | written (6 items)                           |
   | What already exists  | written                                     |
   | TODOS.md updates     | 1 item (save a stopped session's time)      |
-  | Approved Mockups     | 0 generated, 0 approved                     |
+  | Approved Mockups     | 7 canvas boards, 2 approved (Today A, You D)|
   | Decisions made       | 13 added to plan (design D1-D13)            |
   | Decisions deferred   | 0                                           |
   | Overall design score | 3/10 -> 7/10                                |
