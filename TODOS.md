@@ -291,3 +291,21 @@ scope cut on 2026-10-22:
       **Cons:** every calculation has to handle a new log state, plus a UI action; no user has asked for it.
       **Start in** `backend/src/lib/recurringOccurrences.ts` and the completion endpoints.
       **Depends on:** stages 1-4 of that plan. Decided D12 (2026-10-27).
+
+## From /plan-ceo-review — Today as home, social moved into You (2026-10-29)
+
+Plan: `docs/designs/ascend-direction-freelancer-planner.md`.
+
+- [ ] **Running-timer pill on every tab.** Once Today is home instead of the social feed,
+      nothing outside the Focus tab shows that a session is running. A pill with the task
+      and time left, tapping through to Focus, keeps the block visible.
+      **Pros:** the running session stays in sight from Today, Calendar, Time and You.
+      **Cons:** one more always-on element that must follow pause, break and finish states.
+      **Start in** `mobile/app/(tabs)/_layout.tsx` and `mobile/stores/timerStore.ts`.
+      **Depends on:** the Today-as-home navigation change. Deferred E2 (2026-10-29).
+- [ ] **"Show Community" setting.** Lets a person hide the Community card and social
+      notifications entirely, for people who want a pure planner. Only a leaderboard opt-out
+      exists today (`mobile/stores/userSettingsStore.ts:11`). On by default; data is kept.
+      **Pros:** the social layer becomes truly optional for the freelancer audience.
+      **Cons:** another setting to keep consistent across You, the notification bell and pushes.
+      **Depends on:** the Community screen from the same plan. Deferred E4 (2026-10-29).
