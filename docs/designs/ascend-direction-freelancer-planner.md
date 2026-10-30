@@ -896,17 +896,102 @@ Overall is the lowest pass: Pass 4 at 7/10, held there by existing visual patter
 ### Unresolved Decisions
 None.
 
+## Eng re-review after design (2026-10-30)
+
+Target: docs/designs/ascend-direction-freelancer-planner.md (fixed). Scope: only what DD2, DD6, DD7, DD8, DD9 and DD13 changed in behaviour the eng review approved. Binding: CEO D1-D4, E1, E5, E5-DATA; eng R1-R3; design DD1-DD13.
+
+### Scope Challenge (re-run)
+
+- Reuse: Community already hosts the composer (`showCreatePost`, `index.tsx:1279, 1761`) and the feed/leaderboard segment (`activeTab`, `index.tsx:1278`); Today already has a toast (`Toast`, `tasks.tsx:1336`; `showToast`, `tasks.tsx:2189`) and `openCreate` (`tasks.tsx:2319`); elapsed time comes from `elapsedInPhase` (`lib/phaseDuration`). No backend change.
+- Scope moves: one file fewer (CF4); `lib/communityCard.ts` shrinks to the tile label (CF6). No cuts proposed.
+- Result: scope accepted; one design gap needs a decision (R4).
+
+### Corrections (factual; inside approved decisions)
+
+- CF1 [CRITICAL] (confidence: 9/10) `mobile/stores/timerStore.ts:202` — `set({ status: 'running', startedAt: now, ... })` in the break branch: a running break has `status: 'running'` (and a paused break `paused`); `status: 'break'` (`:290, :370`) only means a break is ready to start. R3's guard "refuses while `running` or `paused`; `break` and `idle` allowed" would therefore block switching during every break, against its own stated intent and D4's contract (only a focus phase's time is credited, `timerStore.ts:317-335`). The lock is `(status === 'running' || status === 'paused') && currentPhase === 'focus'`; `sessionLock` is updated on phase changes as well as status changes. The store test gains rows: running break allowed, paused break allowed.
+- CF2 [INFORMATIONAL] (confidence: 9/10) `mobile/app/(tabs)/focus.tsx:234` — the 1-second `tick()` interval lives in the Focus screen. After a cold relaunch with a restored session (`app/_layout.tsx:35`), Focus has not mounted, so the store's `timeLeft` is frozen and DD7's live time on Today would stand still. The Focus button is its own small component (`components/today/FocusButton.tsx`) that derives elapsed time from `startedAt` and `elapsedAtPause` with `elapsedInPhase` on its own 1-second interval while running (stopwatch: the same anchors), clamped to the planned length. This also keeps the ~2,800-line Today screen from re-rendering every second. Pre-existing and unchanged: a session that reaches zero while Focus is unmounted completes when Focus next mounts or the app returns to foreground.
+- CF3 [INFORMATIONAL] (confidence: 9/10) `mobile/stores/taskStore.ts:185` — `selectTask: (id) => void`: callers cannot tell a refusal from a switch, so DD8's toast has nothing to key on. `selectTask` returns `boolean` (false when refused); the task details "load timer" (`tasks.tsx:2661, 2803`) shows DD8's toast through Today's existing `showToast` when it gets false, and announces it (DD12; no `announceForAccessibility` exists yet, it is added there). The Focus picker never reaches a refusal because its rows are disabled (DD8).
+- CF4 [INFORMATIONAL] (confidence: 9/10) `mobile/app/(tabs)/index.tsx:1279, 1761` — DD13 sends "Share update" through Community, which already hosts `CreatePostSheet`, so DD9's extraction to `mobile/components/social/CreatePostSheet.tsx` has no second consumer. Dropped from DT4; the composer moves with the Community screen.
+- CF5 [INFORMATIONAL] (confidence: 8/10) `mobile/app/(tabs)/index.tsx:1278` — `useState<'feed' | 'leaderboard'>('feed')`: Community reads `useLocalSearchParams<{ tab?: string; compose?: string }>()` and seeds `activeTab` (`'leaderboard'` only when `tab === 'leaderboard'`, else `'feed'`) and `showCreatePost` (`compose === '1'`) once on mount. Community is a pushed screen that mounts fresh on each push, so seeding once is correct, and closing the composer never reopens it. Medium confidence, verify on device: the composer opens after the push transition ends (`navigation.addListener('transitionEnd')`), since presenting a Modal mid-push can drop it on iOS. The group screen's `router.dismissTo('/community')` (OV8) returns to the existing instance without params, keeping its tab.
+- CF6 [INFORMATIONAL] (confidence: 9/10) T5 "vitest for unread only, opted out, no position, error" — DD9 removed the unread count and DD13 moved the rank into a tile, so `lib/communityCard.ts` becomes `leaderboardTileLabel(rankState)`: ranked shows `#P` + "on Leaderboard"; loading, opted out, no position and fetch error show "Leaderboard" with the trophy (error also logs). Test rows: ranked, loading, opted out, no position, error.
+- CF7 [INFORMATIONAL] (confidence: 8/10) `mobile/stores/taskStore.ts:197, 216` — `isLoading` starts `false` and silent refetches never set it, so "tasks not loaded yet" is indistinguishable from "no tasks": a returning user would see "+ Add your first task" before the first fetch, and again after a failed fetch. The store gains a `hasLoaded` flag set by the first successful fetch; the picker takes it: not loaded and no error shows DD7's skeleton; a failed first load shows "Open focus timer" (DD6's existing label), never the first-run label.
+
+### Decision ledger (eng re-run)
+
+#### R4: What the Focus button shows during a break
+Finding: CF1 follow-on, INFORMATIONAL, confidence 9/10, `mobile/stores/timerStore.ts:202` (`// Break phase: ... set({ status: 'running', startedAt: now, elapsedAtPause: 0 })`), reviewer: eng re-review
+Plan baseline: DD7 defines loading, idle, running ("Back to focus · <task> · 18:42") and paused ("Resume · <task>"); no break state
+Runtime evidence: during a pomodoro break the store reports `running` or `paused`, so DD7 as written would show "Back to focus" with a focus label while a break clock runs
+Comparison grid:
+
+| Choice | Current (DD7) | A | B |
+|---|---|---|---|
+| Button during a running or paused break | "Back to focus · <task> · time" (wrong phase) | break state: outlined teal, "On a break · 4:12" (time left), opens Focus | idle state: "Focus on: <next task>", opens Focus |
+| Task switching during a break | blocked (CF1 bug) | allowed (CF1) | allowed (CF1) |
+| Tests | DD7 rows | + break row in picker test | + break row in picker test |
+
+State: approved
+Actual answer: A) Break state — founder answer to eng re-run D1, 2026-10-30.
+Accepted scope: during a running or paused pomodoro break the Focus button is outlined teal and reads "On a break · 4:12" (time left in the break, JetBrains Mono, live from the same anchors as CF2), opens Focus; accessibility label "On a break, N minutes left". The start-focus picker returns a `break` case; its test gains a break row. DD7 now has five states: loading, idle, running, paused, break.
+History: DD7 (design D7, 2026-10-30) had no break state.
+
+### Eng re-run sections (findings and dispositions)
+
+**1. Architecture** (4): CF1 guard predicate (CRITICAL, resolved), CF3 `selectTask` returns a result, CF4 composer stays in Community, CF5 Community route params. All accepted as corrections.
+**2. Code quality** (1): CF7 `hasLoaded` instead of `isLoading` for first run. Accepted.
+**3. Tests** (1 gap): the picker, store and tile tests changed shape (CF1, CF6, CF7, R4); rows listed under E1, DT2 and DT4 below. Test plan artifact: `~/.gstack/projects/Hafeezrahman735-pomodoro-app/hafee-staging-eng-review-test-plan-20261030-rerun.md`.
+**4. Performance** (1): CF2 the live time ticks inside `FocusButton`, not the Today screen. Accepted.
+**Outside voice:** not run for this delta re-review (scope is the design deltas only; the full plan had a native outside voice on 2026-10-30).
+
+### Failure modes (eng re-run)
+
+| Path | Realistic failure | Test / handling | User sees |
+|---|---|---|---|
+| Session lock (CF1) | break blocks switching, or focus does not | store test rows: focus running/paused refused; break running/paused, idle, `break` allowed | picker enabled on breaks |
+| Focus button time (CF2) | frozen after relaunch | own interval from wall-clock anchors; manual relaunch check | live time |
+| Refused switch (CF3) | silent refusal | `selectTask` returns false -> toast + announcement | DD8 toast |
+| Leaderboard tile (CF6) | number shown when opted out | `leaderboardTileLabel` rows | "Leaderboard" without number |
+| First run (CF7) | returning user sees "+ Add your first task" | `hasLoaded`; picker rows loading / load failed | skeleton, then correct label |
+| Share update (CF5) | composer dropped during push | open on `transitionEnd`; manual iOS check | composer opens |
+
+No critical gaps.
+
+### Task changes (eng re-run)
+
+- **E1** — lock predicate is focus-phase only (CF1); `selectTask` returns `boolean` (CF3); store test rows: focus running/paused refused, break running/paused allowed, idle and `break` allowed. Files unchanged.
+- **DT2** — Focus button is `mobile/components/today/FocusButton.tsx` with its own clock (CF2) and five states (R4); picker cases: loading, load failed, no tasks, none open, target, focus session, break (CF7, R4). Test rows for each. Adds `hasLoaded` to `mobile/stores/taskStore.ts`.
+- **DT3** — toast on a `false` from `selectTask` in the task details "load timer"; `AccessibilityInfo.announceForAccessibility` for it (CF3, DD12).
+- **DT4** — no `CreatePostSheet` extraction (CF4); Community reads `tab` and `compose` params (CF5); You's tiles push `/community?tab=leaderboard` and `/community?compose=1`; `lib/communityCard.ts` becomes `leaderboardTileLabel` with rows ranked, loading, opted out, no position, error (CF6). Files: `mobile/app/(tabs)/goals.tsx`, `mobile/app/community.tsx`, `mobile/lib/communityCard.ts`, `mobile/lib/communityCard.test.ts`.
+- **T5** — verify line replaced by DT4's rows; "N new · #P" is gone (DD9, DD13).
+
+### Unresolved decisions (eng re-run)
+None.
+
+### Completion summary (eng re-run)
+
+- Step 0: Scope Challenge — scope accepted; one file fewer (CF4)
+- Architecture Review: 4 issues found
+- Code Quality Review: 1 issue found
+- Test Review: 1 gap identified (test shapes; rows listed)
+- Performance Review: 1 issue found
+- Failure modes: 0 critical gaps flagged
+- Decisions: 1 (R4, founder chose A)
+- Outside voice: not run (delta re-review)
+- Unresolved decisions: 0
+
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 6 | CLEAR | 5 proposals, 2 accepted, 2 deferred |
 | Outside Review | native Claude subagent (Codex not installed) | Independent 2nd opinion | 4 | unavailable (native fallback) | 9 findings (native, eng phase); 9 resolved; no completed external review |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 8 | ISSUES OPEN | 9 issues, 0 critical gaps |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 9 | ISSUES OPEN | 9 issues (first run) + 7 (re-run after design), 0 critical gaps |
 | Design Review | `/plan-design-review` | UI/UX gaps | 6 | ISSUES OPEN | score: 3/10 → 7/10, 13 decisions |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
 - **OUTSIDE COVERAGE:** codex unavailable (not installed) for the CEO, eng and design phases. Native Claude reviewers completed each time (CEO 10, eng 9, design 12 findings); native findings never count as outside coverage.
-- **VERDICT:** CEO CLEARED; design review issues_open (overall 7/10, held by existing visual patterns outside scope; 0 unresolved); eng review issues_open with all findings mapped to tasks; eng review required.
+- **ENG RE-RUN (2026-10-30):** re-reviewed the design deltas (DD2, DD6-DD9, DD13): 7 corrections CF1-CF7 (CF1 critical: a running break reports `running`, fixed in the guard), 1 decision R4 (break state, founder chose A). Outside voice not run for the delta.
+- **VERDICT:** CEO CLEARED; design review issues_open (overall 7/10, held by existing visual patterns outside scope; 0 unresolved); eng review issues_open with all findings mapped to tasks, current with the design decisions; ready to implement.
 
 NO UNRESOLVED DECISIONS
