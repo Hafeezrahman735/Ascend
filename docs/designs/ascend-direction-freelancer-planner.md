@@ -95,7 +95,8 @@ These settle mechanics inside the approved decisions; none changes scope.
   The hero card (`tasks.tsx:2709-2722`) keeps its own rotating actions unchanged.
 - **Time tab (E1).** The report is an in-screen view today (`setActiveView('time-tracker')`,
   `tasks.tsx:2462, 2570`), not a route. It is extracted into `app/(tabs)/time.tsx`, which owns
-  `TimeAnalyticsView` with no back button (it is a tab, not a sub-view). What the view needs
+  `TimeAnalyticsView` with no back button (it is a tab, not a sub-view). [Eng R1, 2026-10-30: the goal
+  form is shared through a `GoalEditor` component, not a hook; see the eng decision ledger.] What the view needs
   from Tasks state comes from the shared stores instead: tasks (`useTasksList`), goals
   (`goalStore`) and tag overrides (`tagOverrideStore`); `time.tsx` mounts its own
   `GoalFormModal` and `TagOverrideSheet` with the same save handlers, moved to a shared hook
@@ -473,17 +474,305 @@ corrections inside those answers; OV7 is recorded as disagreement, not a change.
 ### Unresolved Decisions
 None.
 
+## Eng review (2026-10-30)
+
+Target: docs/designs/ascend-direction-freelancer-planner.md (fixed). Binding decisions: CEO review D1, D2, D3, E1, E5, E5-DATA, D4.
+
+### Scope Challenge
+
+- Reuse: Today = Tasks screen moved whole; Community = social screen moved whole; Time = `TimeAnalyticsView` + `useTimeReport` (owns fetching and `ReportPeriod`, `mobile/hooks/useTimeReport.ts:26`); Start focus = `selectAndFocus`/`goToFocus`; rank = existing `/social/focus-leaderboard`. No backend change.
+- Minimum change: the approved scope is already minimal; nothing deferrable without breaking an approved decision.
+- Search check: no new architectural pattern; tabs, pushed screen, focus refetch and route params are Expo Router built-ins [Layer 1].
+- Complexity [estimated]: ~15 files (6 edited, 3 rewritten/moved, 6 new) and 3 new modules -> gate tripped.
+- Scope record: feature answers: none proposed (no cuts); structure: A "Original arrangement" (eng D1, 2026-10-30); accepted scope: CEO-approved scope as written, arranged as `lib/startFocusTarget.ts` + test, `lib/communityCard.ts` + test, `hooks/useGoalForm.ts` (superseded by R1: `components/goals/GoalEditor.tsx`), rank helper in `stores/socialStore.ts`, plus `components/social/NotificationsSheet.tsx` (C2); pending remedies: none.
+- Result: scope accepted as-is.
+
+### Section 1 corrections (factual; no behavior change)
+
+- C1 [INFORMATIONAL] (confidence: 9/10) `mobile/app/_layout.tsx:342` — `<Stack screenOptions={{ headerShown: false }}>`: Community needs its own `<Stack.Screen name="community" />` entry, and its "header with a back arrow" is a custom header like the other pushed screens, not the native one.
+- C2 [INFORMATIONAL] (confidence: 9/10) `mobile/app/(tabs)/index.tsx:1719` — `<Modal visible={showNotifications} ...>`: the inbox is an inline modal with screen state (`:1280`). It is extracted to `mobile/components/social/NotificationsSheet.tsx` (one more file) so Today can mount it.
+
+### Outside-voice corrections (factual; inside approved decisions)
+
+- OV1 `GoalFormModal` (`tasks.tsx:879`) and `TagOverrideSheet` (`tasks.tsx:2019`) are private to the route file with their helpers (`getStyles`, `plannedHoursText`, `parsePlannedHours`, `TaskMultiSelect`). They move to `mobile/components/goals/GoalFormModal.tsx` and `mobile/components/timeReport/TagOverrideSheet.tsx` with those helpers, so `GoalEditor` (R1) and `time.tsx` can import them. Two more files.
+- OV2 `TimeAnalyticsView` sets `useState<Lens>(initialLens)` once (`TimeAnalyticsView.tsx:57`); a mounted tab would ignore later `lens` params. The view re-syncs its lens when the `initialLens` prop changes (effect keyed on the param plus a request nonce so a repeat tap on the same lens still applies).
+- OV4 `TimeCard` takes no period and always shows this week (`TimeCard.tsx:27-30`), so there is no period to share. `reportPeriod` and `overrideTag` stay local state in `time.tsx`; the earlier "shared hook" wording for them is withdrawn.
+- OV5 `onBack` is a required prop that always renders a back header (`TimeAnalyticsView.tsx:52, 66-74`). It becomes optional; with no `onBack` the header renders without a back button.
+- OV6 `today` is read once per mount (`TimeAnalyticsView.tsx:63`, `TimeCard.tsx:29`). As always-mounted tabs, Time and Today's Time card re-read the local day when they gain focus.
+- OV7 R2's inputs: `GoalEditor` derives both the picker's `linkableTasks` and `linkedBefore` from the same task list (`useTasksList`) so the delta function never compares two different lists.
+- OV8 The group screen's "posts" action uses `router.dismissTo('/community')`, which returns to an existing Community screen or opens one, instead of hand-written back-or-navigate logic.
+- OV9 `lib/startFocusTarget.ts` imports `TimerStatus` as a type only; `timerStore` pulls in native modules and vitest runs in plain Node.
+- R3 mechanics: `timerStore` already imports `taskStore` (`timerStore.ts:158, 317`), and a reverse import would close a cycle like the one `initTaskStore` exists to avoid (`taskStore.ts`, "circular import crash"). The guard reads the session state through a dependency-free `mobile/stores/sessionLock.ts` (`isSessionActive()`), which `timerStore` updates whenever its status changes; `taskStore.selectTask` reads it. One more file; the store-level test sets the lock directly.
+
+### Decision ledger (eng)
+
+#### R1: How the goal form is shared between Today and Time
+Finding: 1, INFORMATIONAL, confidence 9/10, `mobile/app/(tabs)/tasks.tsx:2548, 2578, 2816` (`<GoalFormModal visible={showGoalForm} goal={formGoal} existingTags=...`), reviewer: eng review Section 1 (design-twice, red flag 8 hand-synced list)
+Plan baseline: `hooks/useGoalForm.ts` holding the handlers and form state; each screen renders `<GoalFormModal>` with the full prop list (CEO build section "Time tab"; eng D1 "Original arrangement")
+Runtime evidence: the modal is already mounted three times in Tasks with the same seven props; the Time tab would add a fourth in another file
+Comparison grid:
+
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1 goal form sharing | 3 identical mounts in tasks.tsx | `GoalEditor` component: owns derived `existingTags`, `nonArchived`, `goals` and the save/delete handlers; screens render `<GoalEditor goal visible onClose />` | `useGoalForm` hook: returns handlers and state; each of 4 mounts passes 7 props |
+| Approved features (D2, D3, E1, E5, E5-DATA, D4) | approved | unchanged | unchanged |
+| File count | ~16 | ~16 (component replaces hook) | ~16 |
+| Tests | approved verification plan | unchanged | unchanged |
+
+Question D2:
+D2 — How should Today and the Time tab share the goal-editing form?
+Project/branch/task: Ascend staging, eng review of the navigation plan.
+ELI10: the form for editing a goal is already placed three times inside the Tasks screen, each time with the same seven settings typed out. The plan adds a fourth copy in the new Time tab. The approved plan shares only the logic (a hook), so each screen still types out all seven settings. A small component that owns the form, its data and its save/delete logic would make each placement one line.
+Stakes if we pick wrong: with four hand-typed copies, a future change to the form updates three and misses one, and that screen saves goals differently.
+Recommendation: A because one owner for the form removes the hand-synced prop lists (explicit over clever, and fixes three existing copies at the same cost).
+Completeness: A=10/10, B=7/10
+Pros / cons:
+A) Goal editor component (recommended)
+  ✅ Each of the four placements becomes one line, so they can never drift apart.
+  ✅ Fixes the three existing copies in Tasks at the same time, at no extra file cost.
+  ❌ The component reads stores itself, so it is less reusable outside the task screens.
+B) Shared hook (as approved)
+  ✅ Matches the arrangement already approved, no change to the plan's wording.
+  ✅ Keeps the modal a plain prop-driven component that is easy to reason about.
+  ❌ Four places still pass the same seven props by hand and can drift apart.
+Net: same file count; A removes four hand-synced copies, B keeps them.
+Header: Goal form
+Options:
+A) Goal editor component (recommended)
+`components/goals/GoalEditor.tsx` owns the derived data and save/delete handlers; Today's three mounts and the Time tab each render `<GoalEditor goal visible onClose />`. (human: ~2h / CC: ~10 min) ✅ Each of the four placements becomes one line, so they can never drift apart. ✅ Fixes the three existing copies in Tasks at the same time, at no extra file cost. ❌ The component reads stores itself, so it is less reusable outside the task screens.
+B) Shared hook (as approved)
+`hooks/useGoalForm.ts` returns handlers and state; each of the four mounts passes the seven props. (human: ~2h / CC: ~10 min) ✅ Matches the arrangement already approved, no change to the plan's wording. ✅ Keeps the modal a plain prop-driven component that is easy to reason about. ❌ Four places still pass the same seven props by hand and can drift apart.
+
+State: approved
+Actual answer: A) Goal editor component — founder answer to eng D2, 2026-10-30.
+Accepted scope: `mobile/components/goals/GoalEditor.tsx` owns the derived `existingTags`, `nonArchived`, `goals` and the save/delete handlers (moved from `tasks.tsx:2256-2258, 2408, 2432`); Today's three mounts (`tasks.tsx:2548, 2578, 2816`) and the Time tab render `<GoalEditor goal visible onClose />`. Replaces `hooks/useGoalForm.ts` in the arrangement; file count unchanged.
+History: plan baseline was the shared hook (eng D1 arrangement, CEO build section "Time tab").
+
+#### R2: Regression coverage for the goal link/unlink deltas moving into GoalEditor
+Finding: 2, CRITICAL (regression rule), confidence 9/10, `mobile/app/(tabs)/tasks.tsx:2441-2448` (`const before = tasks.filter((t) => t.taskGoalId === formGoal.id).map((t) => t.id); const link = ...; const unlink = ...`), reviewer: eng review Section 3
+Plan baseline: R1 moves `handleGoalSave` into `GoalEditor`; no test covers the delta computation (it lives inside a screen component; mobile vitest renders no components)
+Runtime evidence: the deltas decide which tasks the server unlinks; the code comment records that sending the whole set "would tell the server to unlink everything absent from it"
+Comparison grid:
+
+| Choice | Current | A | B |
+|---|---|---|---|
+| R2 delta coverage | none | extract pure `goalLinkDeltas(linkedBefore, selected)` to `mobile/lib/`, unit-test: add only, remove only, both, unchanged (no request), create path untouched | manual QA on staging only |
+| R1 GoalEditor | approved | unchanged | unchanged |
+| Behavior to preserve | existing | link = selected minus before; unlink = before minus selected; no request when both empty | same |
+
+Question D3:
+D3 — How should the goal link/unlink logic be protected when it moves?
+Project/branch/task: Ascend staging, eng review of the navigation plan.
+ELI10: when you edit a goal's task list, the app works out which tasks to add and which to remove, instead of sending the whole list. That matters: sending the whole list would quietly unlink finished tasks the picker never showed. This logic moves into the new goal editor and has no test today. Pulling the arithmetic into a tiny function with a test locks the behaviour before it moves.
+Stakes if we pick wrong: a slip in the move could unlink a goal's completed tasks, dropping its progress, with nothing to catch it.
+Recommendation: A because a pure function with four test rows protects the exact contract cheaply (every behavior tested, no test without a regression it would catch).
+Completeness: A=10/10, B=5/10
+Pros / cons:
+A) Pure function + unit test (recommended)
+  ✅ The add/remove rules are locked by a test before and after the move.
+  ✅ Tiny function, runs in the existing vitest suite in milliseconds.
+  ❌ One more small module and test file in mobile/lib.
+B) Manual QA only
+  ✅ No new files; the code moves as it is.
+  ✅ Staging checks already cover editing a goal by hand.
+  ❌ A slip that unlinks completed tasks could pass a quick manual check unnoticed.
+Net: one small tested function versus trusting a manual check with goal progress.
+Header: Goal deltas
+Options:
+A) Pure function + unit test (recommended)
+`mobile/lib/goalLinkDeltas.ts` + test: add only, remove only, both, unchanged sends nothing; GoalEditor calls it. (human: ~1h / CC: ~5 min) ✅ The add/remove rules are locked by a test before and after the move. ✅ Tiny function, runs in the existing vitest suite in milliseconds. ❌ One more small module and test file in mobile/lib.
+B) Manual QA only
+Move the code as it is and check goal editing on staging. (human: ~15 min / CC: ~0) ✅ No new files; the code moves as it is. ✅ Staging checks already cover editing a goal by hand. ❌ A slip that unlinks completed tasks could pass a quick manual check unnoticed.
+
+State: approved
+Actual answer: A) Pure function + unit test — founder answer to eng D3, 2026-10-30.
+Accepted scope: `mobile/lib/goalLinkDeltas.ts` (link = selected minus linked-before; unlink = linked-before minus selected) with `mobile/lib/goalLinkDeltas.test.ts` rows: add only, remove only, both, unchanged (both empty, so GoalEditor sends no link request). GoalEditor calls it; the create path stays as it is.
+History: none
+
+#### R3: Where the D4 running-session guard lives (reopened D4 mechanism)
+Finding: OV3 (eng outside voice), High, confidence 9/10, `mobile/app/(tabs)/tasks.tsx:2661, 2803` (`onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }}`), reviewer: native Claude subagent (outside-voice fallback)
+Plan baseline: D4 (CEO review) approved "the same check inside `selectAndFocus` stops the hero card switching tasks"; its stated contract: a running session's time stays with the task it started on
+Runtime evidence: the task stats sheet's "load timer" calls `selectTask` directly, bypassing `selectAndFocus`; the Focus screen's task picker also calls `selectTask` mid-session (`focus.tsx:867`), where switching is a deliberate correction in front of the timer
+Comparison grid:
+
+| Choice | Current (D4) | A | B | C |
+|---|---|---|---|---|
+| Today Start button + hero card | guarded | guarded | guarded | guarded |
+| Task stats sheet "load timer" (`tasks.tsx:2661, 2803`) | unguarded | guarded (shared helper) | guarded (store) | unguarded |
+| Focus screen picker (`focus.tsx:867`) | switches, credit moves | switches, credit moves (deliberate) | blocked while running/paused | switches |
+| Guard location | `selectAndFocus` | one shared helper used by every Today path | `taskStore.selectTask` | `selectAndFocus` |
+| Test | picker unit test | + stats sheet path uses the helper | + store-level test | unchanged |
+
+Question D4:
+D4 — Which paths should the running-session guard cover?
+Project/branch/task: Ascend staging, eng review of the navigation plan.
+ELI10: the CEO review promised a running session's time always stays with the task it started on, and guarded the new Start button and the hero card. The second-opinion review found a third way to switch: the task details sheet's "load timer" button switches the selected task directly, mid-session. The Focus screen's own picker also switches, but there you're choosing deliberately with the timer in front of you, for example to correct a wrong pick.
+Stakes if we pick wrong: leave the details sheet open and hours can still silently move; block everything and you can't fix a wrong pick without stopping the session.
+Recommendation: A because it closes every accidental path from Today while keeping the deliberate correction on the Focus screen (explicit over clever: switching happens only where the timer is visible).
+Note: options differ in kind, not coverage — no completeness score.
+Pros / cons:
+A) Guard every Today path (recommended)
+  ✅ Closes the details-sheet hole, so no Today tap can move a running session's hours.
+  ✅ Keeps deliberate switching on the Focus screen, where you can see the timer.
+  ❌ The rule lives in a helper, so a future Today button must remember to use it.
+B) Guard in the store
+  ✅ One guard catches every caller, including future ones, automatically.
+  ✅ The promise holds with no exceptions anywhere in the app.
+  ❌ You can't correct a wrong pick on the Focus screen without stopping the session.
+C) Keep as approved
+  ✅ No change to the approved plan or its tests.
+  ✅ The two most visible buttons are already guarded.
+  ❌ The details sheet can still silently move a running session's hours to another task.
+Net: A closes the accidental paths and keeps the deliberate one; B closes all paths at the cost of corrections.
+Header: Guard scope
+Options:
+A) Guard every Today path (recommended)
+One helper (`startOrResumeFocus`) used by the Start button, hero card and task details sheet; Focus picker unchanged; unit test extended. (human: ~1h / CC: ~5 min) ✅ Closes the details-sheet hole, so no Today tap can move a running session's hours. ✅ Keeps deliberate switching on the Focus screen, where you can see the timer. ❌ The rule lives in a helper, so a future Today button must remember to use it.
+B) Guard in the store
+`taskStore.selectTask` refuses to change selection while a session runs or is paused; the Focus picker is disabled then. (human: ~1.5h / CC: ~10 min) ✅ One guard catches every caller, including future ones, automatically. ✅ The promise holds with no exceptions anywhere in the app. ❌ You can't correct a wrong pick on the Focus screen without stopping the session.
+C) Keep as approved
+Guard only `selectAndFocus`; the details sheet keeps switching mid-session. (human: 0 / CC: 0) ✅ No change to the approved plan or its tests. ✅ The two most visible buttons are already guarded. ❌ The details sheet can still silently move a running session's hours to another task.
+
+State: approved
+Actual answer: B) Guard in the store — founder answer to eng D4, 2026-10-30.
+Accepted scope: `taskStore.selectTask` refuses to change the selection while the timer status is `running` or `paused` (`timerStore.ts:26`; `break` and `idle` allowed), covering the Start button, hero card, task details sheet (`tasks.tsx:2661, 2803`) and the Focus screen picker (`focus.tsx:867, 909`). The Focus picker is disabled while a session runs or is paused, with a line saying to finish or stop the session to switch. The Start button still reads "Back to focus: <task>" and only opens Focus. Store-level unit test: selectTask during running/paused leaves the selection unchanged; during idle/break it changes. Replaces D4's `selectAndFocus`-only guard.
+History: reopens the mechanism of CEO D4 ("Guard selection", 2026-10-29) on new evidence (OV3); D4's contract is unchanged.
+
+### Eng review sections (findings and dispositions)
+
+**1. Architecture** (5 findings)
+- [INFORMATIONAL] (confidence: 9/10) `mobile/app/_layout.tsx:342` — C1 global `headerShown: false`; Community needs a `Stack.Screen` entry and a custom header. Accepted (factual).
+- [INFORMATIONAL] (confidence: 9/10) `mobile/app/(tabs)/index.tsx:1719` — C2 inline inbox modal; extract `NotificationsSheet`. Accepted (factual).
+- [INFORMATIONAL] (confidence: 9/10) `mobile/app/(tabs)/tasks.tsx:2548, 2578, 2816` — three hand-synced `GoalFormModal` mounts. Approved R1 (eng D2): `GoalEditor` component.
+- [INFORMATIONAL] (confidence: 8/10) `mobile/app/(tabs)/index.tsx:1217, 1226` — leaderboard scope and period strings would be repeated by the rank helper. Accepted (mechanic of E5-DATA): define once beside the helper.
+- [INFORMATIONAL] (confidence: 8/10) `mobile/stores/socialStore.ts:446-462` — two leaderboard parsers. Accepted (mechanic of E5-DATA): `fetchFocusLeaderboard` calls the helper, then stores.
+
+**2. Code quality** (2 findings)
+- [INFORMATIONAL] (confidence: 9/10) `mobile/app/(tabs)/tasks.tsx:2444-2445` — comment about "archived recurring instances" is stale after the rule-and-log change; rewrite in the move. Accepted.
+- [INFORMATIONAL] (confidence: 7/10) `mobile/lib/taskBoard.ts` — header comments describe day copies; refresh when building on `topTasks`. Accepted.
+
+**3. Tests** (1 gap)
+- [CRITICAL] (confidence: 9/10) `mobile/app/(tabs)/tasks.tsx:2441-2448` — untested link/unlink deltas move into `GoalEditor`. Approved R2 (eng D3): `goalLinkDeltas` pure function + unit test.
+- Test plan artifact: `~/.gstack/projects/Hafeezrahman735-pomodoro-app/hafee-staging-eng-review-test-plan-20261029-233354.md`.
+
+**4. Performance** (1 finding)
+- [INFORMATIONAL] (confidence: 7/10) `GoalEditor` (R1) — derive `existingTags`/`nonArchived` only while visible, not in all four mounts on every render. Accepted (mechanic of R1). Launch gets lighter: the feed's launch-time social fetches move off the cold path.
+
+**Outside voice (native fallback; Codex not installed)** — 9 findings: OV1, OV2, OV4-OV9 applied as factual corrections (see "Outside-voice corrections"); OV3 reopened the D4 mechanism and was resolved as R3 (eng D4: guard in the store).
+
+### What already exists (eng)
+
+- `useTimeReport` owns report fetching and `ReportPeriod`; reused by the Time tab unchanged.
+- `TimeAnalyticsView` reused; two small prop changes (optional `onBack`, lens re-sync).
+- `GoalFormModal`, `TagOverrideSheet` moved out of the route file, not rewritten.
+- `/social/focus-leaderboard` reused; one parser shared by the store and the rank helper.
+
+### Failure modes (eng)
+
+| Path | Realistic failure | Test / handling | User sees |
+|---|---|---|---|
+| `selectTask` guard (R3) | lock out of sync with timer status | store unit test + timerStore updates lock on every status change; manual check | selection refused or allowed wrongly (visible on Focus) |
+| `GoalEditor` save (R1/R2) | deltas computed from different lists | `goalLinkDeltas` test + single source (OV7) | goal edit saves correctly |
+| Time tab lens (OV2) | stale lens after first visit | re-sync effect; manual tap sequence | correct lens |
+| Time tab day (OV6) | stuck on first-opened day | focus re-read; manual past-midnight check | today's data |
+| Community route (C1) | missing `Stack.Screen` | manual navigation check | screen opens with header |
+No critical gaps (every path has a test or handling, and none is silent).
+
+### Worktree parallelization strategy
+
+| Step | Modules touched | Depends on |
+|---|---|---|
+| A. Route move and tab bar | `mobile/app/(tabs)/`, `mobile/app/` (root layout, community), `mobile/components/social/` | — |
+| B. Time tab | `mobile/app/(tabs)/`, `mobile/components/timeReport/`, `mobile/components/goals/`, `mobile/lib/` | A |
+| C. Session guard and Start button | `mobile/stores/`, `mobile/lib/`, `mobile/app/(tabs)/` | A |
+| D. You and Community card | `mobile/app/(tabs)/`, `mobile/stores/`, `mobile/lib/` | A |
+
+Parallel lanes: Lane A first (it moves the files everyone edits). Then Lane C and Lane D in parallel; Lane B after A.
+Execution order: A. Merge. Then C + D in parallel. Merge. Then B.
+Conflict flags: `mobile/app/(tabs)/index.tsx` (Today) is edited by B (GoalEditor mounts), C (Start button) and D (bell) — sequence those edits; `mobile/stores/` is shared by C (sessionLock, taskStore) and D (socialStore helper) but in different files.
+
+### Implementation Tasks (eng)
+
+Synthesized from this review's findings; refines the CEO tasks T1-T7 above. Assumption: features ~30x, tests ~50x human-to-CC.
+
+- [ ] **E1 (P1, human: ~2h / CC: ~10min)** — mobile/stores — Add `stores/sessionLock.ts`; timerStore updates it on every status change; `taskStore.selectTask` refuses changes while running/paused; Focus picker disabled then
+  - Surfaced by: R3 (eng D4), OV3
+  - Files: `mobile/stores/sessionLock.ts`, `mobile/stores/timerStore.ts`, `mobile/stores/taskStore.ts`, `mobile/app/(tabs)/focus.tsx`
+  - Verify: vitest store test (running/paused refused, idle/break allowed); manual Focus picker check
+- [ ] **E2 (P1, human: ~3h / CC: ~15min)** — mobile/goals — Move `GoalFormModal` and `TagOverrideSheet` (with helpers) out of the route file; add `GoalEditor`; replace the three mounts
+  - Surfaced by: R1 (eng D2), OV1, Section 4
+  - Files: `mobile/components/goals/GoalFormModal.tsx`, `mobile/components/goals/GoalEditor.tsx`, `mobile/components/timeReport/TagOverrideSheet.tsx`, `mobile/app/(tabs)/index.tsx`
+  - Verify: edit, create and delete a goal from Today on staging
+- [ ] **E3 (P1, human: ~1h / CC: ~5min)** — mobile/lib — `goalLinkDeltas` pure function and test; GoalEditor derives both lists from one source
+  - Surfaced by: R2 (eng D3), OV7
+  - Files: `mobile/lib/goalLinkDeltas.ts`, `mobile/lib/goalLinkDeltas.test.ts`
+  - Verify: `npx vitest run lib/goalLinkDeltas.test.ts`
+- [ ] **E4 (P1, human: ~2h / CC: ~10min)** — mobile/time — `TimeAnalyticsView`: optional `onBack`, lens re-sync, focus re-read of today; `time.tsx` keeps `reportPeriod`/`overrideTag` local
+  - Surfaced by: OV2, OV4, OV5, OV6
+  - Files: `mobile/components/timeReport/TimeAnalyticsView.tsx`, `mobile/components/timeReport/TimeCard.tsx`, `mobile/app/(tabs)/time.tsx`
+  - Verify: manual lens tap sequence and past-midnight check
+- [ ] **E5 (P1, human: ~1h / CC: ~5min)** — mobile/navigation — `Stack.Screen` for community with a custom header; `NotificationsSheet` extraction; `router.dismissTo('/community')` from the group screen
+  - Surfaced by: C1, C2, OV8
+  - Files: `mobile/app/_layout.tsx`, `mobile/components/social/NotificationsSheet.tsx`, `mobile/app/group/[id].tsx`
+  - Verify: You -> Community -> group -> posts -> back lands on one Community screen
+- [ ] **E6 (P2, human: ~30min / CC: ~5min)** — mobile/social — One leaderboard parser and shared scope/period constants for the store and the rank helper
+  - Surfaced by: Section 1 (red flags 2 and 6)
+  - Files: `mobile/stores/socialStore.ts`
+  - Verify: Community leaderboard and You card show the same position for the global all-time view
+
+_No new tasks from Performance beyond E2's visible-only derivation._
+
+JSONL task artifact: not written (jq is not installed). Install jq for /autoplan aggregation.
+
+### Reality rows (eng)
+
+```
+REALITY: premise-table pass 12 code claims re-checked against source, unverified=0 mobile/components/timeReport/TimeAnalyticsView.tsx:57
+REALITY: already-done pass no overlapping work on origin/main since 2026-10-29 (git log empty) 83a6b94
+REALITY: surface-check pass router.dismissTo and useFocusEffect are expo-router built-ins; endpoint verified mobile/stores/socialStore.ts:453
+REALITY: binding-decisions pass CEO D1-D4, E1, E5, E5-DATA honored; D4 mechanism reopened only on new evidence (R3) docs/designs/ascend-direction-freelancer-planner.md:60
+REALITY: numbers pass ~20 files [estimated]; three GoalFormModal mounts [measured: mobile/app/(tabs)/tasks.tsx:2548] mobile/app/(tabs)/tasks.tsx:2816
+REALITY: deferred-asks pass no linked issue docs/designs/ascend-direction-freelancer-planner.md:5
+REALITY: pr-count pass one PR per wave (no ship-policy file) docs/designs/ascend-direction-freelancer-planner.md:143
+```
+
+PLAN_REALITY: phase=eng rows=7/7 missing=none unverified=1 verdict=complete
+
+### Decision ledger — approval readiness (eng)
+
+Approval readiness: PASS — structure D1 ("Original arrangement"), R1 (eng D2 "Goal editor component"), R2 (eng D3 "Pure function + unit test"), R3 (eng D4 "Guard in the store"). C1, C2, OV1, OV2, OV4-OV9 and the Section 1/2/4 mechanics are factual corrections or required implementation inside those answers and the CEO decisions.
+
+### Unresolved decisions
+None.
+
+### Completion summary (eng)
+
+- Step 0: Scope Challenge — scope accepted as-is
+- Reality rows: 7/7 applicable rows emitted (PLAN_REALITY eng complete), 0 unverified premises
+- Architecture Review: 5 issues found
+- Code Quality Review: 2 issues found
+- Test Review: diagram produced, 1 gap identified (resolved R2)
+- Performance Review: 1 issue found
+- NOT in scope: written (CEO section, unchanged)
+- What already exists: written
+- TODOS.md updates: 0 items proposed to user
+- Failure modes: 0 critical gaps flagged
+- Unresolved decisions: 0 in this review
+- Outside voice: codex unavailable (not installed); native Claude fallback completed, 9 findings
+- Parallelization: 4 lanes, 2 parallel / 2 sequential
+- Lake Score: 2/2
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 6 | CLEAR | 5 proposals, 2 accepted, 2 deferred |
-| Outside Review | native Claude subagent (Codex not installed) | Independent 2nd opinion | 3 | unavailable (native fallback) | 10 findings (native); 10 resolved; 0 unresolved; no completed external review |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 7 | ISSUES OPEN (2026-10-28, recurring-tasks plan) | 34 issues, 0 critical gaps |
-| Design Review | `/plan-design-review` | UI/UX gaps | 5 | CLEAR (stale, 2026-08-27) | score not recorded |
+| Outside Review | native Claude subagent (Codex not installed) | Independent 2nd opinion | 4 | unavailable (native fallback) | 9 findings (native); 9 resolved; 0 unresolved; no completed external review |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 8 | ISSUES OPEN | 9 issues, 0 critical gaps (all resolved or mapped to tasks) |
+| Design Review | `/plan-design-review` | UI/UX gaps | 5 | stale (2026-08-27) | score not recorded |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-- **OUTSIDE COVERAGE:** codex, plan-review phase: unavailable (codex CLI not installed). Native Claude fallback completed with 10 findings; native findings never count as outside coverage.
-- **VERDICT:** CEO CLEARED for this plan; eng review required (no eng review of this plan yet), design review recommended for the UI scope.
+- **OUTSIDE COVERAGE:** codex, plan-review phase (CEO and eng): unavailable (codex CLI not installed). Native Claude fallback completed both times (10 and 9 findings); native findings never count as outside coverage.
+- **VERDICT:** CEO CLEARED; eng review ran with every decision resolved, status issues_open because its 9 findings are mapped work (tasks E1-E6), so eng review required before it reads CLEAR.
 
 NO UNRESOLVED DECISIONS
