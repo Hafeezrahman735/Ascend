@@ -251,7 +251,7 @@ describe('goalStatCells — progressMode gating', () => {
   /**
    * A fixed grid regresses this in both directions: a goal with nothing linked
    * renders "0/0 tasks", and the sessions cell used to render "4/null" for a
-   * goal with no target. The gating must mirror goalSubMetrics in tasks.tsx.
+   * goal with no target. The gating must mirror goalSubMetrics in app/(tabs)/index.tsx.
    */
   it('never measures sessions against a target, even on a legacy sessions goal', () => {
     // `targetSessions` still exists on rows created before goals became

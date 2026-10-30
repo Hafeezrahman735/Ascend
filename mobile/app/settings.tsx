@@ -71,7 +71,7 @@ function Divider() {
 /**
  * How much focus time the user wants to put in each day.
  *
- * Drives the "Today's target" and "Focus today" pills on the Tasks tab. Also
+ * Drives the "Today's target" and "Focus today" pills on Today. Also
  * changeable by tapping either of those pills — this is the second entry point,
  * since a goal you can only reach from one screen is easy to never find.
  *

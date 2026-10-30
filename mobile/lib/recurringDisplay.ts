@@ -1,7 +1,7 @@
 import type { Task } from '../types';
 
 /**
- * Composition rules for showing recurring tasks in the Tasks tab.
+ * Composition rules for showing recurring tasks in the Today tab.
  *
  * GET /tasks lists a recurring task as a day row only on days it is due. On
  * any other day it has no row, so the list shows the recurring task itself,

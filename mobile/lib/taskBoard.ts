@@ -4,7 +4,7 @@ import { PRIORITY_RANK } from './planningTasks';
 import { daysUntil, templatesWithoutTodayRow, type RecurringTemplate } from './recurringDisplay';
 
 /**
- * How the Tasks tab orders and groups work.
+ * How the Today tab orders and groups work.
  *
  * Two surfaces read from here:
  *  - the main tab shows the TOP few open tasks, most pressing first

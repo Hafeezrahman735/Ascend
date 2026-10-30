@@ -30,7 +30,7 @@ const MAX_SECTION_ROWS = 5;
 /**
  * The week's task list gets a longer leash than the other sections. It is the
  * one people came to read, and truncating a real week's work at five rows sends
- * them to the Tasks tab to see the rest, which is the whole point of the section
+ * them to the Today tab to see the rest, which is the whole point of the section
  * defeated.
  */
 const MAX_WEEK_TASK_ROWS = 8;

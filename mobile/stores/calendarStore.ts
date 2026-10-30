@@ -137,7 +137,7 @@ interface CalendarStoreState {
   /**
    * Set when another store changes something the calendar renders — a task
    * created, rescheduled, completed or deleted. The calendar screen refetches
-   * on focus while this is true, so switching back from the Tasks tab never
+   * on focus while this is true, so switching back from the Today tab never
    * shows a stale day.
    */
   isStale: boolean;

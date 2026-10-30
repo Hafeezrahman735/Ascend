@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { View, Text } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
 import { Space } from '../../constants/spacing';
@@ -15,8 +16,8 @@ import { DeltaText, ShareBar, SkeletonBlocks } from './parts';
 import type { Lens } from './TimeAnalyticsView';
 
 /**
- * The Time card on the Tasks tab: this week at a glance, and the all-time
- * climb in one line. Everything that needs reading twice lives behind it.
+ * The Time card on Today: this week at a glance, and the all-time climb in one
+ * line. Everything that needs reading twice lives on the Time tab.
  *
  * It reads the same routes as the full screen (/time-report for the week,
  * /time-report/history for all time), so the card and the screen one tap away
@@ -26,10 +27,24 @@ import type { Lens } from './TimeAnalyticsView';
 
 export default function TimeCard({ onOpen }: { onOpen: (lens: Lens) => void }) {
   const Colors = useTheme();
-  const [today] = useState(() => getLocalDateString());
+  // Today stays mounted as a tab, so the day and the numbers are refreshed each
+  // time it regains focus (a session just finished on Focus, or a new day).
+  const [today, setToday] = useState(() => getLocalDateString());
   const week = weekRange(today);
-  const { report, loading, error } = useTimeReportRange(week.from, week.to);
-  const { history } = useTimeHistory();
+  const { report, loading, error, reload: reloadWeek } = useTimeReportRange(week.from, week.to);
+  const { history, reload: reloadHistory } = useTimeHistory();
+  const firstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) {
+        firstFocus.current = false;
+        return;
+      }
+      setToday(getLocalDateString());
+      reloadWeek();
+      reloadHistory();
+    }, [reloadWeek, reloadHistory]),
+  );
   const targetSeconds = useTimerStore((s) => s.settings.dailyFocusMinutes) * 60;
   const behind = useGoalStore((s) => s.goals.filter(
     (g) => !g.isArchived && !g.isCompleted && g.timePace.status === 'behind',

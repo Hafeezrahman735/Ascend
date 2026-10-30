@@ -17,7 +17,7 @@ const SCREEN_H = Dimensions.get('window').height;
  * second sheet reimplementing it from memory would reintroduce the bug that
  * comment was written to record.
  *
- * Distinct from the BottomSheet local to app/(tabs)/tasks.tsx, which is a
+ * Distinct from the BottomSheet local to app/(tabs)/index.tsx (Today), which is a
  * fixed-height pan-to-dismiss panel with no header. Same silhouette, different
  * job: that one presents a list you flick away, this one presents fields you
  * fill in and submit.

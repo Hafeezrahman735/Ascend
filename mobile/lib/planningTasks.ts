@@ -26,7 +26,7 @@ import { calendarItemKey, itemIsDone, itemTitle } from './calendarItems';
  *
  * ── Why recurring tasks are treated differently ──────────────────────────────
  *
- * Two subsystems hold opposite, individually-correct rules. The Tasks tab
+ * Two subsystems hold opposite, individually-correct rules. The Today tab
  * lists a recurring task only for today, so a missed day leaves no row. The
  * calendar PROJECTS it across the whole requested range (backend
  * recurringProjection.ts) so day and week views can draw it on every

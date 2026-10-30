@@ -33,7 +33,7 @@ async function hydrateForUser(userId: string): Promise<void> {
   await useTaskStore.getState().hydrateTasks(userId);
   await useGoalStore.getState().hydrateGoals(userId);
   await useTimerStore.getState().hydrate(userId);
-  // Before the first paint of the Tasks tab: without the baseline the hero
+  // Before the first paint of the Today tab: without the baseline the hero
   // rotation thinks it has never shown overdue work, and the urgency card leads
   // again on every cold launch — the behaviour the cap exists to prevent.
   await useHeroCardStore.getState().load(userId);

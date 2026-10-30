@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { View, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import { Space } from '../../constants/spacing';
@@ -31,6 +32,11 @@ import SessionsSheet, { type SessionsTarget } from './SessionsSheet';
  *
  * The all-time history is fetched once here and shared by the two lenses that
  * read it, so switching between them is instant.
+ *
+ * It is the Time tab, and tabs stay mounted. So each time it regains focus it
+ * re-reads the local day, refetches the history and remounts the open lens
+ * (which refetches its own data): a session finished on Focus, or a day that
+ * rolled over while the app sat in the background, shows on return.
  */
 
 export type Lens = 'overview' | 'activity' | 'goals' | 'breakdown';
@@ -43,38 +49,72 @@ const LENSES: { key: Lens; label: string }[] = [
 ];
 
 export default function TimeAnalyticsView({
-  initialLens = 'overview', period, onPeriodChange, onBack, onLongPressTag, onEditGoal,
+  initialLens = 'overview', lensRequestKey, period, onPeriodChange, onBack, onLongPressTag, onEditGoal, onStartFocus,
 }: {
   initialLens?: Lens;
-  /** The Breakdown period. Owned by the Tasks screen so it survives leaving and coming back. */
+  /**
+   * Changes each time something asks for `initialLens` (a tap on Today's Time
+   * card), so asking for the lens already showing still switches back to it
+   * after the user moved to another one.
+   */
+  lensRequestKey?: string;
+  /** The Breakdown period. Owned by the Time tab so it survives switching lenses. */
   period: ReportPeriod;
   onPeriodChange: (p: ReportPeriod) => void;
-  onBack: () => void;
+  /** Shows a back arrow when given; the Time tab has none. */
+  onBack?: () => void;
   onLongPressTag: (tag: string) => void;
   onEditGoal: (goal: TaskGoal) => void;
+  /** The empty state's one action. */
+  onStartFocus: () => void;
 }) {
   const Colors = useTheme();
   const [lens, setLens] = useState<Lens>(initialLens);
+  const [appliedRequest, setAppliedRequest] = useState(lensRequestKey);
+  if (lensRequestKey !== appliedRequest) {
+    setAppliedRequest(lensRequestKey);
+    setLens(initialLens);
+  }
   const [drill, setDrill] = useState<SessionsTarget | null>(null);
   const history = useTimeHistory();
-  // Read once per mount: a screen left open across midnight keeps the day it
-  // opened on until it is reopened, rather than shifting under the user.
-  const [today] = useState(() => getLocalDateString());
+  // The day is held, not read per render, so a screen open across midnight does
+  // not shift under the user; it moves to the new day on the next focus.
+  const [today, setToday] = useState(() => getLocalDateString());
+  const [visit, setVisit] = useState(0);
+  const firstFocus = useRef(true);
+  const reloadHistory = history.reload;
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) {
+        firstFocus.current = false;
+        return;
+      }
+      setToday(getLocalDateString());
+      reloadHistory();
+      setVisit((v) => v + 1);
+    }, [reloadHistory]),
+  );
+
+  const neverFocused = history.history?.allTime.sessions === 0;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md }}>
-        <AppPressable
-          onPress={onBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-          style={{ marginRight: Space.md, padding: Space.xs }}
-        >
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
-        </AppPressable>
-        <Text style={{ color: Colors.textBright, fontSize: 18, fontFamily: Font.display }}>Time</Text>
+        {onBack && (
+          <AppPressable
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            style={{ marginRight: Space.md, padding: Space.xs }}
+          >
+            <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          </AppPressable>
+        )}
+        <Text accessibilityRole="header" style={{ color: Colors.textBright, fontSize: 18, fontFamily: Font.display }}>Time</Text>
       </View>
+
+      {neverFocused ? <NoSessionsYet onStartFocus={onStartFocus} /> : (<>
 
       {/* Underline tabs: the lens is a view of the same data, not a filter on it. */}
       <View
@@ -105,7 +145,7 @@ export default function TimeAnalyticsView({
         })}
       </View>
 
-      <View style={{ flex: 1 }}>
+      <View key={visit} style={{ flex: 1 }}>
         {lens === 'overview' && (
           <OverviewLens history={history} today={today} onOpenGoals={() => setLens('goals')} onDrill={setDrill} />
         )}
@@ -115,8 +155,32 @@ export default function TimeAnalyticsView({
           <BreakdownLens period={period} onPeriodChange={onPeriodChange} onDrill={setDrill} onLongPressTag={onLongPressTag} />
         )}
       </View>
+      </>)}
 
       <SessionsSheet target={drill} onClose={() => setDrill(null)} />
     </SafeAreaView>
+  );
+}
+
+/** Nobody has focused yet, so there is nothing to chart (design DD10). */
+function NoSessionsYet({ onStartFocus }: { onStartFocus: () => void }) {
+  const Colors = useTheme();
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Space.xxl, gap: Space.md }}>
+      <Ionicons name="time-outline" size={36} color={Colors.primarySoft} />
+      <Text style={{ color: Colors.textBright, fontSize: 20, fontFamily: Font.display, textAlign: 'center' }}>
+        Where your hours go
+      </Text>
+      <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, textAlign: 'center' }}>
+        Your focus sessions show up here by task, goal and day.
+      </Text>
+      <AppPressable
+        onPress={onStartFocus}
+        accessibilityRole="button"
+        style={{ marginTop: Space.sm, backgroundColor: Colors.primary, borderRadius: 14, paddingHorizontal: Space.xl, minHeight: 48, justifyContent: 'center' }}
+      >
+        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Start a focus session</Text>
+      </AppPressable>
+    </View>
   );
 }

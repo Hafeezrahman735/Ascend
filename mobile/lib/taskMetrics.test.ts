@@ -17,7 +17,7 @@ import type { Task } from '../types';
 import type { SessionRecord } from '../store/sync';
 
 // These functions moved out of a 2589-line screen component, where nothing
-// could reach them without rendering the whole Tasks tab. The behaviour below
+// could reach them without rendering the whole Today screen. The behaviour below
 // is what that screen has always relied on — the tests pin it so the remaining
 // extraction work cannot quietly change it.
 

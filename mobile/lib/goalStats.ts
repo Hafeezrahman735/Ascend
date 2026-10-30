@@ -36,7 +36,7 @@ export const STRUGGLING_BELOW_PROGRESS = 0.25;
 export const SHARE_OF_LIFE_FLOOR = 0.1;
 
 /**
- * Duration for display. Moved here from `tasks.tsx` so the modal and the task
+ * Duration for display. Moved here from the Today screen so the modal and the task
  * row cannot drift apart, and so it is covered by a test.
  *
  * Non-finite input returns '0m' rather than the string "NaNm". That is not
@@ -281,7 +281,7 @@ export interface GoalStatCell {
 /**
  * The 2-4 supporting cells, gated by `progressMode`.
  *
- * The gating mirrors `goalSubMetrics` in `tasks.tsx` exactly, and must keep
+ * The gating mirrors `goalSubMetrics` in `app/(tabs)/index.tsx` exactly, and must keep
  * doing so. A fixed grid regresses it in both directions: a sessions-only goal
  * renders "0/0 tasks", and a goal with no session target renders "4/null
  * sessions". Neither is a number anybody can act on.

@@ -6,7 +6,7 @@ import type { ThemeColors } from '../hooks/useTheme';
 /**
  * Pure metric and formatting helpers for the Tasks screen.
  *
- * Extracted verbatim from app/(tabs)/tasks.tsx, which was 2589 lines. Nothing
+ * Extracted verbatim from the Tasks screen (now Today), which was 2589 lines. Nothing
  * about the logic changed in the move — every function is byte-identical to
  * what it replaced, only exported.
  *

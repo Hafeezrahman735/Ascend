@@ -3,7 +3,7 @@ import type { SessionRecord } from '../store/sync';
 import { daysUntilDue, getLocalDateString } from '../utils/date';
 
 /**
- * Which hero card the Tasks tab should lead with, and who is eligible for the
+ * Which hero card the Today tab should lead with, and who is eligible for the
  * urgency card.
  *
  * Split out of hooks/useHeroCard.ts so it can be unit-tested. That hook imports

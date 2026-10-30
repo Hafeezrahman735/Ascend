@@ -11,7 +11,7 @@ import { Font } from '../constants/typography';
 /**
  * The bottom sheet and the stat cell, shared by the task and goal stats modals.
  *
- * Both lived as unexported locals in `app/(tabs)/tasks.tsx` and were therefore
+ * Both lived as unexported locals in `app/(tabs)/index.tsx (Today)` and were therefore
  * unreachable from anywhere else — "reuse `BottomSheet`" was not actually
  * possible across a file boundary, only "copy it". Moved here verbatim so the
  * second consumer does not become a second copy.

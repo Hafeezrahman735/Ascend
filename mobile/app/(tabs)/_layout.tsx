@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import {
-  FocusTabIcon, TasksTabIcon, CalendarTabIcon, ProfileTabIcon,
+  FocusTabIcon, TasksTabIcon, CalendarTabIcon, TimeTabIcon, ProfileTabIcon,
 } from '../../components/TabIcons';
 
 // Today is the landing tab, so it owns the group's index route — that is what
@@ -70,6 +70,16 @@ export default function TabLayout() {
           tabBarAccessibilityLabel: 'Calendar',
           tabBarIcon: ({ color, focused }) => (
             <CalendarTabIcon color={color} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="time"
+        options={{
+          title: 'Time',
+          tabBarAccessibilityLabel: 'Time',
+          tabBarIcon: ({ color, focused }) => (
+            <TimeTabIcon color={color} focused={focused} />
           ),
         }}
       />
