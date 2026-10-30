@@ -1141,6 +1141,9 @@ type Scope = typeof SCOPES[number]['key'];
 
 const LEADERBOARD_PERIOD = FOCUS_LEADERBOARD_PERIOD;
 
+// Longer than a stack push animation, so the transitionEnd event normally wins.
+const COMPOSER_OPEN_FALLBACK_MS = 700;
+
 export default function CommunityScreen() {
   const Colors = useTheme();
   const SURFACE = Colors.surface;
@@ -1202,15 +1205,21 @@ export default function CommunityScreen() {
 
   // "Share update" on You lands here with compose=1. The composer is a Modal,
   // and presenting one while the push is still animating can drop it on iOS,
-  // so it opens when the transition ends rather than on mount.
+  // so it opens when the transition ends rather than on mount. The timer is a
+  // fallback for a push that reports no transition (animations turned off).
   const openComposerOnArrival = params.compose === '1';
   useEffect(() => {
     if (!openComposerOnArrival) return;
-    const unsubscribe = navigation.addListener('transitionEnd' as never, () => {
+    let opened = false;
+    const open = () => {
+      if (opened) return;
+      opened = true;
       setShowCreatePost(true);
-      unsubscribe();
-    });
-    return unsubscribe;
+    };
+    // 'transitionEnd' is a native-stack event the generic navigation type does not list.
+    const unsubscribe = navigation.addListener('transitionEnd' as never, open);
+    const fallback = setTimeout(open, COMPOSER_OPEN_FALLBACK_MS);
+    return () => { unsubscribe(); clearTimeout(fallback); };
   }, [navigation, openComposerOnArrival]);
 
   useEffect(() => {
