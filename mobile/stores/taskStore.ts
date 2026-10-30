@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { Task, DayOfWeek } from '../types';
 import { useAuthStore } from './authStore';
 import { getLocalDateString } from '../utils/date';
+import { canSelectTask, isSessionLocked } from './sessionLock';
 
 const TASKS_CACHE_KEY = (userId: string) => `tasks:cache:${userId}`;
 
@@ -175,6 +176,12 @@ interface TaskStoreState {
   recurringTemplates: Task[];
   selectedTaskId: string | null;
   isLoading: boolean;
+  /**
+   * True once tasks have come from the server or the device cache. Before that,
+   * an empty list means "not loaded yet", not "this user has no tasks" — the
+   * difference between a loading state and the first-run prompt on Today.
+   */
+  hasLoaded: boolean;
   error: string | null;
 
   hydrateTasks: (userId: string) => Promise<void>;
@@ -182,7 +189,8 @@ interface TaskStoreState {
   createTask: (data: TaskCreateInput) => Promise<CreateTaskResult>;
   updateTask: (id: string, data: TaskUpdateInput) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
-  selectTask: (id: string | null) => void;
+  /** Returns false when refused because a focus session is running (see sessionLock). */
+  selectTask: (id: string | null) => boolean;
   incrementTaskSession: (id: string, duration: number) => void;
   toggleComplete: (id: string) => Promise<void>;
   clearTasks: (userId?: string) => Promise<void>;
@@ -195,6 +203,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   recurringTemplates: [],
   selectedTaskId: null,
   isLoading: false,
+  hasLoaded: false,
   error: null,
 
   hydrateTasks: async (userId: string) => {
@@ -204,7 +213,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     // They are unconfirmed and will never be synced — load only server-confirmed tasks.
     const confirmed = normalizeTasks(cached.filter((t) => !isTempId(t.id)));
     if (confirmed.length > 0) {
-      set({ tasks: confirmed });
+      set({ tasks: confirmed, hasLoaded: true });
     } else {
       // Only stale temp tasks in cache — clean the file so we don't loop.
       await AsyncStorage.removeItem(TASKS_CACHE_KEY(userId)).catch(() => {});
@@ -222,6 +231,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       if (res.success && res.data) {
         // Guard: never overwrite a populated store with an empty server response.
         if (!res.data.length && get().tasks.length > 0) {
+          set({ hasLoaded: true });
           if (!silent) set({ isLoading: false });
           return;
         }
@@ -238,7 +248,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
           ? [...orphanedTemps, ...serverTasks]
           : serverTasks;
 
-        set({ tasks, isLoading: false });
+        set({ tasks, isLoading: false, hasLoaded: true, error: null });
         persistTasks(tasks, userId);
       } else {
         set({ error: res.error || 'Failed to fetch tasks', isLoading: false });
@@ -398,7 +408,9 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   },
 
   selectTask: (id) => {
+    if (!canSelectTask(isSessionLocked(), get().selectedTaskId, id)) return false;
     set({ selectedTaskId: id });
+    return true;
   },
 
   toggleComplete: async (id) => {
@@ -448,7 +460,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
 
   clearTasks: async (userId?: string) => {
     const resolvedUserId = userId ?? useAuthStore.getState().user?.id;
-    set({ tasks: [], recurringTemplates: [], selectedTaskId: null, isLoading: false, error: null });
+    set({ tasks: [], recurringTemplates: [], selectedTaskId: null, isLoading: false, hasLoaded: false, error: null });
     if (resolvedUserId) {
       AsyncStorage.removeItem(TASKS_CACHE_KEY(resolvedUserId)).catch(() => {});
     }

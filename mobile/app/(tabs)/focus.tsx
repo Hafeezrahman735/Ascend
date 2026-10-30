@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { useTimerStore } from '../../stores/timerStore';
+import { isFocusSessionLocked } from '../../stores/sessionLock';
 import { getPhaseDuration } from '../../lib/phaseDuration';
 import { getSessionPlan } from '../../lib/sessionPlan';
 import { targetProgress } from '../../lib/dailyTarget';
@@ -163,6 +164,9 @@ export default function TimerScreen() {
   const Colors = useTheme();
   const status = useTimerStore((s) => s.status);
   const currentPhase = useTimerStore((s) => s.currentPhase);
+  // While a focus phase runs or is paused, the task it will be credited to is
+  // fixed (stores/sessionLock); the picker shows why instead of switching.
+  const pickerLocked = isFocusSessionLocked(status, currentPhase);
   const timeLeft = useTimerStore((s) => s.timeLeft);
   const pomodoroRounds = useTimerStore((s) => s.pomodoroRounds);
   const globalSessions = useTimerStore((s) => s.globalSessions);
@@ -848,9 +852,14 @@ export default function TimerScreen() {
               paddingBottom: 40,
               maxHeight: '60%',
             }}>
-              <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 16 }}>
+              <Text accessibilityRole="header" style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: pickerLocked ? 8 : 16 }}>
                 Select Task
               </Text>
+              {pickerLocked && (
+                <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 19, marginBottom: 16 }}>
+                  Finish this session to switch tasks. Stopping early discards its time.
+                </Text>
+              )}
 
               {tasks.filter((t) => !t.isArchived && !t.isCompleted).length === 0 ? (
                 <Text style={{ color: Colors.text, textAlign: 'center', paddingVertical: Space.xxl }}>
@@ -863,6 +872,8 @@ export default function TimerScreen() {
                     return (
                       <AppPressable
                         key={task.id}
+                        disabled={pickerLocked}
+                        accessibilityState={{ disabled: pickerLocked, selected: isSelected }}
                         onPress={() => {
                           selectTask(task.id);
                           setShowTaskPicker(false);
@@ -874,7 +885,7 @@ export default function TimerScreen() {
                           paddingHorizontal: 4,
                           borderBottomWidth: 1,
                           borderBottomColor: Colors.border,
-                          opacity: isSelected ? 1 : 0.8,
+                          opacity: pickerLocked ? 0.4 : isSelected ? 1 : 0.8,
                         }}
                       >
                         <Ionicons
@@ -903,7 +914,7 @@ export default function TimerScreen() {
               )}
 
               <View style={{ flexDirection: 'row', marginTop: 16 }}>
-                {selectedTaskId ? (
+                {selectedTaskId && !pickerLocked ? (
                   <AppPressable
                     onPress={() => {
                       selectTask(null);

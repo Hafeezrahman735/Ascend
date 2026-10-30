@@ -22,8 +22,8 @@ import { nextPlannedFocusSeconds } from '../lib/sessionPlan';
 import { creditableSessionSeconds, MAX_SESSION_SECONDS } from '../lib/sessionCredit';
 import { log } from '../lib/log';
 import { migrateDailyGoal, clampGoalMinutes } from '../lib/dailyTarget';
+import { isFocusSessionLocked, setSessionLocked, type TimerStatus } from './sessionLock';
 
-type TimerStatus = 'idle' | 'running' | 'paused' | 'break';
 export type { TimerPhase };
 
 interface Settings {
@@ -665,6 +665,12 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     }
   },
 }));
+
+// Keep the task-selection lock in step with every status and phase change
+// (start, pause, resume, complete, stop, hydrate). See stores/sessionLock.ts.
+useTimerStore.subscribe((state) => {
+  setSessionLocked(isFocusSessionLocked(state.status, state.currentPhase));
+});
 
 // Records `sessionDuration` seconds of focus time through the exact same source the
 // pomodoro timer uses: updates today's globalTotalTime/globalSessions, appends to local

@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, ScrollView, SectionList, Modal, TextInput,
   Alert, Platform, Animated,
   StyleSheet, KeyboardAvoidingView, ActivityIndicator, Switch,
-  useWindowDimensions,
+  useWindowDimensions, AccessibilityInfo,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +26,8 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import { useSocialStore } from '../../stores/socialStore';
 import { NotificationsSheet } from '../../components/social/NotificationsSheet';
+import { FocusButton } from '../../components/today/FocusButton';
+import { focusButtonState } from '../../lib/startFocusTarget';
 import RecentActivity from '../../components/RecentActivity';
 import FormSheet from '../../components/FormSheet';
 import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
@@ -1670,7 +1672,7 @@ function HeroLabel({ text, color }: { text: string; color?: string }) {
 }
 
 // ─── Card 1: Urgency ──────────────────────────────────────────────────────────
-function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFocus: (id: string) => void }) {
+function UrgencyCard({ tasks, onTaskPress }: { tasks: Task[]; onTaskPress: (task: Task) => void }) {
   const Colors = useTheme();
   const { ROSE } = Colors;
   const AMBER = Colors.warning;
@@ -1705,21 +1707,20 @@ function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFo
     <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: accent }]}>
       <HeroLabel text={heading} color={accent} />
       {urgent.map(({ task: t, daysLeft }) => (
-        <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+        <TouchableOpacity
+          key={t.id}
+          onPress={() => onTaskPress(t)}
+          accessibilityRole="button"
+          accessibilityLabel={`${t.title}, ${dayLabel(daysLeft)}`}
+          style={{ flexDirection: 'row', alignItems: 'center', minHeight: 32, marginBottom: 4 }}
+        >
           <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: dayColor(daysLeft), marginRight: 10 }} />
           <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{t.title}</Text>
           <Text style={{ color: dayColor(daysLeft), fontSize: 12, fontWeight: '700', marginLeft: 8 }}>
             {dayLabel(daysLeft)}
           </Text>
-        </View>
+        </TouchableOpacity>
       ))}
-      <TouchableOpacity
-        onPress={() => onSelectAndFocus(urgent[0].task.id)}
-        accessibilityRole="button"
-        style={{ marginTop: 4, backgroundColor: accent + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: accent + '40' }}
-      >
-        <Text style={{ color: accent, fontWeight: '700', fontSize: 13 }}>Focus on this now →</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -1774,7 +1775,7 @@ function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPre
 }
 
 // ─── Card 3: Time Nudge ───────────────────────────────────────────────────────
-function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number | null; sessionHistory: SessionRecord[]; onFocus: () => void }) {
+function TimeNudgeCard({ peakHour, sessionHistory }: { peakHour: number | null; sessionHistory: SessionRecord[] }) {
   const Colors = useTheme();
   const styles = useMemo(() => getStyles(Colors), [Colors]);
   const now = new Date();
@@ -1801,9 +1802,6 @@ function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number
           <View key={i} style={{ flex: 1, height: Math.max(3, pct / 100 * 36), borderRadius: 2, backgroundColor: isPeak ? Colors.accent : pct >= 60 ? Colors.primarySoft : pct >= 25 ? Colors.primary + '60' : Colors.inactive }} />
         ))}
       </View>
-      <TouchableOpacity onPress={onFocus} style={{ backgroundColor: Colors.accent + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: Colors.accent + '40' }}>
-        <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13 }}>Start a session now →</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -1862,7 +1860,7 @@ function MomentumCard({ currentStreak, longestStreak, sessionHistory }: { curren
 }
 
 // ─── Card 5: Self-comparison ──────────────────────────────────────────────────
-function SelfComparisonCard({ sessionHistory, onFocus }: { sessionHistory: SessionRecord[]; onFocus: () => void }) {
+function SelfComparisonCard({ sessionHistory }: { sessionHistory: SessionRecord[] }) {
   const Colors = useTheme();
   const AMBER = Colors.warning;
   const styles = useMemo(() => getStyles(Colors), [Colors]);
@@ -1878,12 +1876,9 @@ function SelfComparisonCard({ sessionHistory, onFocus }: { sessionHistory: Sessi
     return (
       <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.primary }]}>
         <HeroLabel text="📊 Your progress" />
-        <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>
+        <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700' }}>
           Complete your first focus session to start tracking your progress.
         </Text>
-        <TouchableOpacity onPress={onFocus} style={{ backgroundColor: Colors.primary + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: Colors.primary + '40' }}>
-          <Text style={{ color: Colors.primarySoft, fontWeight: '700', fontSize: 13 }}>Start focusing →</Text>
-        </TouchableOpacity>
       </View>
     );
   }
@@ -1930,11 +1925,11 @@ function RecentActivityCard() {
 }
 
 // ─── HeroCard (swipe via RNGH Gesture.Pan + tappable dots) ────────────────────
-function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour, currentStreak, longestStreak, hasActivity, onSelectAndFocus, onGoalPress, onFocus }: {
+function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour, currentStreak, longestStreak, hasActivity, onTaskPress, onGoalPress }: {
   activeCard: HeroCardType; setCard: (c: HeroCardType) => void;
   tasks: Task[]; goals: TaskGoal[]; sessionHistory: SessionRecord[]; peakHour: number | null;
   currentStreak: number; longestStreak: number; hasActivity: boolean;
-  onSelectAndFocus: (id: string) => void; onGoalPress: (goalId: string) => void; onFocus: () => void;
+  onTaskPress: (task: Task) => void; onGoalPress: (goalId: string) => void;
 }) {
   const Colors = useTheme();
   // Only include cards that have real content — prevents empty cards (urgency with no
@@ -1983,13 +1978,13 @@ function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour,
 
   const renderCard = () => {
     switch (effectiveCard) {
-      case 'urgency':         return <UrgencyCard tasks={tasks} onSelectAndFocus={onSelectAndFocus} />;
+      case 'urgency':         return <UrgencyCard tasks={tasks} onTaskPress={onTaskPress} />;
       case 'goal_progress':   return <GoalProgressCard goals={goals} onGoalPress={onGoalPress} />;
-      case 'time_nudge':      return <TimeNudgeCard peakHour={peakHour} sessionHistory={sessionHistory} onFocus={onFocus} />;
+      case 'time_nudge':      return <TimeNudgeCard peakHour={peakHour} sessionHistory={sessionHistory} />;
       case 'momentum':        return <MomentumCard currentStreak={currentStreak} longestStreak={longestStreak} sessionHistory={sessionHistory} />;
-      case 'self_comparison': return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
+      case 'self_comparison': return <SelfComparisonCard sessionHistory={sessionHistory} />;
       case 'recent_activity': return <RecentActivityCard />;
-      default:                return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
+      default:                return <SelfComparisonCard sessionHistory={sessionHistory} />;
     }
   };
 
@@ -2194,6 +2189,18 @@ export default function TasksScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 2200);
   }, []);
 
+  // The task details sheet's "load timer". Refused while a focus session runs
+  // (stores/sessionLock): switching then would move the session's time to the
+  // other task. The toast says so, and screen readers hear it.
+  const loadTaskIntoTimer = useCallback((id: string) => {
+    setStatsTask(null);
+    if (taskActions.selectTask(id)) return;
+    const running = useTaskStore.getState().tasks.find((t) => t.id === useTaskStore.getState().selectedTaskId);
+    const message = `A session is running on ${running?.title ?? 'another task'}. Finish it to switch tasks.`;
+    showToast(message);
+    AccessibilityInfo.announceForAccessibility(message);
+  }, [taskActions, showToast]);
+
   // ── Date anchors — live clock, updates at the start of every minute ──
   const [now, setNow] = useState<Date>(() => new Date());
   useEffect(() => {
@@ -2272,7 +2279,6 @@ export default function TasksScreen() {
   const goalsForHero = goals; // goalStore exists; pass through
   const hero = useHeroCard({ tasks, goals: goalsForHero, sessionHistory, peakHour });
   const goToFocus = useCallback(() => router.push('/(tabs)/focus'), [router]);
-  const selectAndFocus = useCallback((id: string) => { taskActions.selectTask(id); router.push('/(tabs)/focus'); }, [taskActions, router]);
 
   // ── Task board ──
   // The main tab's top tasks and the See-more sections both come from here.
@@ -2285,6 +2291,38 @@ export default function TasksScreen() {
   );
   const topOpenTasks = useMemo(() => topTasks(nonArchived, now, TOP_TASK_COUNT), [nonArchived, now]);
   const hiddenOpenCount = board.notStarted.length + board.inProgress.length - topOpenTasks.length;
+
+  // ── Focus button ──
+  // The only start action at the top of Today. Every state only opens Focus;
+  // pressing play there is the next tap (design DD2). See lib/startFocusTarget.
+  const tasksLoaded = useTaskStore((s) => s.hasLoaded);
+  const tasksError = useTaskStore((s) => s.error);
+  const timerStatus = useTimerStore((s) => s.status);
+  const timerPhase = useTimerStore((s) => s.currentPhase);
+  const focusButton = focusButtonState({
+    topOpenTasks,
+    hasAnyTasks: tasks.length > 0 || recurringTemplates.length > 0,
+    hasLoaded: tasksLoaded,
+    loadFailed: tasksError != null,
+    status: timerStatus,
+    phase: timerPhase,
+    sessionTaskTitle: tasks.find((t) => t.id === selectedTaskId)?.title ?? null,
+  });
+  const onFocusButton = () => {
+    switch (focusButton.kind) {
+      case 'loading':
+        return;
+      case 'addFirstTask':
+        openCreate();
+        return;
+      case 'target':
+        taskActions.selectTask(focusButton.taskId);
+        goToFocus();
+        return;
+      default:
+        goToFocus();
+    }
+  };
   // All three sections always render so the categories stay put; an empty
   // section says what would put something there. With nothing at all, no
   // sections, so the list's own empty state shows instead.
@@ -2673,7 +2711,7 @@ export default function TasksScreen() {
             </>
           }
         />
-        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
         <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteTask(formTask) : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
         <Toast message={toast} />
@@ -2751,9 +2789,8 @@ export default function TasksScreen() {
           currentStreak={streak}
           longestStreak={longestStreak}
           hasActivity={hasActivity}
-          onSelectAndFocus={selectAndFocus}
+          onTaskPress={setStatsTask}
           onGoalPress={(goalId) => setStatsGoalId(goalId)}
-          onFocus={goToFocus}
         />
 
         <DailyTargetModal
@@ -2763,6 +2800,11 @@ export default function TasksScreen() {
           onCancel={() => setShowTargetPicker(false)}
           onSave={() => { setDailyFocusMinutes(draftTarget); setShowTargetPicker(false); }}
         />
+
+        {/* Focus — below the summary, so the plan is read before acting (DD1) */}
+        <View style={{ paddingHorizontal: 20, marginBottom: 28 }}>
+          <FocusButton state={focusButton} onPress={onFocusButton} />
+        </View>
 
         {/* Zone 2 — Task List */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
@@ -2835,7 +2877,7 @@ export default function TasksScreen() {
       </ScrollView>
 
       {/* Modals */}
-      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
       <GoalStatsModal
         goalId={statsGoalId}
         lastSessionAt={lastSessionOnGoal(statsGoalId, tasks, sessionHistory)}
