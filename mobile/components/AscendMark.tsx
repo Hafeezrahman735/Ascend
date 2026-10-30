@@ -1,8 +1,6 @@
 import { useId } from 'react';
-import { View, Text } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
 import { useTheme } from '../hooks/useTheme';
-import { Font } from '../constants/typography';
 
 /**
  * The orbit-tail mark — the app's one visual signature.
@@ -17,9 +15,9 @@ import { Font } from '../constants/typography';
  * carries the mark and the fade just reads as weight. Rendered in `accent`, the
  * colour that already means done/progress everywhere else in the app.
  *
- * Kept to three places on purpose — the wordmark, the Ascend tab icon, and the
- * live Focus ring. Sprinkling it onto other screens as decoration is what would
- * cost it its recognisability.
+ * Kept to two places on purpose — the sign-in screen and the live Focus ring.
+ * Sprinkling it onto other screens as decoration is what would cost it its
+ * recognisability.
  */
 
 const VB = 72;          // viewBox, so geometry stays in one readable unit
@@ -60,44 +58,5 @@ export function AscendMark({ size = 28, color, trackColor }: {
       />
       <Circle cx={VB / 2} cy={VB / 2 - R} r={STROKE} fill={tint} />
     </Svg>
-  );
-}
-
-/**
- * Mark + name, locked up. The one place the brand states itself: the Ascend tab
- * header and the sign-in screen.
- */
-export function AscendWordmark({ size = 25, showTagline = false }: {
-  size?: number;
-  showTagline?: boolean;
-}) {
-  const Colors = useTheme();
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-      <AscendMark size={size} />
-      <View>
-        <Text style={{
-          color: Colors.textBright,
-          fontFamily: Font.display,
-          fontSize: size,
-          letterSpacing: -0.7,
-          lineHeight: size * 1.15,
-        }}>
-          Ascend
-        </Text>
-        {showTagline && (
-          <Text style={{
-            color: Colors.subtext,
-            fontFamily: Font.mono,
-            fontSize: 10,
-            letterSpacing: 1.3,
-            marginTop: 5,
-          }}>
-            PLAN IT. LOCK IN. ASCEND.
-          </Text>
-        )}
-      </View>
-    </View>
   );
 }

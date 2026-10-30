@@ -1,1770 +1,2857 @@
-/**
- * Ascend — the landing tab.
- *
- * This is the screen formerly known as Circle/Social. It owns the (tabs) index
- * route on purpose: the app opens on what the people around you have been
- * doing, and the timer is one tap away at /(tabs)/focus rather than the front
- * door. The store, the API surface and every type below are unchanged — only
- * the route position and the name moved.
- */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
-  View, Text, Pressable, FlatList, ScrollView,
-  TextInput, ActivityIndicator, Modal, RefreshControl,
-  KeyboardAvoidingView, Platform, Share, Image, Alert,
+  View, Text, TouchableOpacity, ScrollView, SectionList, Modal, TextInput,
+  Alert, Platform, Animated,
+  StyleSheet, KeyboardAvoidingView, ActivityIndicator, Switch,
+  useWindowDimensions,
 } from 'react-native';
-import type { TextInputInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Swipeable, { SwipeDirection, type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
+import { Task, TaskGoal, TaskAnalytics, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
+import { useTheme, useIsDark, type ThemeColors } from '../../hooks/useTheme';
+import { getSessionPlan } from '../../lib/sessionPlan';
+import { useAppForeground } from '../../hooks/useAppState';
+import { useTasksList, useSelectedTaskId, useTaskActions, useSettings } from '../../store/hooks';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useShallow } from 'zustand/react/shallow';
-import { useSocialStore } from '../../stores/socialStore';
-import { api } from '../../services/api';
-import { useAuthStore } from '../../stores/authStore';
-import { useGamification } from '../../store/hooks';
-import { useTimerStore } from '../../stores/timerStore';
-import { getSessionHistory, type SessionRecord } from '../../store/sync';
-import { useTheme, type ThemeColors } from '../../hooks/useTheme';
-import { makePostTypeMeta, FREE_TAG_META } from '../../constants/socialTheme';
-import { AscendWordmark } from '../../components/AscendMark';
-import {
-  RecapCardShell, RecapCardHeader, RecapCardLabel, RecapStats,
-  type RecapStat,
-} from '../../components/recap/RecapCard';
-import { computeTodayRecap, isRecapEmpty, formatRecapDuration } from '../../lib/todayRecap';
+import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
+import { urgentTasks } from '../../lib/heroCard';
+import { nextOccurrenceLabel, type RecurringTemplate } from '../../lib/recurringDisplay';
+import { buildTaskBoard, topTasks, type BoardItem } from '../../lib/taskBoard';
 import { useTaskStore } from '../../stores/taskStore';
-import { useUserProfileStore } from '../../stores/userProfileStore';
-import { getLocalDateString } from '../../utils/date';
-import { Font } from '../../constants/typography';
-import type { SocialPost, StudyGroup, FocusLeaderboardEntry, PostType, FreePostTag, AttachedStat } from '../../types';
+import { useGoalStore } from '../../stores/goalStore';
+import { useSocialStore } from '../../stores/socialStore';
+import { NotificationsSheet } from '../../components/social/NotificationsSheet';
+import RecentActivity from '../../components/RecentActivity';
+import FormSheet from '../../components/FormSheet';
+import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
+import AppPressable from '../../components/AppPressable';
+import GoalStatsModal from '../../components/GoalStatsModal';
+import TaskPicker, { SelectedTaskList } from '../../components/TaskMultiSelect';
+import TimeAnalyticsView, { type Lens } from '../../components/timeReport/TimeAnalyticsView';
+import TimeCard from '../../components/timeReport/TimeCard';
+import type { ReportPeriod } from '../../hooks/useTimeReport';
+import { lastSessionOnGoal, sortGoalsByUrgency, type GoalStatusAction } from '../../lib/goalStats';
+import { useAuthStore } from '../../stores/authStore';
+import { useTimerStore, syncQueuedSessions } from '../../stores/timerStore';
+import { useGamificationStore } from '../../stores/gamificationStore';
+import { getSessionHistory, mergeWithServerSessions, type SessionRecord } from '../../store/sync';
+import { api } from '../../services/api';
+import { getQueuedSessionIds } from '../../services/sessionOutbox';
+import { priorityColor, priorityLabel } from '../../utils/priority';
+import {
+  daysUntilLocalDate, formatDeadlineLabel,
+  parseLocalDate, pickerAcceptsValue, pickerMinimumDate,
+} from '../../utils/date';
+import {
+  useTagStyle, useTagOverrideStore, TAG_COLOR_TOKENS, TAG_ICONS,
+  getTagColor, getTagIcon, type TagColorKey,
+} from '../../utils/tagStyle';
+import { Space, Radius } from '../../constants/spacing';
+import {
+  getMonday, isToday, formatSeconds,
+  formatDuration, getDueChip, isYesterdayLocal,
+  startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
+  getPeakHour, formatPeakWindow, getCompletionRate, formatOverdue,
+  compactDuration,
+  formatEstimateDelta, formatLastWorked, formatConsistency,
+} from '../../lib/taskMetrics';
+import { stepGoalMinutes, GOAL_MIN_MINUTES, GOAL_MAX_MINUTES } from '../../lib/dailyTarget';
+import { parsePlannedHours, plannedHoursText } from '../../lib/timeAnalytics';
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Design tokens ────────────────────────────────────────────────────────────
+// ROSE / ROSE_DIM / AMBER now come from the theme — each component destructures
+// them from `Colors` (AMBER maps to Colors.warning to preserve the exact dark hue).
+const DAY_LABELS = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
+const PRIORITIES = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'urgent', label: 'Urgent' },
+] as const;
+const ALL_DAYS: DayOfWeek[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+// How many open tasks the main tab leads with before "See more".
+const TOP_TASK_COUNT = 3;
 
-const AVATAR_EMOJIS = ['🦊','🐸','🦁','🐳','🦉','🐰','🦋','🐙','🦚','🐻','🦝','🐵'];
-const REACTIONS = ['🔥','🫡','❤️','💪'] as const;
 
-// Theme-aware group chip palettes, derived from the active Colors object.
-function groupBg(c: ThemeColors): Record<string, string> {
-  return { purple: c.primaryDim, teal: c.accentDim, amber: c.AMBER_DIM, rose: c.ROSE_DIM };
-}
-function groupBorderColor(c: ThemeColors): Record<string, string> {
-  return { purple: c.primary, teal: c.accent, amber: c.AMBER, rose: c.ROSE };
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getAvatarEmoji(seed: string): string {
-  let h = 0;
-  for (const c of seed) h = ((h * 31) + c.charCodeAt(0)) & 0x7fffffff;
-  return AVATAR_EMOJIS[h % AVATAR_EMOJIS.length];
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return d === 1 ? 'Yesterday' : `${d}d ago`;
-}
-
-function formatFocusMinutes(mins: number): string {
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-function isGoldRank(rank: string): boolean {
-  return rank === 'Champion' || rank === 'Legend';
-}
-
-// ─── Focus Group chips ───────────────────────────────────────────────────────
-
-function GroupChip({ group, selected, onPress }: {
-  group: StudyGroup; selected: boolean; onPress: () => void;
-}) {
-  const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const GROUP_BG = groupBg(Colors);
-  const GROUP_BORDER_COLOR = groupBorderColor(Colors);
-  const border = selected ? Colors.primary : (GROUP_BORDER_COLOR[group.color] ?? Colors.border);
-  const bg = GROUP_BG[group.color] ?? SURFACE;
-  return (
-    <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
-      <View style={{
-        width: 44, height: 44, borderRadius: 14, backgroundColor: bg,
-        borderWidth: selected ? 2 : 1, borderColor: border,
-        alignItems: 'center', justifyContent: 'center',
-        ...(selected ? { shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 8, elevation: 4 } : {}),
-      }}>
-        <Text style={{ fontSize: 22 }}>{group.emoji}</Text>
-        {group.hasRecentActivity && (
-          <View style={{
-            position: 'absolute', bottom: -2, right: -2,
-            width: 10, height: 10, borderRadius: 5,
-            backgroundColor: Colors.accent, borderWidth: 1.5, borderColor: Colors.bg,
-          }} />
-        )}
-      </View>
-      <Text numberOfLines={1} style={{ color: Colors.subtext, fontSize: 10, marginTop: 4, textAlign: 'center', width: 60 }}>
-        {group.name}
-      </Text>
-    </Pressable>
-  );
-}
-
-/**
- * The public feed as a chip, sitting first in the same row as the groups.
- * Where a post goes and where you read it are the same set of destinations, so
- * they belong in one strip. "No group selected" used to mean the public feed
- * implicitly, with nothing on screen saying so.
- */
-function PublicFeedChip({ selected, onPress }: { selected: boolean; onPress: () => void }) {
+// ─── ZoneHeader ───────────────────────────────────────────────────────────────
+function ZoneHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => void }) {
   const Colors = useTheme();
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      accessibilityLabel="Public feed"
-      style={{ alignItems: 'center', marginRight: 12, width: 64 }}
-    >
-      <View style={{
-        width: 44, height: 44, borderRadius: 14,
-        backgroundColor: selected ? Colors.primary : Colors.surface,
-        borderWidth: selected ? 2 : 1,
-        borderColor: selected ? Colors.primary : Colors.border,
-        alignItems: 'center', justifyContent: 'center',
-        ...(selected ? { shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 8, elevation: 4 } : {}),
-      }}>
-        <Ionicons name="earth" size={22} color={selected ? '#fff' : Colors.subtext} />
-      </View>
-      <Text numberOfLines={1} style={{
-        color: selected ? Colors.primarySoft : Colors.subtext,
-        fontSize: 10, marginTop: 4, textAlign: 'center', width: 60,
-        fontWeight: selected ? '700' : '400',
-      }}>
-        Public
-      </Text>
-    </Pressable>
-  );
-}
-
-function JoinChip({ onPress }: { onPress: () => void }) {
-  const Colors = useTheme();
-  return (
-    <Pressable onPress={onPress} style={{ alignItems: 'center', marginRight: 12, width: 64 }}>
-      <View style={{
-        width: 44, height: 44, borderRadius: 14,
-        borderWidth: 1.5, borderColor: Colors.border,
-        alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Ionicons name="add" size={20} color={Colors.subtext} />
-      </View>
-      <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 4 }}>Join</Text>
-    </Pressable>
-  );
-}
-
-// ─── Post type tag ───────────────────────────────────────────────────────────
-
-
-function PostTypeTag({ type, contentTag }: { type: PostType; contentTag?: FreePostTag | null }) {
-  const Colors = useTheme();
-  const POST_TYPE_META = makePostTypeMeta(Colors);
-  const base = POST_TYPE_META[type];
-  const label = type === 'free_post' && contentTag
-    ? `${FREE_TAG_META[contentTag].emoji} ${FREE_TAG_META[contentTag].label}`
-    : base.label;
-  return (
-    <View style={{
-      alignSelf: 'flex-start', backgroundColor: base.bg, borderRadius: 8,
-      paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8,
-    }}>
-      <Text style={{ color: base.color, fontSize: 11, fontWeight: '600' }}>{label}</Text>
-    </View>
-  );
-}
-
-// ─── The stat row a post carries ─────────────────────────────────────────────
-
-/**
- * Which numbers this post puts on its receipt.
- *
- * One function rather than a stat block per post type, because the row is the
- * card's constant: whatever kind of post it is, the reader looks in the same
- * place for "what did they actually do". A type with nothing to count returns
- * an empty row and the card simply has no stats — that is a valid post, not a
- * missing one.
- *
- * A count of 1 gets a singular label. "1 SESSIONS" on a card whose whole job is
- * to look like an honest receipt undoes a lot of that work for one character.
- */
-function recapStatsFor(post: SocialPost): RecapStat[] {
-  if (post.type === 'session_recap') {
-    const sessions = post.sessionCount ?? 0;
-    const stats: RecapStat[] = [
-      { label: sessions === 1 ? 'SESSION' : 'SESSIONS', value: String(sessions) },
-      { label: 'FOCUSED', value: formatFocusMinutes(post.focusMinutes ?? 0) },
-    ];
-    // Only on auto-generated daily recaps; a hand-written recap has no task count
-    // and must not be given a fake zero.
-    if (post.tasksCompleted != null) {
-      stats.push({ label: post.tasksCompleted === 1 ? 'TASK DONE' : 'TASKS DONE', value: String(post.tasksCompleted) });
-    }
-    if (post.streakAtPost != null) {
-      stats.push({ label: 'STREAK', value: `${post.streakAtPost}d`, emphasis: true });
-    }
-    return stats;
-  }
-
-  if (post.type === 'streak_milestone') {
-    return [
-      { label: 'STREAK', value: `${post.streakAtPost ?? 0}d`, emphasis: true },
-      { label: 'SESSIONS', value: String(post.totalSessionsAtPost ?? 0) },
-      { label: 'ALL-TIME FOCUS', value: `${post.totalFocusHoursAtPost ?? 0}h` },
-    ];
-  }
-
-  // Whatever the author chose to attach to a written post.
-  if (post.type === 'free_post') {
-    return (post.attachedStats ?? []).map((s) => ({ label: s.label.toUpperCase(), value: s.value }));
-  }
-
-  return [];
-}
-
-// ─── Type-specific content blocks ────────────────────────────────────────────
-
-function AchievementUnlockBlock({ post }: { post: SocialPost }) {
-  const Colors = useTheme();
-  const { GOLD, GOLD_DIM } = Colors;
-  return (
-    <View style={{
-      backgroundColor: GOLD_DIM, borderRadius: 12, borderWidth: 1,
-      borderColor: GOLD + '40', padding: 12, marginBottom: 10,
-      flexDirection: 'row', alignItems: 'center',
-    }}>
-      <Text style={{ fontSize: 32, marginRight: 12 }}>{post.achievementIcon ?? '🏅'}</Text>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: GOLD, fontWeight: '700', fontSize: 14 }}>{post.achievementName ?? 'Achievement'}</Text>
-        {post.achievementDescription ? (
-          <Text style={{ color: Colors.text, fontSize: 12, marginTop: 2 }}>{post.achievementDescription}</Text>
-        ) : null}
-        {post.achievementXpReward != null && (
-          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 3 }}>
-            +{post.achievementXpReward} XP{post.achievementRank ? ` · ${post.achievementRank} rank` : ''}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-function AccountabilityBlock({ post }: { post: SocialPost }) {
-  const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  // Captured once on mount rather than read during render. Date.now() in a render
-  // body returns a different value on every re-render, so "3 days left" could
-  // disagree between two renders of the same frame — and React is free to render
-  // without committing. A feed card's countdown does not need to tick anyway: it
-  // means "as of when you opened the feed", which is what this now says.
-  //
-  // Above the early return below, because a hook has to run on every render.
-  const [now] = useState(() => Date.now());
-  const ch = post.challenge;
-  if (!ch) return null;
-  const completed = Object.values(ch.memberProgress).reduce((a, b) => a + b, 0);
-  const pct = ch.targetValue > 0 ? Math.min(100, Math.round((completed / ch.targetValue) * 100)) : 0;
-  const dl = Math.ceil((new Date(ch.deadline).getTime() - now) / 86400000);
-  return (
-    <View style={{
-      backgroundColor: Colors.accentDim, borderRadius: 12, borderWidth: 1,
-      borderColor: Colors.accent + '40', padding: 12, marginBottom: 10,
-    }}>
-      <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13, marginBottom: 6 }}>
-        🎯 Group Challenge
-      </Text>
-      <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 8 }}>{ch.title}</Text>
-      <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 6 }}>
-        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.accent }} />
-      </View>
-      <Text style={{ color: Colors.subtext, fontSize: 11 }}>
-        {ch.metric === 'focus_hours'
-          ? `${completed.toFixed(1)} / ${Number(ch.targetValue).toFixed(1)} focus hours`
-          : `${completed} / ${ch.targetValue} sessions`}
-        {` · ${pct}% · `}{dl > 0 ? `${dl} days left` : 'Deadline passed'}
-      </Text>
-      {(ch.memberEmojis ?? []).length > 0 && (
-        <View style={{ flexDirection: 'row', marginTop: 8 }}>
-          {(ch.memberEmojis ?? []).slice(0, 5).map((e, i) => (
-            <View key={i} style={{
-              width: 24, height: 24, borderRadius: 7, backgroundColor: SURFACE,
-              alignItems: 'center', justifyContent: 'center', marginRight: 4,
-            }}>
-              <Text style={{ fontSize: 14 }}>{e}</Text>
-            </View>
-          ))}
-        </View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+      <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{title}</Text>
+      {onSeeMore && (
+        <TouchableOpacity onPress={onSeeMore}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>See more →</Text>
+        </TouchableOpacity>
       )}
     </View>
   );
 }
 
-// ─── Your own recap, today ───────────────────────────────────────────────────
 
-/**
- * The card at the top of your feed.
- *
- * Drawn from the device's own session and task caches, never from the feed
- * response. Three things follow from that, and all three are the point:
- *
- *  - the landing screen is never empty, even for somebody who installed the app
- *    a minute ago and follows nobody;
- *  - it is correct the instant a session ends, rather than after the next feed
- *    fetch happens to come back;
- *  - it works offline.
- *
- * The server writes an equivalent post for other people to see. This is not
- * that post — it is the same day told locally, which is why the matching server
- * post is filtered out of the list below rather than rendered twice.
- */
-function OwnRecapCard({ emoji, sessionCount, focusSeconds, tasksCompleted, streakDays, onStartSession }: {
-  emoji: string;
-  sessionCount: number;
-  focusSeconds: number;
-  tasksCompleted: number;
-  streakDays: number;
-  onStartSession: () => void;
+// ─── TaskStatsModal ───────────────────────────────────────────────────────────
+// sessionLengthMinutes stays in the prop type (callers still pass it) but is not
+// read here — the modal shows actual logged time, not the configured length.
+function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }: {
+  task: Task | null; sessionLengthMinutes: number;
+  onClose: () => void; onLoadTimer: (taskId: string) => void; onToggleComplete: (taskId: string) => void;
+  onEdit: (taskId: string) => void;
 }) {
   const Colors = useTheme();
-  const empty = isRecapEmpty({ sessionCount, focusSeconds, tasksCompleted, streakDays });
+  const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
+  const [analyticsError, setAnalyticsError] = useState(false);
 
-  const stats: RecapStat[] = [
-    { label: sessionCount === 1 ? 'SESSION' : 'SESSIONS', value: String(sessionCount) },
-    { label: 'FOCUSED', value: formatRecapDuration(focusSeconds) },
-    { label: tasksCompleted === 1 ? 'TASK DONE' : 'TASKS DONE', value: String(tasksCompleted) },
-    { label: 'STREAK', value: `${streakDays}d`, emphasis: true },
-  ];
+  useEffect(() => {
+    if (!task) return;
+    setAnalytics(null); setAnalyticsError(false);
+    // The server buckets every day and hour in the zone we send. Without it it
+    // falls back to UTC, which is what made "peak hour" wrong by a full offset
+    // for every user outside it.
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    api.get<{ analytics: TaskAnalytics } & Task>(`/tasks/${task.id}?tz=${encodeURIComponent(tz)}`)
+      .then((res) => { if (res.success && res.data) setAnalytics((res.data as any).analytics); else setAnalyticsError(true); })
+      .catch(() => setAnalyticsError(true));
+  }, [task?.id]);
+
+  const categoryTag = task?.tags[0] ?? null;
+  const tagStyle = useTagStyle(categoryTag ?? '');
+
+  if (!task) return null;
+  const isPending = !task.isCompleted;
+  const prioColor = priorityColor(task.priority);
+  // Deliberately NOT clamped to 1. BentoRingCell clamps the arc it draws, so
+  // the ring still reads correctly, while the centre label is free to say 240%
+  // — which is the number an over-running task most needs to show.
+  const progressFrac = task.estimatedMinutes ? task.totalTimeOnTask / (task.estimatedMinutes * 60) : null;
+  // Until analytics land, the server-derived cells show an em-dash; sessions come from the task itself.
+  const ready = !!analytics;
+  const val = (v: string) => (ready ? v : '—');
+  // Read from `task`, not from `analytics`. Every other cell in the grid is
+  // derived and arrives with GET /tasks/:id, so it shows an em-dash behind a
+  // spinner first. A deadline is known locally and instantly, and it is the
+  // INPUT to the decision this sheet exists to support rather than a
+  // measurement of it — so it must not arrive late with the averages.
+  const dueChip = getDueChip(task, Colors);
+  const dueDateLabel = task.dueDate
+    ? parseLocalDate(task.dueDate.substring(0, 10))
+        .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    : null;
+  const isOverdue = !task.isCompleted && !!dueChip?.a11yLabel.includes('overdue');
 
   return (
-    <RecapCardShell own>
-      <RecapCardLabel text="YOUR RECAP · TODAY" />
-      <RecapCardHeader
-        emoji={emoji}
-        name="You"
-        meta={empty ? 'Nothing yet · Public' : 'Today · Public'}
-      />
-
-      {empty ? (
-        // An invitation, not a scolding. The empty state is the first thing a
-        // new user ever sees on this screen, and it should read as a door.
-        <>
-          <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 19, marginBottom: 12 }}>
-            No recap yet today. Run a session and it shows up here.
-          </Text>
-          <Pressable
-            onPress={onStartSession}
+    <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.66}>
+      {/* header */}
+      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 11 }}>
+          <Text numberOfLines={2} style={{ flex: 1, marginRight: 12, color: Colors.textBright, fontSize: 19, fontWeight: '700', lineHeight: 24, letterSpacing: -0.3 }}>{task.title}</Text>
+          <AppPressable
+            onPress={onClose}
             accessibilityRole="button"
-            style={{
-              alignSelf: 'flex-start', backgroundColor: Colors.primary,
-              borderRadius: 20, paddingHorizontal: 18, paddingVertical: 9,
-            }}
+            accessibilityLabel="Close"
+            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            style={{ width: 30, height: 30, borderRadius: Radius.sm, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Start a session</Text>
-          </Pressable>
-        </>
-      ) : (
-        <RecapStats stats={stats} />
-      )}
-    </RecapCardShell>
-  );
-}
-
-// ─── Header streak pill ──────────────────────────────────────────────────────
-
-function StreakPill({ days }: { days: number }) {
-  const Colors = useTheme();
-  return (
-    <View
-      accessibilityLabel={`${days} day streak`}
-      style={{
-        flexDirection: 'row', alignItems: 'center', gap: 5,
-        backgroundColor: Colors.accentDim, borderRadius: 9,
-        paddingHorizontal: 10, paddingVertical: 6, marginRight: 10,
-      }}
-    >
-      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.accent }} />
-      <Text style={{ color: Colors.accent, fontFamily: Font.monoMedium, fontSize: 12 }}>{days}d</Text>
-    </View>
-  );
-}
-
-// ─── Reaction row ────────────────────────────────────────────────────────────
-
-function ReactionRow({ post, currentUserId, onToggle }: {
-  post: SocialPost; currentUserId: string; onToggle: (emoji: string) => void;
-}) {
-  const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const { BORDER_SOFT } = Colors;
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      {REACTIONS.map((emoji) => {
-        const count = (post.reactions[emoji] ?? []).length;
-        const reacted = (post.reactions[emoji] ?? []).includes(currentUserId);
-        return (
-          <Pressable
-            key={emoji}
-            onPress={() => onToggle(emoji)}
-            style={{
-              flexDirection: 'row', alignItems: 'center',
-              backgroundColor: reacted ? Colors.primaryDim : SURFACE,
-              borderWidth: 1, borderColor: reacted ? Colors.primary : BORDER_SOFT,
-              borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 6,
-            }}
-          >
-            <Text style={{ fontSize: 13 }}>{emoji}</Text>
-            {count > 0 && (
-              <Text style={{ color: reacted ? Colors.primarySoft : Colors.subtext, fontSize: 11, marginLeft: 4, fontWeight: '600' }}>
-                {count}
-              </Text>
-            )}
-          </Pressable>
-        );
-      })}
-      <Pressable
-        onPress={() => Share.share({ message: 'Check out this study post!' })}
-        style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center' }}
-      >
-        <Ionicons name="share-outline" size={14} color={Colors.subtext} />
-        <Text style={{ color: Colors.subtext, fontSize: 12, marginLeft: 4 }}>Share</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-// ─── Free Post block ─────────────────────────────────────────────────────────
-
-/**
- * The photo on a written post. Any stats the author attached are drawn by the
- * card's own stat row (see recapStatsFor) rather than here, so every card puts
- * its numbers in the same place regardless of type.
- */
-function FreePostBlock({ post }: { post: SocialPost }) {
-  const [photoFullscreen, setPhotoFullscreen] = useState(false);
-  if (!post.photoUrl) return null;
-
-  return (
-    <View style={{ marginBottom: 10 }}>
-      <Pressable onPress={() => setPhotoFullscreen(true)}>
-        <Image
-          source={{ uri: post.photoUrl }}
-          style={{ width: '100%', height: 220, borderRadius: 12 }}
-          resizeMode="cover"
-        />
-      </Pressable>
-      <Modal visible={photoFullscreen} transparent animationType="fade" onRequestClose={() => setPhotoFullscreen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: '#000000EE', justifyContent: 'center' }} onPress={() => setPhotoFullscreen(false)}>
-          <Image source={{ uri: post.photoUrl! }} style={{ width: '100%', height: '70%' }} resizeMode="contain" />
-        </Pressable>
-      </Modal>
-    </View>
-  );
-}
-
-// ─── Post card ───────────────────────────────────────────────────────────────
-
-function PostCard({ post, currentUserId, onToggleReaction, onAuthorPress }: {
-  post: SocialPost; currentUserId: string;
-  onToggleReaction: (postId: string, emoji: string) => void;
-  onAuthorPress?: (authorId: string) => void;
-}) {
-  const Colors = useTheme();
-  const { BORDER_SOFT, GOLD } = Colors;
-  const rankColor = isGoldRank(post.authorRank) ? GOLD : Colors.primarySoft;
-  const isOwnPost = post.authorId === currentUserId;
-
-  const handleReport = () => {
-    Alert.alert(
-      'Report Post',
-      'Report this post as inappropriate? Our team will review it.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Report',
-          style: 'destructive',
-          onPress: async () => {
-            await api.post(`/social/posts/${post.id}/report`, { reason: 'inappropriate' });
-            Alert.alert('Reported', 'Thanks — we\'ll review this post.');
-          },
-        },
-      ],
-    );
-  };
-
-  // A daily recap is drawn as the receipt itself: its numbers ARE the post, so
-  // it gets no type tag and no pill block above them. Every other type keeps its
-  // own body and simply sits inside the same frame.
-  const isDailyRecap = post.type === 'session_recap' && post.auto === true;
-  const stats = recapStatsFor(post);
-
-  return (
-    <RecapCardShell>
-      <Pressable onPress={() => onAuthorPress?.(post.authorId)}>
-        <RecapCardHeader
-          emoji={post.authorEmoji || getAvatarEmoji(post.authorId)}
-          name={post.authorName}
-          meta={`${timeAgo(post.createdAt)}${post.groupName ? ` · ${post.groupName}` : ' · Public'}`}
-          trailing={
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{
-                backgroundColor: rankColor + '22', borderRadius: 7,
-                paddingHorizontal: 8, paddingVertical: 4,
-              }}>
-                <Text style={{ color: rankColor, fontSize: 10, fontWeight: '600' }}>{post.authorRank}</Text>
-              </View>
-              {!isOwnPost && (
-                <Pressable
-                  onPress={handleReport}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  style={{ padding: 4, marginLeft: 6 }}
-                  accessibilityLabel="Report post"
-                >
-                  <Ionicons name="flag-outline" size={16} color={Colors.subtext} />
-                </Pressable>
-              )}
-            </View>
-          }
-        />
-      </Pressable>
-
-      {!isDailyRecap && <PostTypeTag type={post.type} contentTag={post.contentTag} />}
-
-      {post.caption ? (
-        <Text style={{ color: Colors.text, fontSize: 13, marginBottom: 10, lineHeight: 19 }}>
-          {post.caption}
-        </Text>
-      ) : null}
-
-      {post.type === 'achievement_unlock' && <AchievementUnlockBlock post={post} />}
-      {post.type === 'accountability'     && <AccountabilityBlock post={post} />}
-      {post.type === 'free_post'          && <FreePostBlock post={post} />}
-
-      {stats.length > 0 && <RecapStats stats={stats} />}
-
-      <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginVertical: 11 }} />
-
-      <ReactionRow
-        post={post}
-        currentUserId={currentUserId}
-        onToggle={(emoji) => onToggleReaction(post.id, emoji)}
-      />
-    </RecapCardShell>
-  );
-}
-
-// ─── Leaderboard podium ──────────────────────────────────────────────────────
-
-const MEDALS = ['🥇', '🥈', '🥉'];
-const PODIUM_HEIGHTS = [48, 36, 28];
-const PODIUM_ORDER = [1, 0, 2];
-
-function PodiumEntry({ entry, pos }: { entry: FocusLeaderboardEntry; pos: number }) {
-  const Colors = useTheme();
-  const RAISED = Colors.raised;
-  const { BORDER_SOFT, GOLD } = Colors;
-  const isFirst = pos === 0;
-  const borderColor = pos === 0 ? GOLD : pos === 1 ? '#C0C0C080' : '#CD7F3280';
-  return (
-    <View style={{ alignItems: 'center', flex: 1 }}>
-      <Text style={{ fontSize: 12, marginBottom: 4 }}>{MEDALS[pos]}</Text>
-      <View style={{
-        width: 44, height: 44, borderRadius: 13, backgroundColor: RAISED,
-        alignItems: 'center', justifyContent: 'center',
-        borderWidth: isFirst ? 2 : 1, borderColor,
-        ...(isFirst ? { shadowColor: GOLD, shadowOpacity: 0.5, shadowRadius: 10, elevation: 6 } : {}),
-      }}>
-        <Text style={{ fontSize: 22 }}>{entry.avatarEmoji}</Text>
-      </View>
-      <Text numberOfLines={1} style={{
-        color: Colors.textBright, fontSize: 11, fontWeight: '600',
-        marginTop: 4, width: 64, textAlign: 'center',
-      }}>
-        {entry.displayName}
-      </Text>
-      <Text style={{ color: isFirst ? GOLD : Colors.text, fontSize: 12, fontWeight: '700' }}>
-        {formatFocusMinutes(entry.focusMinutes)}
-      </Text>
-      <View style={{
-        width: '75%', height: PODIUM_HEIGHTS[pos], borderRadius: 6, marginTop: 4,
-        backgroundColor: isFirst ? GOLD + '28' : RAISED,
-        borderWidth: 1, borderColor: isFirst ? GOLD + '50' : BORDER_SOFT,
-      }} />
-    </View>
-  );
-}
-
-function PodiumBlock({ entries }: { entries: FocusLeaderboardEntry[] }) {
-  const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const { BORDER_SOFT } = Colors;
-  const top3 = entries.slice(0, 3);
-  const ordered = PODIUM_ORDER.map((i) => top3[i]).filter(Boolean) as FocusLeaderboardEntry[];
-  return (
-    <View style={{
-      backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1, borderColor: BORDER_SOFT,
-      marginHorizontal: 16, marginBottom: 12, padding: 16, paddingTop: 20,
-    }}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
-        {ordered.map((e, i) => (
-          <PodiumEntry key={e.userId} entry={e} pos={PODIUM_ORDER[i]} />
-        ))}
-      </View>
-    </View>
-  );
-}
-
-// ─── Leaderboard list row ────────────────────────────────────────────────────
-
-function LeaderboardListRow({ entry }: { entry: FocusLeaderboardEntry }) {
-  const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const RAISED = Colors.raised;
-  const { GOLD, ROSE } = Colors;
-  const posColor = entry.position <= 5 ? Colors.primarySoft : Colors.subtext;
-  const rankColor = isGoldRank(entry.rank) ? GOLD : Colors.primarySoft;
-  const delta = entry.positionDelta;
-  const deltaColor = delta == null ? Colors.subtext : delta > 0 ? Colors.accent : delta < 0 ? ROSE : Colors.subtext;
-  const deltaText = delta == null ? null : delta > 0 ? `↑${delta}` : delta < 0 ? `↓${Math.abs(delta)}` : '–';
-
-  return (
-    <View style={{
-      flexDirection: 'row', alignItems: 'center',
-      paddingVertical: 11, paddingHorizontal: 16,
-      backgroundColor: entry.isMe ? RAISED : 'transparent',
-      borderWidth: entry.isMe ? 1 : 0, borderColor: Colors.primary,
-      borderRadius: entry.isMe ? 12 : 0,
-      marginHorizontal: entry.isMe ? 12 : 0,
-      marginVertical: entry.isMe ? 4 : 0,
-    }}>
-      <Text style={{ color: posColor, fontSize: 13, fontWeight: '700', width: 26 }}>
-        #{entry.position}
-      </Text>
-      <View style={{
-        width: 32, height: 32, borderRadius: 9, backgroundColor: SURFACE,
-        alignItems: 'center', justifyContent: 'center', marginRight: 10,
-      }}>
-        <Text style={{ fontSize: 18 }}>{entry.avatarEmoji}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 13 }}>{entry.displayName}</Text>
-          {entry.isMe && (
-            <View style={{ marginLeft: 5, backgroundColor: Colors.primaryDim, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-              <Text style={{ color: Colors.primary, fontSize: 9, fontWeight: '700' }}>YOU</Text>
+            <Ionicons name="close" size={16} color={Colors.text} />
+          </AppPressable>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {categoryTag && (
+            <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: tagStyle.bg }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
             </View>
           )}
-          <View style={{ marginLeft: 5, backgroundColor: rankColor + '22', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1 }}>
-            <Text style={{ color: rankColor, fontSize: 9, fontWeight: '600' }}>{entry.rank}</Text>
+          <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: prioColor + '22' }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
           </View>
         </View>
-        <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 1 }}>{entry.currentStreak}d streak</Text>
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '700' }}>
-          {formatFocusMinutes(entry.focusMinutes)}
-        </Text>
-        {deltaText && (
-          <Text style={{ color: deltaColor, fontSize: 11 }}>{deltaText}</Text>
+      <View style={{ height: 1, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
+        {/* Stat bento. Cell SIZE carries rank here, which the previous six
+            equal cells at flexBasis:'47%' could not: the ring is the number
+            people open this sheet for, so it is the only large thing.
+
+            The ring shows estimate consumed, NOT the misnamed old
+            `estimationAccuracy` — see formatEstimateDelta for why a percentage
+            was actively misleading above 100%. Tasks with no estimate have no
+            ring to draw, so they get total focus as the hero instead. */}
+        <View style={{ gap: Space.sm, marginBottom: Space.lg }}>
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            {progressFrac !== null ? (
+              <BentoRingCell
+                style={{ flex: 1.3 }}
+                fraction={progressFrac}
+                centerLabel={`${Math.round(progressFrac * 100)}%`}
+                caption={formatSeconds(task.totalTimeOnTask)}
+                sub={`of ${formatSeconds((task.estimatedMinutes ?? 0) * 60)} estimated`}
+                tint={task.isCompleted ? Colors.accent : Colors.primary}
+                Colors={Colors}
+              />
+            ) : (
+              <BentoRingCell
+                style={{ flex: 1.3 }}
+                fraction={1}
+                centerLabel={val(formatSeconds(analytics?.totalTimeAllTime ?? 0))}
+                caption="Total focus"
+                sub="no estimate set"
+                tint={Colors.primary}
+                Colors={Colors}
+              />
+            )}
+            <View style={{ flex: 1, gap: Space.sm }}>
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors}
+                icon="timer-outline" label="Sessions"
+                value={String(task.sessionsOnTask)}
+              />
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors}
+                icon="pulse-outline" label="Avg length"
+                value={val(formatSeconds(analytics?.avgSessionLength ?? 0))}
+              />
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="sunny-outline" label="Peak hour"
+              value={val(analytics?.mostProductiveHour?.label ?? '—')}
+            />
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="calendar-outline" label="Consistency"
+              value={ready ? formatConsistency(analytics?.consistency ?? null) : '—'}
+              sub={ready ? `${analytics?.daysWorked ?? 0} days worked` : undefined}
+            />
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: Space.sm }}>
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="locate-outline" label="Vs estimate"
+              value={ready ? formatEstimateDelta(analytics?.estimateDeltaSeconds ?? null) : '—'}
+            />
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="time-outline" label="Last worked"
+              value={ready ? formatLastWorked(analytics?.lastSessionAt ?? null) : '—'}
+            />
+          </View>
+
+          {/* Due date. Rendered only when there is one — the grid already shows
+              six em-dashes while analytics load, and a seventh absence is noise.
+              `feature` when overdue: at most one feature cell per grid, and an
+              overdue deadline is the one thing here that outranks the ring. */}
+          {dueDateLabel && (
+            <BentoCell
+              Colors={Colors}
+              icon="calendar-outline"
+              label="Due"
+              value={dueDateLabel}
+              sub={dueChip?.a11yLabel}
+              feature={isOverdue}
+            />
+          )}
+        </View>
+        {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: Space.md }} />}
+        {analyticsError && <Text style={{ color: Colors.text, fontSize: 12, marginBottom: Space.md }}>Analytics unavailable — try again later.</Text>}
+
+        {/* description — captured when the task was created */}
+        {task.description?.trim() ? (
+          <View style={{ backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+              <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
+              <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>Description</Text>
+            </View>
+            <Text style={{ color: Colors.textBright, fontSize: 14, lineHeight: 20 }}>{task.description.trim()}</Text>
+          </View>
+        ) : null}
+
+        {/* Recurring history — on a recurring task's day row. The server
+            calculates these from the completion log and sends them on the row,
+            so there is no extra fetch. The 🔥 and ⏱️ emoji are gone — every
+            other glyph in this sheet is an Ionicon, and a screen reader
+            announced the old ones by name. */}
+        {task.isOccurrence && (
+          <View style={{ flexDirection: 'row', gap: Space.sm, marginBottom: Space.lg }}>
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors} feature
+              icon="flame-outline" label="Current streak"
+              value={`${task.currentStreak}d`}
+              sub={`best ${task.longestStreak}d`}
+            />
+            <BentoCell
+              style={{ flex: 1 }} Colors={Colors}
+              icon="infinite-outline" label="Lifetime focus"
+              value={formatSeconds(task.totalFocusSeconds)}
+              sub={`${task.totalCompletions} completions`}
+            />
+          </View>
         )}
-      </View>
-    </View>
-  );
-}
 
-// ─── Next target card ────────────────────────────────────────────────────────
+        {/* The standalone "Time progress" bar that used to sit here is gone: it
+            showed the same quantity as the ring above, in the same sheet. */}
+      </ScrollView>
 
-function NextTargetCard({ me, above }: {
-  me: FocusLeaderboardEntry | null; above: FocusLeaderboardEntry | null;
-}) {
-  const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const { BORDER_SOFT, GOLD, GOLD_DIM } = Colors;
-  if (!me) return null;
-
-  if (me.position === 1) {
-    return (
-      <View style={{
-        marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
-        borderWidth: 1, borderColor: GOLD + '60', backgroundColor: GOLD_DIM,
-      }}>
-        <Text style={{ color: GOLD, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>
-          👑 You're at the top. Keep going.
-        </Text>
-      </View>
-    );
-  }
-
-  if (me.focusMinutes === 0) {
-    return (
-      <View style={{
-        marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
-        backgroundColor: SURFACE, borderWidth: 1, borderColor: BORDER_SOFT,
-      }}>
-        <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
-          Start studying to appear on the leaderboard
-        </Text>
-      </View>
-    );
-  }
-
-  if (!above || above.focusMinutes === 0) return null;
-  const gap = Math.max(0, above.focusMinutes - me.focusMinutes);
-  const pct = Math.min(99, Math.round((me.focusMinutes / above.focusMinutes) * 100));
-
-  return (
-    <View style={{
-      marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14,
-      backgroundColor: SURFACE, borderWidth: 1, borderColor: BORDER_SOFT,
-    }}>
-      <Text style={{ color: Colors.subtext, fontSize: 11, marginBottom: 4 }}>🎯 Next target</Text>
-      <Text style={{ color: Colors.textBright, fontSize: 13, marginBottom: 10 }}>
-        {'You need '}
-        <Text style={{ color: Colors.primarySoft, fontWeight: '700' }}>{formatFocusMinutes(gap)}</Text>
-        {' more to pass '}
-        <Text style={{ fontWeight: '700' }}>{above.displayName}</Text>
-        {` (#${above.position})`}
-      </Text>
-      <View style={{ backgroundColor: Colors.bg, borderRadius: 6, height: 6, marginBottom: 8 }}>
-        <View style={{ width: `${pct}%`, height: 6, borderRadius: 6, backgroundColor: Colors.primary }} />
-      </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Text style={{ color: Colors.subtext, fontSize: 11 }}>You · {formatFocusMinutes(me.focusMinutes)}</Text>
-        <Text style={{ color: Colors.subtext, fontSize: 11 }}>{above.displayName} · {formatFocusMinutes(above.focusMinutes)}</Text>
-      </View>
-    </View>
-  );
-}
-
-// ─── Create post sheet ───────────────────────────────────────────────────────
-
-const POST_TYPE_CARDS: { type: PostType; icon: string; label: string; desc: string; comingSoon?: boolean }[] = [
-  { type: 'free_post',          icon: '✏️', label: 'Share something',                 desc: 'Write a free post with optional stats' },
-  { type: 'session_recap',      icon: '⚡', label: 'Share a session recap',           desc: 'Show off your recent focus block' },
-  { type: 'achievement_unlock', icon: '🏅', label: 'Share an achievement',            desc: 'Celebrate a milestone you unlocked' },
-  { type: 'streak_milestone',   icon: '🔥', label: 'Share a streak milestone',        desc: 'Brag about your consistency' },
-];
-
-const FREE_TAGS = Object.entries(FREE_TAG_META) as [FreePostTag, { emoji: string; label: string }][];
-
-function ShareToRow({ visibility, setVisibility, targetGroupId, setTargetGroupId, studyGroups }: {
-  visibility: 'public' | 'group';
-  setVisibility: (v: 'public' | 'group') => void;
-  targetGroupId: string | null;
-  setTargetGroupId: (id: string | null) => void;
-  studyGroups: StudyGroup[];
-}) {
-  const Colors = useTheme();
-  const RAISED = Colors.raised;
-  const { BORDER_SOFT } = Colors;
-  return (
-    <>
-      <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Share to</Text>
-      <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-        {(['public', 'group'] as const).map((v) => (
-          <Pressable
-            key={v}
-            onPress={() => setVisibility(v)}
-            style={{
-              paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginRight: 8,
-              backgroundColor: visibility === v ? Colors.primary : RAISED,
-              borderWidth: 1, borderColor: visibility === v ? Colors.primary : BORDER_SOFT,
-            }}
+      {/* footer */}
+      <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 28 }}>
+        {isPending ? (
+          <AppPressable
+            onPress={() => { onLoadTimer(task.id); onClose(); }}
+            accessibilityRole="button"
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Space.sm, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 15 }}
           >
-            <Text style={{ color: visibility === v ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>
-              {v === 'public' ? 'Public' : 'Focus Group'}
-            </Text>
-          </Pressable>
-        ))}
+            <Ionicons name="play" size={15} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Load into Timer</Text>
+          </AppPressable>
+        ) : (
+          <AppPressable
+            onPress={() => { onToggleComplete(task.id); onClose(); }}
+            accessibilityRole="button"
+            style={{ borderRadius: Radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}
+          >
+            <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '600' }}>Mark Incomplete</Text>
+          </AppPressable>
+        )}
+        <AppPressable
+          onPress={() => onEdit(task.id)}
+          accessibilityRole="button"
+          scaleOnPress={false}
+          style={{ alignItems: 'center', justifyContent: 'center', marginTop: Space.sm, minHeight: 44 }}
+        >
+          <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>Edit task details</Text>
+        </AppPressable>
       </View>
-      {visibility === 'group' && studyGroups.length === 0 && (
-        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>
-          You are not in any focus groups yet. Join one to post there.
-        </Text>
-      )}
-      {visibility === 'group' && studyGroups.length > 0 && !targetGroupId && (
-        <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 8 }}>
-          Pick a group to post in.
-        </Text>
-      )}
-      {visibility === 'group' && studyGroups.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          {studyGroups.map((g) => (
-            <Pressable
-              key={g.id}
-              onPress={() => setTargetGroupId(g.id)}
-              style={{
-                flexDirection: 'row', alignItems: 'center', marginRight: 8,
-                backgroundColor: targetGroupId === g.id ? Colors.primaryDim : RAISED,
-                borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
-                borderWidth: 1, borderColor: targetGroupId === g.id ? Colors.primary : BORDER_SOFT,
-              }}
-            >
-              <Text style={{ fontSize: 16, marginRight: 6 }}>{g.emoji}</Text>
-              <Text style={{ color: Colors.text, fontSize: 12 }}>{g.name}</Text>
-            </Pressable>
+    </BottomSheet>
+  );
+}
+
+// ─── GoalPicker ───────────────────────────────────────────────────────────────
+function GoalPickerModal({ visible, goals, selectedGoalId, onSelect, onClose }: {
+  visible: boolean; goals: TaskGoal[]; selectedGoalId: string | null;
+  onSelect: (id: string | null) => void; onClose: () => void;
+}) {
+  const Colors = useTheme();
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40 }}>
+        <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
+        </View>
+        <View style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '700' }}>Link to Goal</Text>
+          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={Colors.subtext} /></TouchableOpacity>
+        </View>
+        <TouchableOpacity onPress={() => { onSelect(null); onClose(); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}>
+          <Ionicons name={!selectedGoalId ? 'radio-button-on' : 'radio-button-off'} size={20} color={Colors.primary} style={{ marginRight: 12 }} />
+          <Text style={{ color: Colors.textBright, fontSize: 14 }}>None</Text>
+        </TouchableOpacity>
+        <ScrollView style={{ maxHeight: 260 }}>
+          {goals.map((g) => (
+            <TouchableOpacity key={g.id} onPress={() => { onSelect(g.id); onClose(); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}>
+              <Ionicons name={selectedGoalId === g.id ? 'radio-button-on' : 'radio-button-off'} size={20} color={Colors.primary} style={{ marginRight: 12 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600' }}>{g.title}</Text>
+                {g.tag && <Text style={{ color: Colors.subtext, fontSize: 11 }}>{g.tag}</Text>}
+              </View>
+            </TouchableOpacity>
           ))}
         </ScrollView>
-      )}
-    </>
+      </View>
+    </Modal>
   );
 }
 
-function CreatePostSheet({ visible, onClose, onPost, studyGroups, defaultGroupId }: {
-  visible: boolean;
-  onClose: () => void;
-  onPost: (draft: Partial<SocialPost>) => void;
-  studyGroups: StudyGroup[];
-  /** The group being read right now, if any. Becomes the default destination. */
-  defaultGroupId: string | null;
+// ─── TaskFormModal ────────────────────────────────────────────────────────────
+type GoalSaveData = {
+  title: string; tag?: string | null; deadline?: string | null;
+  /** Minutes, or null to clear the plan. */
+  plannedMinutes: number | null;
+  taskIds: string[];
+};
+
+type FormSaveData = {
+  title: string; description?: string | null; dueDate?: string | null;
+  tags?: string[]; estimatedMinutes?: number | null;
+  // Minutes from local midnight, or null for an untimed task.
+  startMinutes?: number | null; endMinutes?: number | null;
+  priority?: 'low' | 'medium' | 'high' | 'urgent'; taskGoalId?: string | null;
+  isRecurring?: boolean; recurringDays?: DayOfWeek[];
+};
+
+/**
+ * The form's date field as 'YYYY-MM-DD', or null. On a recurring task it is
+ * the last day it repeats, which a day row carries as `repeatsUntil` because
+ * its own dueDate is the row's day. Saving the row's day back would end the
+ * task today.
+ *
+ * Substring because dueDate is a Prisma DateTime and arrives as a full ISO
+ * string, while parseLocalDate and the date picker expect 'YYYY-MM-DD'.
+ */
+function formDate(task: Task | null): string | null {
+  if (!task) return null;
+  if (task.isOccurrence) return task.repeatsUntil;
+  return task.dueDate?.substring(0, 10) ?? null;
+}
+
+function TaskFormModal({ visible, task, existingTags, sessionLengthMinutes, goals, onSave, onClose, onDelete }: {
+  visible: boolean; task: Task | null; existingTags: string[]; sessionLengthMinutes: number;
+  goals: TaskGoal[]; onSave: (data: FormSaveData) => void; onClose: () => void; onDelete?: () => void;
 }) {
   const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const RAISED = Colors.raised;
-  const { BORDER_SOFT, ROSE, ROSE_DIM, GOLD, GOLD_DIM } = Colors;
-  const gamification = useGamification();
-  const lastCompletedSessionId = useTimerStore((s) => s.lastCompletedSessionId);
-
-  const [step,          setStep]          = useState<1 | 2>(1);
-  const [selectedType,  setSelectedType]  = useState<PostType | null>(null);
-  const [caption,       setCaption]       = useState('');
-  const [visibility,    setVisibility]    = useState<'public' | 'group'>('public');
-  const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
-
-  // Opening the composer while reading a group means you almost certainly want
-  // to post there. Preselect it, but leave both destinations switchable.
-  useEffect(() => {
-    if (!visible) return;
-    setVisibility(defaultGroupId ? 'group' : 'public');
-    setTargetGroupId(defaultGroupId);
-  }, [visible, defaultGroupId]);
-
-  // Free post state
-  const [freeText,             setFreeText]             = useState('');
-  const [selectedTag,          setSelectedTag]          = useState<FreePostTag | null>(null);
-  const [photoUri,             setPhotoUri]             = useState<string | null>(null);
-  const [showStats,            setShowStats]            = useState(false);
-  const [checkedStats,         setCheckedStats]         = useState<string[]>([]);
-  const [textError,            setTextError]            = useState(false);
-  const [statsError,           setStatsError]           = useState(false);
-  const [todayCount,           setTodayCount]           = useState(0);
-  const [todayMinutes,         setTodayMinutes]         = useState(0);
-  const [selectedAchievementId, setSelectedAchievementId] = useState<string | null>(null);
-  const freeTextRef = useRef<TextInputInstance>(null);
-
-  const unlockedAchievements = gamification.achievements.filter((a) => a.isUnlocked);
-  const hasUnlockedAchievements = unlockedAchievements.length > 0;
-
-  const availableStats = [
-    { key: 'sessions_today', label: 'Sessions today',    value: String(todayCount) },
-    { key: 'focus_today',    label: 'Focus time today',  value: formatFocusMinutes(todayMinutes) },
-    { key: 'streak',         label: 'Current streak',    value: `${gamification.currentStreak} days` },
-    { key: 'total_sessions', label: 'Total sessions',    value: String(gamification.totalSessions) },
-    { key: 'total_focus',    label: 'Total focus',       value: `${Math.floor((gamification.totalFocusMinutes ?? 0) / 60)}h` },
-  ];
+  const isDark = useIsDark();
+  const { ROSE, ROSE_DIM } = Colors;
+  const monoLabel = { fontSize: 10, fontWeight: '700' as const, letterSpacing: 1, color: Colors.subtext, marginBottom: 9, fontFamily: MONO };
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [estimatedMinutes, setEstimatedMinutes] = useState(0);
+  const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
+  const [taskGoalId, setTaskGoalId] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState('');
+  const [tagEditorOpen, setTagEditorOpen] = useState(false);
+  // The picker's floor, or null when it is closed. One piece of state rather
+  // than a boolean beside a derived minimum: the floor must not move while the
+  // picker is mounted (see pickerAcceptsValue), and a value that is captured
+  // once on open cannot drift the way a recomputed one does.
+  const [datePickerFloor, setDatePickerFloor] = useState<Date | null>(null);
+  const [showGoalPicker, setShowGoalPicker] = useState(false);
+  const [startMinutes, setStartMinutes] = useState<number | null>(null);
+  const [endMinutes, setEndMinutes] = useState<number | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
+  const [titleError, setTitleError] = useState(false);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringDays, setRecurringDays] = useState<DayOfWeek[]>([]); // empty = every day
 
   useEffect(() => {
-    if (visible && selectedType === 'free_post') {
-      getSessionHistory().then((sessions) => {
-        const today = new Date().toDateString();
-        const ts = sessions.filter((s) => new Date(s.completedAt).toDateString() === today && s.type === 'focus');
-        setTodayCount(ts.length);
-        setTodayMinutes(Math.round(ts.reduce((sum, s) => sum + s.durationSeconds / 60, 0)));
-      }).catch(() => {});
+    if (visible) {
+      setTitle(task?.title ?? ''); setDescription(task?.description ?? '');
+      // New tasks start with no due date: a date is a commitment the user picks,
+      // not a default. Pre-filling today made every task look due today, and a
+      // task left on that default read as overdue the next morning.
+      // substring, because dueDate is a Prisma DateTime and arrives as a full ISO
+      // string, while everything downstream here — parseLocalDate, the date
+      // picker, the label below — expects 'YYYY-MM-DD'. Without it parseLocalDate
+      // splits on '-' into ['2026','09','01T00:00:00.000Z'] and yields an Invalid
+      // Date, which rendered as the literal text "Invalid Date" and was handed
+      // straight to the native picker. GoalFormModal has always guarded this;
+      // the task form never did.
+      setDueDate(formDate(task) ?? ''); setTags(task?.tags ?? []);
+      setEstimatedMinutes(task?.estimatedMinutes ?? 0); setPriority(task?.priority ?? 'medium');
+      setTaskGoalId(task?.taskGoalId ?? null); setTagInput(''); setTagEditorOpen(false); setTitleError(false);
+      setIsRecurring(task?.isRecurring ?? false);
+      setRecurringDays(task?.recurringDays ?? []);
+      setStartMinutes(task?.startMinutes ?? null);
+      setEndMinutes(task?.endMinutes ?? null);
+      setShowTimePicker(null);
+      // Closed alongside the time picker, and for a stronger reason than tidiness:
+      // re-seeding moves dueDate underneath a picker that may still be mounted,
+      // which is the exact prop transition the native component mishandles.
+      setDatePickerFloor(null);
     }
-  }, [visible, selectedType]);
+  }, [visible, task]);
 
-  // Choosing "Focus Group" without picking one sent groupId:null and the server
-  // answered 400. Block it in the composer instead of surfacing a raw failure.
-  const destinationMissing = visibility === 'group' && !targetGroupId;
+  const allTagChips = useMemo(() => Array.from(new Set([...existingTags, ...tags])), [existingTags, tags]);
+  const toggleTag = (tag: string) => setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
+  const addCustomTag = () => { const t = tagInput.trim(); if (t && !tags.includes(t)) setTags((prev) => [...prev, t]); setTagInput(''); };
 
-  const reset = () => {
-    setStep(1); setSelectedType(null); setCaption('');
-    setVisibility(defaultGroupId ? 'group' : 'public'); setTargetGroupId(defaultGroupId);
-    setFreeText(''); setSelectedTag(null); setPhotoUri(null);
-    setShowStats(false); setCheckedStats([]);
-    setTextError(false); setStatsError(false);
-    setSelectedAchievementId(null);
-  };
-
-  const handleClose = () => { reset(); onClose(); };
-
-  const handleSelectType = (type: PostType) => {
-    setSelectedType(type);
-    setStep(2);
-    if (type === 'free_post') setTimeout(() => freeTextRef.current?.focus(), 300);
-  };
-
-  const toggleStat = (key: string) => {
-    setCheckedStats((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
-    setStatsError(false);
-  };
-
-  const handlePost = () => {
-    if (destinationMissing) return;
-    if (selectedType === 'free_post') {
-      if (!freeText.trim()) { setTextError(true); return; }
-      if (showStats && checkedStats.length === 0) { setStatsError(true); return; }
-      const attachedStats: AttachedStat[] | null = showStats && checkedStats.length > 0
-        ? availableStats.filter((s) => checkedStats.includes(s.key)).map((s) => ({ label: s.label, value: s.value }))
-        : null;
-      onPost({ type: 'free_post', caption: freeText.trim(), contentTag: selectedTag, photoUrl: photoUri, attachedStats, visibility, groupId: visibility === 'group' ? targetGroupId : null, reactions: {} });
-      handleClose();
+  const handleSave = () => {
+    if (!title.trim()) { setTitleError(true); return; }
+    // The backend rejects these too; catching it here keeps the sheet open
+    // with the offending field in view instead of failing after it closes.
+    if (timeError) return;
+    if (task) {
+      const update: FormSaveData = { title: title.trim() };
+      const newDesc = description.trim() || null;
+      if (newDesc !== (task.description ?? null)) update.description = newDesc;
+      const newDue = dueDate || null;
+      if (newDue !== formDate(task)) update.dueDate = newDue;
+      if (JSON.stringify([...tags].sort()) !== JSON.stringify([...(task.tags ?? [])].sort())) update.tags = tags;
+      const newEst = estimatedMinutes > 0 ? estimatedMinutes : null;
+      if (newEst !== (task.estimatedMinutes ?? null)) update.estimatedMinutes = newEst;
+      if (startMinutes !== (task.startMinutes ?? null)) update.startMinutes = startMinutes;
+      if (endMinutes !== (task.endMinutes ?? null)) update.endMinutes = endMinutes;
+      if (priority !== task.priority) update.priority = priority;
+      if (taskGoalId !== (task.taskGoalId ?? null)) update.taskGoalId = taskGoalId;
+      // Always carry recurring settings, so a task can be switched either way.
+      update.isRecurring = isRecurring;
+      update.recurringDays = recurringDays;
+      onSave(update);
     } else {
-      if (!selectedType) return;
-      if (selectedType === 'achievement_unlock' && !selectedAchievementId) return;
-      const draft: Record<string, unknown> = {
-        type: selectedType,
-        caption: caption.trim() || null,
-        visibility,
-        groupId: visibility === 'group' ? targetGroupId : null,
-        reactions: {},
-      };
-      if (selectedType === 'session_recap') draft.sessionId = lastCompletedSessionId;
-      if (selectedType === 'achievement_unlock') draft.achievementId = selectedAchievementId;
-      if (selectedType === 'streak_milestone') draft.streakAtPost = gamification.currentStreak;
-      onPost(draft as Partial<SocialPost>);
-      handleClose();
+      onSave({ title: title.trim(), description: description.trim() || undefined, dueDate: dueDate || undefined, tags, estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : undefined, startMinutes, endMinutes, priority, taskGoalId, isRecurring, recurringDays });
     }
   };
 
-  const canPost = !destinationMissing && (selectedType === 'free_post'
-    ? freeText.trim().length > 0 && (!showStats || checkedStats.length > 0)
-    : selectedType === 'achievement_unlock'
-    ? !!selectedAchievementId
-    : true);
+  const selectedGoal = goals.find((g) => g.id === taskGoalId);
+  // Memoised because both feed a native picker: a fresh Date on every render
+  // is a changed prop every render, and updating a UIDatePicker's bounds is
+  // exactly where iOS validates them.
+  const datePickerValue = useMemo(
+    () => (dueDate ? parseLocalDate(dueDate) : new Date()),
+    [dueDate],
+  );
+  const openDatePicker = () => setDatePickerFloor(pickerMinimumDate(datePickerValue));
+  // Unmount rather than hand the picker a date its floor forbids. Every date the
+  // user can pick is inside the bounds already, so this only fires when
+  // something outside the picker moved dueDate — and that is the case that
+  // crashes rather than misrenders.
+  const datePickerOpen = datePickerFloor !== null
+    && pickerAcceptsValue(datePickerFloor, datePickerValue);
+  // Closes on selection, on EVERY platform. Android already dismissed itself;
+  // iOS's inline calendar stayed mounted, leaving a 350px picker wedged in the
+  // sheet with no way to put it away. Unmounting is also the safe move: the
+  // picker crashes when a new value is written against a stale minimumDate, and
+  // the recorded fix is to unmount rather than hand it a value beneath its
+  // floor. `dismissed` is Android's cancel, where no date comes back.
+  const handleDateChange = (event: DateTimePickerEvent, date?: Date) => {
+    setDatePickerFloor(null);
+    if (event.type === 'dismissed' || !date) return;
+    setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
+  };
+
+  // Both ends or neither, and the block must move forwards — the same rules the
+  // server enforces, mirrored here so the sheet can explain itself.
+  const timeError = startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes
+    ? 'End time must be after the start time'
+    : null;
+
+  /** A fixed calendar date carrying the time, which is all the picker reads. */
+  const minutesToDate = (minutes: number | null) => {
+    const m = minutes ?? 9 * 60; // an unset picker opens at 9am, not midnight
+    return new Date(2000, 0, 1, Math.floor(m / 60), m % 60);
+  };
+
+  const formatClock = (minutes: number) =>
+    minutesToDate(minutes).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  const clearSchedule = () => { setStartMinutes(null); setEndMinutes(null); setShowTimePicker(null); };
+
+  const handleTimeChange = (_event: DateTimePickerEvent, date?: Date) => {
+    const editing = showTimePicker;
+    if (Platform.OS === 'android') setShowTimePicker(null);
+    if (!date || !editing) return;
+    const picked = date.getHours() * 60 + date.getMinutes();
+    if (editing === 'end') { setEndMinutes(picked); return; }
+    setStartMinutes(picked);
+    // First time only: derive an end so a single tap already yields a valid
+    // block. Uses the estimate when there is one, an hour when there is not.
+    setEndMinutes((prev) => prev === null
+      ? Math.min(1439, picked + (estimatedMinutes > 0 ? estimatedMinutes : 60))
+      : prev);
+  };
+
+  // Same function the Focus screen loads into the timer, so the split promised
+  // here is the split you actually get. It used to be a bare count derived from
+  // a rounded division, which could not say how LONG each session would be —
+  // and the length is the part that changes.
+  const estPlan = useMemo(
+    () => getSessionPlan(estimatedMinutes, sessionLengthMinutes),
+    [estimatedMinutes, sessionLengthMinutes],
+  );
+
+  /**
+   * "2 x 20 min", or "25 + 20 + 20" when the split is uneven.
+   *
+   * Showing the shape rather than a count is what makes the grace-zone edge
+   * explain itself: tapping + from 35 to 40 changes this line from "35 min" to
+   * "2 x 20 min" right beside the stepper, so the user watches the change happen
+   * instead of discovering it later on the timer.
+   */
+  const estPlanLabel = useMemo(() => {
+    if (!estPlan || estPlan.length === 0) return null;
+    if (estPlan.length === 1) return `${estPlan[0]} min`;
+    const allSame = estPlan.every((b) => b === estPlan[0]);
+    return allSame ? `${estPlan.length} × ${estPlan[0]} min` : `${estPlan.join(' + ')} min`;
+  }, [estPlan]);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: '#00000088' }} onPress={handleClose} />
-        <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '78%' }}>
-          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
-            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
-          </View>
+    <FormSheet
+      visible={visible}
+      title={task ? 'Edit task' : 'New task'}
+      onClose={onClose}
+      overlay={
+        <GoalPickerModal
+          visible={showGoalPicker}
+          goals={goals.filter((g) => !g.isCompleted)}
+          selectedGoalId={taskGoalId}
+          onSelect={setTaskGoalId}
+          onClose={() => setShowGoalPicker(false)}
+        />
+      }
+    >
+      {/* title */}
+      <TextInput
+        style={[{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 15, paddingVertical: 15, color: Colors.textBright, fontSize: 15, fontWeight: '600', marginBottom: titleError ? 6 : 18 }, titleError && { borderColor: ROSE, borderWidth: 1.5 }]}
+        placeholder="What are you working on?" placeholderTextColor={Colors.subtext}
+        value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus maxLength={100} returnKeyType="next"
+      />
+      {titleError && <Text style={{ color: ROSE, fontSize: 11, marginBottom: 18 }}>Task name can't be empty</Text>}
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
-            {step === 2 && (
-              <Pressable onPress={() => setStep(1)} style={{ marginRight: 10 }}>
-                <Ionicons name="chevron-back" size={22} color={Colors.text} />
-              </Pressable>
+      {/* priority */}
+      <Text style={monoLabel}>PRIORITY</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
+        {PRIORITIES.map(({ value, label }) => { const sel = priority === value; const color = priorityColor(value); return (
+          <TouchableOpacity key={value} onPress={() => setPriority(value)} style={{ flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10, backgroundColor: sel ? color + '22' : Colors.raised, borderWidth: 1, borderColor: sel ? color : 'transparent' }}>
+            <Text style={{ color, fontSize: 12, fontWeight: sel ? '700' : '600' }}>{label}</Text>
+          </TouchableOpacity>
+        ); })}
+      </View>
+
+      {/* due date + category */}
+      <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
+        <View style={{ flex: 1 }}>
+          {/* The same field means two things, so it says which. On a one-off task
+              it is the day the task is due. On a repeating one it is the last
+              day the habit fires — which the app now actually honours. It was
+              always collectable here and read by nothing at all. */}
+          <Text style={monoLabel}>{isRecurring ? 'REPEAT UNTIL' : 'DUE DATE'}</Text>
+          {dueDate ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+                <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
+                <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{parseLocalDate(dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+              </TouchableOpacity>
+              {/* A time cannot outlive its day — the server rejects that pair. */}
+              <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); setDatePickerFloor(null); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
+              <Ionicons name="calendar-outline" size={14} color={Colors.subtext} />
+              <Text style={{ color: Colors.subtext, fontSize: 12.5, fontWeight: '600' }}>
+                {isRecurring ? 'No end date' : 'Set date'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={monoLabel}>CATEGORY</Text>
+          <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap' }}>
+            {tags.map((t) => (
+              <TouchableOpacity key={t} onPress={() => toggleTag(t)} style={{ backgroundColor: Colors.primaryDim, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.primarySoft }}>{t}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={() => setTagEditorOpen((v) => !v)} style={{ backgroundColor: Colors.raised, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.subtext }}>+ Add</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* The calendar and the category editor belong DIRECTLY under the
+          row that opens them. Both used to render after the TIME block,
+          so tapping "Set date" or "+ Add" pushed a panel out below the
+          hour selector — nowhere near the control that summoned it, and
+          often off the bottom of the sheet entirely. Due date is the left
+          column and subject the right, so the two reveals stack here in
+          reading order. */}
+      {datePickerOpen && (
+        <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginBottom: 18, alignItems: 'center', overflow: 'hidden' }}>
+          <DateTimePicker
+            value={datePickerValue}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            onChange={handleDateChange}
+            minimumDate={datePickerFloor!}
+            themeVariant={isDark ? 'dark' : 'light'}
+            accentColor={Colors.primary}
+          />
+        </View>
+      )}
+
+      {/* category editor (revealed by "+ Add") */}
+      {tagEditorOpen && (
+        <View style={{ marginBottom: 18 }}>
+          {allTagChips.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {allTagChips.map((tag) => { const sel = tags.includes(tag); return (
+                <TouchableOpacity key={tag} onPress={() => toggleTag(tag)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
+                  <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{tag}</Text>
+                </TouchableOpacity>
+              ); })}
+            </View>
+          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput style={{ flex: 1, backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textBright, fontSize: 14 }} placeholder="New category…" placeholderTextColor={Colors.subtext} value={tagInput} onChangeText={(t) => { if (t.endsWith(',') || t.endsWith('\n')) addCustomTag(); else setTagInput(t); }} onSubmitEditing={addCustomTag} blurOnSubmit={false} returnKeyType="done" />
+            <TouchableOpacity onPress={addCustomTag} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="add" size={18} color={Colors.primarySoft} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* estimated focus time */}
+      <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+        <TouchableOpacity disabled={estimatedMinutes <= 0} onPress={() => setEstimatedMinutes(Math.max(0, estimatedMinutes - 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes <= 0 ? 0.4 : 1 }}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>−</Text>
+        </TouchableOpacity>
+        <Text style={{ color: Colors.textBright, fontSize: 17, fontWeight: '600', minWidth: 84, textAlign: 'center', fontFamily: MONO }}>{estimatedMinutes > 0 ? `${estimatedMinutes} min` : 'not set'}</Text>
+        <TouchableOpacity disabled={estimatedMinutes >= 480} onPress={() => setEstimatedMinutes(Math.min(480, estimatedMinutes + 5))} style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', opacity: estimatedMinutes >= 480 ? 0.4 : 1 }}>
+          <Text style={{ color: Colors.primarySoft, fontSize: 20, fontWeight: '600' }}>+</Text>
+        </TouchableOpacity>
+        {estPlanLabel && (
+          <Text
+            style={{ color: Colors.subtext, fontSize: 12, marginLeft: 2, fontFamily: MONO }}
+            accessibilityLabel={`Splits into ${estPlan && estPlan.length > 1 ? `${estPlan.length} sessions of ${estPlan.join(', ')} minutes` : `one session of ${estPlan?.[0]} minutes`}`}
+          >
+            ≈ {estPlanLabel}
+          </Text>
+        )}
+      </View>
+
+      {/* scheduled time — drives the Day timeline in the calendar */}
+      <View style={{ marginBottom: 18 }}>
+        <Text style={monoLabel}>TIME</Text>
+        {!dueDate ? (
+          <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+            Pick a due date first — a time needs a day to sit on.
+          </Text>
+        ) : (
+          <>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => setShowTimePicker('start')}
+                accessibilityRole="button"
+                accessibilityLabel={startMinutes === null ? 'Set start time' : `Start time, ${formatClock(startMinutes)}`}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
+                  paddingHorizontal: 12, paddingVertical: 9,
+                  backgroundColor: startMinutes === null ? Colors.raised : Colors.primaryDim,
+                }}
+              >
+                <Ionicons name="time-outline" size={14} color={startMinutes === null ? Colors.subtext : Colors.primarySoft} />
+                <Text style={{ fontSize: 12.5, fontWeight: '600', color: startMinutes === null ? Colors.subtext : Colors.primarySoft }}>
+                  {startMinutes === null ? 'Start' : formatClock(startMinutes)}
+                </Text>
+              </TouchableOpacity>
+
+              <Ionicons name="arrow-forward" size={13} color={Colors.subtext} />
+
+              <TouchableOpacity
+                disabled={startMinutes === null}
+                onPress={() => setShowTimePicker('end')}
+                accessibilityRole="button"
+                accessibilityLabel={endMinutes === null ? 'Set end time' : `End time, ${formatClock(endMinutes)}`}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 10,
+                  paddingHorizontal: 12, paddingVertical: 9,
+                  backgroundColor: endMinutes === null ? Colors.raised : Colors.primaryDim,
+                  opacity: startMinutes === null ? 0.4 : 1,
+                }}
+              >
+                <Ionicons name="time-outline" size={14} color={endMinutes === null ? Colors.subtext : Colors.primarySoft} />
+                <Text style={{ fontSize: 12.5, fontWeight: '600', color: endMinutes === null ? Colors.subtext : Colors.primarySoft }}>
+                  {endMinutes === null ? 'End' : formatClock(endMinutes)}
+                </Text>
+              </TouchableOpacity>
+
+              {(startMinutes !== null || endMinutes !== null) && (
+                <TouchableOpacity onPress={clearSchedule} accessibilityRole="button" accessibilityLabel="Clear time">
+                  <Ionicons name="close-circle" size={16} color={Colors.subtext} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {timeError && (
+              <Text style={{ color: ROSE, fontSize: 11.5, marginTop: 7 }}>{timeError}</Text>
             )}
-            <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', flex: 1 }}>
-              {step === 1 ? 'What do you want to share?' : 'Compose post'}
-            </Text>
-            <Pressable onPress={handleClose}>
-              <Ionicons name="close" size={22} color={Colors.subtext} />
-            </Pressable>
-          </View>
 
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
-            {/* ── Step 1: type selection ── */}
-            {step === 1 && POST_TYPE_CARDS.map(({ type, icon, label, desc, comingSoon }) => {
-              const isAchievementDisabled = type === 'achievement_unlock' && !hasUnlockedAchievements;
-              const isDisabled = isAchievementDisabled || !!comingSoon;
+            {showTimePicker && (
+              <View style={{ backgroundColor: Colors.raised, borderRadius: 13, marginTop: 10, alignItems: 'center', overflow: 'hidden' }}>
+                <DateTimePicker
+                  value={minutesToDate(showTimePicker === 'start' ? startMinutes : endMinutes)}
+                  mode="time"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={handleTimeChange}
+                  themeVariant={isDark ? 'dark' : 'light'}
+                  accentColor={Colors.primary}
+                />
+                {Platform.OS === 'ios' && (
+                  <TouchableOpacity
+                    onPress={() => setShowTimePicker(null)}
+                    accessibilityRole="button"
+                    style={{ paddingVertical: 10, alignSelf: 'stretch', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '700' }}>Done</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </>
+        )}
+      </View>
+
+      {/* link to goal — no slot in the design; kept here when goals exist */}
+      {goals.length > 0 && (
+        <View style={{ marginBottom: 18 }}>
+          <Text style={monoLabel}>GOAL</Text>
+          <TouchableOpacity onPress={() => setShowGoalPicker(true)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13 }}>
+            <Ionicons name="flag-outline" size={15} color={Colors.subtext} style={{ marginRight: 8 }} />
+            <Text style={{ flex: 1, color: selectedGoal ? Colors.primarySoft : Colors.subtext, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{selectedGoal ? selectedGoal.title : 'Link to a goal (optional)'}</Text>
+            <Ionicons name="chevron-forward" size={14} color={Colors.subtext} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Recurring sits last, above the description. It is the one field that
+          changes what the task IS rather than describing it, and every
+          answer above stays true either way — so it reads as the closing
+          question, not a fork you hit three fields in. Turning it on also
+          reveals a seven-day selector, which used to shove everything
+          below it down the sheet mid-form. */}
+      {/* recurring toggle */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, marginBottom: isRecurring ? 4 : 18 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600' }}>Recurring</Text>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>Repeats automatically each day</Text>
+        </View>
+        <Switch
+          value={isRecurring}
+          onValueChange={(val) => { setIsRecurring(val); setDatePickerFloor(null); if (val) setDueDate(''); else setRecurringDays([]); }}
+          trackColor={{ false: Colors.inactive, true: Colors.primary }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+
+      {/* day selector — only when recurring is on */}
+      {isRecurring && (
+        <View style={{ marginBottom: 18 }}>
+          <Text style={[monoLabel, { marginTop: 8 }]}>REPEAT ON</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {ALL_DAYS.map((day) => {
+              const isSelected = recurringDays.length === 0 || recurringDays.includes(day);
               return (
-                <Pressable
-                  key={type}
-                  onPress={() => !isDisabled && handleSelectType(type)}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center', backgroundColor: RAISED,
-                    borderRadius: 14, borderWidth: 1, borderColor: BORDER_SOFT,
-                    padding: 14, marginBottom: 10,
-                    opacity: isDisabled ? 0.45 : 1,
+                <TouchableOpacity
+                  key={day}
+                  onPress={() => {
+                    if (recurringDays.length === 0) {
+                      // Currently "every day" — deselect this one.
+                      setRecurringDays(ALL_DAYS.filter((d) => d !== day));
+                    } else if (recurringDays.includes(day)) {
+                      const next = recurringDays.filter((d) => d !== day);
+                      setRecurringDays(next.length === 0 ? [] : next);
+                    } else {
+                      const next = [...recurringDays, day];
+                      setRecurringDays(next.length === 7 ? [] : next);
+                    }
                   }}
+                  style={{ flex: 1, aspectRatio: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: isSelected ? Colors.primary : Colors.border }}
                 >
-                  <Text style={{ fontSize: 28, marginRight: 14 }}>{icon}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 14 }}>{label}</Text>
-                    <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 2 }}>
-                      {isAchievementDisabled ? 'Complete an achievement to share it' : comingSoon ? 'Coming soon' : desc}
-                    </Text>
-                  </View>
-                  {!isDisabled && <Ionicons name="chevron-forward" size={18} color={Colors.subtext} />}
-                </Pressable>
+                  <Text style={{ color: isSelected ? '#fff' : Colors.subtext, fontSize: 13, fontWeight: '700' }}>{DOW_LABELS[day]}</Text>
+                </TouchableOpacity>
               );
             })}
-
-            {/* ── Step 2: Free Post compose ── */}
-            {step === 2 && selectedType === 'free_post' && (
-              <>
-                <TextInput
-                  ref={freeTextRef}
-                  multiline maxLength={280}
-                  placeholder="What's on your mind?"
-                  placeholderTextColor={Colors.subtext}
-                  value={freeText}
-                  onChangeText={(t) => { setFreeText(t); setTextError(false); }}
-                  style={{
-                    backgroundColor: RAISED, borderRadius: 12,
-                    borderWidth: 1, borderColor: textError ? ROSE : BORDER_SOFT,
-                    padding: 12, color: Colors.textBright, fontSize: 14, minHeight: 100,
-                    textAlignVertical: 'top', marginBottom: 4,
-                  }}
-                />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 }}>
-                  {textError
-                    ? <Text style={{ color: ROSE, fontSize: 11 }}>Write something to post</Text>
-                    : <View />}
-                  <Text style={{ color: Colors.subtext, fontSize: 11 }}>{freeText.length}/280</Text>
-                </View>
-
-                {/* Content tag selector */}
-                <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>Add a tag (optional)</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
-                  {FREE_TAGS.map(([key, meta]) => {
-                    const active = selectedTag === key;
-                    return (
-                      <Pressable
-                        key={key}
-                        onPress={() => setSelectedTag(active ? null : key)}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center', marginRight: 8,
-                          backgroundColor: active ? ROSE_DIM : RAISED,
-                          borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
-                          borderWidth: 1, borderColor: active ? ROSE : BORDER_SOFT,
-                        }}
-                      >
-                        <Text style={{ fontSize: 14, marginRight: 5 }}>{meta.emoji}</Text>
-                        <Text style={{ color: active ? ROSE : Colors.subtext, fontSize: 12, fontWeight: active ? '600' : '400' }}>
-                          {meta.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Attach stats */}
-                <Pressable
-                  onPress={() => { setShowStats((v) => !v); setCheckedStats([]); setStatsError(false); }}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1, borderColor: BORDER_SOFT,
-                    padding: 12, marginBottom: showStats ? 0 : 14,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="stats-chart-outline" size={18} color={Colors.text} />
-                    <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600', marginLeft: 10 }}>Attach my stats</Text>
-                  </View>
-                  <View style={{
-                    width: 40, height: 22, borderRadius: 11,
-                    backgroundColor: showStats ? Colors.primary : Colors.inactive,
-                    justifyContent: 'center', paddingHorizontal: 2,
-                  }}>
-                    <View style={{
-                      width: 18, height: 18, borderRadius: 9, backgroundColor: '#fff',
-                      alignSelf: showStats ? 'flex-end' : 'flex-start',
-                    }} />
-                  </View>
-                </Pressable>
-
-                {showStats && (
-                  <View style={{
-                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
-                    borderColor: BORDER_SOFT, borderTopWidth: 0,
-                    borderTopLeftRadius: 0, borderTopRightRadius: 0,
-                    padding: 12, marginBottom: 14,
-                  }}>
-                    {availableStats.map((s) => (
-                      <Pressable
-                        key={s.key}
-                        onPress={() => toggleStat(s.key)}
-                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
-                      >
-                        <View style={{
-                          width: 20, height: 20, borderRadius: 5, borderWidth: 1.5,
-                          borderColor: checkedStats.includes(s.key) ? Colors.primary : Colors.border,
-                          backgroundColor: checkedStats.includes(s.key) ? Colors.primary : 'transparent',
-                          alignItems: 'center', justifyContent: 'center', marginRight: 12,
-                        }}>
-                          {checkedStats.includes(s.key) && <Ionicons name="checkmark" size={12} color="#fff" />}
-                        </View>
-                        <Text style={{ color: Colors.text, fontSize: 13, flex: 1 }}>{s.label}</Text>
-                        <Text style={{ color: Colors.textBright, fontSize: 13, fontWeight: '600' }}>{s.value}</Text>
-                      </Pressable>
-                    ))}
-                    {statsError && (
-                      <Text style={{ color: ROSE, fontSize: 11, marginTop: 4 }}>Select at least one stat to attach</Text>
-                    )}
-                  </View>
-                )}
-
-                <ShareToRow
-                  visibility={visibility} setVisibility={setVisibility}
-                  targetGroupId={targetGroupId} setTargetGroupId={setTargetGroupId}
-                  studyGroups={studyGroups}
-                />
-
-                <Pressable
-                  onPress={handlePost}
-                  disabled={!canPost}
-                  style={{
-                    backgroundColor: canPost ? Colors.primary : Colors.inactive,
-                    borderRadius: 14, paddingVertical: 14, alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ color: canPost ? '#fff' : Colors.subtext, fontWeight: '700', fontSize: 15 }}>Post</Text>
-                </Pressable>
-              </>
-            )}
-
-            {/* ── Step 2: Other post types ── */}
-            {step === 2 && selectedType && selectedType !== 'free_post' && (
-              <>
-                <View style={{
-                  backgroundColor: RAISED, borderRadius: 12, borderWidth: 1,
-                  borderColor: BORDER_SOFT, padding: 12, marginBottom: 12,
-                }}>
-                  <PostTypeTag type={selectedType} />
-                  <Text style={{ color: Colors.subtext, fontSize: 12 }}>
-                    {selectedType === 'session_recap'
-                      ? 'Your most recent session stats will be shared automatically.'
-                      : selectedType === 'achievement_unlock'
-                      ? 'Select an achievement to feature below.'
-                      : selectedType === 'streak_milestone'
-                      ? 'Your current streak stats will be shared.'
-                      : 'Invite your group to a shared challenge.'}
-                  </Text>
-                </View>
-
-                {selectedType === 'achievement_unlock' && (
-                  <View style={{ marginBottom: 12 }}>
-                    {unlockedAchievements.map((a) => (
-                      <Pressable
-                        key={a.id}
-                        onPress={() => setSelectedAchievementId(a.id)}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center',
-                          backgroundColor: selectedAchievementId === a.id ? GOLD_DIM : RAISED,
-                          borderRadius: 12, borderWidth: 1,
-                          borderColor: selectedAchievementId === a.id ? GOLD : BORDER_SOFT,
-                          padding: 12, marginBottom: 8,
-                        }}
-                      >
-                        <Text style={{ fontSize: 26, marginRight: 12 }}>{a.icon}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: Colors.textBright, fontWeight: '600', fontSize: 13 }}>{a.title}</Text>
-                          <Text style={{ color: Colors.subtext, fontSize: 11 }} numberOfLines={1}>{a.description}</Text>
-                        </View>
-                        {selectedAchievementId === a.id && (
-                          <Ionicons name="checkmark-circle" size={20} color={GOLD} />
-                        )}
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-
-                <TextInput
-                  multiline maxLength={280}
-                  placeholder="Add a caption... (optional)"
-                  placeholderTextColor={Colors.subtext}
-                  value={caption}
-                  onChangeText={setCaption}
-                  style={{
-                    backgroundColor: RAISED, borderRadius: 12, borderWidth: 1, borderColor: BORDER_SOFT,
-                    padding: 12, color: Colors.textBright, fontSize: 14, minHeight: 80,
-                    textAlignVertical: 'top', marginBottom: 4,
-                  }}
-                />
-                <Text style={{ color: Colors.subtext, fontSize: 11, textAlign: 'right', marginBottom: 14 }}>
-                  {caption.length}/280
-                </Text>
-
-                <ShareToRow
-                  visibility={visibility} setVisibility={setVisibility}
-                  targetGroupId={targetGroupId} setTargetGroupId={setTargetGroupId}
-                  studyGroups={studyGroups}
-                />
-
-                <Pressable
-                  onPress={handlePost}
-                  disabled={destinationMissing}
-                  style={{
-                    backgroundColor: destinationMissing ? Colors.inactive : Colors.primary,
-                    borderRadius: 14, paddingVertical: 14, alignItems: 'center',
-                  }}
-                >
-                  <Text style={{
-                    color: destinationMissing ? Colors.subtext : '#fff', fontWeight: '700', fontSize: 15,
-                  }}>Post</Text>
-                </Pressable>
-              </>
-            )}
-          </ScrollView>
+          </View>
+          <Text style={{ color: Colors.subtext, fontSize: 12, marginTop: 8 }}>
+            {recurringDays.length === 0 ? 'Every day' : recurringDays.map((d) => DAY_FULL_LABELS[d]).join(', ')}
+          </Text>
         </View>
+      )}
+
+      {/* description */}
+      <Text style={monoLabel}>DESCRIPTION</Text>
+      <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="What is this task about?" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
+
+      {/* create / save */}
+      <TouchableOpacity onPress={handleSave} disabled={!!timeError} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: timeError ? 0.5 : 1 }}>
+        <Ionicons name={task ? 'checkmark' : 'add'} size={16} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{task ? 'Save changes' : 'Create task'}</Text>
+      </TouchableOpacity>
+
+      {task && onDelete && (
+        <TouchableOpacity onPress={onDelete} style={{ marginTop: 12, paddingVertical: 13, borderRadius: 12, alignItems: 'center', backgroundColor: ROSE_DIM, borderWidth: 0.5, borderColor: ROSE + '40' }}>
+          <Text style={{ color: ROSE, fontWeight: '700', fontSize: 14 }}>Delete Task</Text>
+        </TouchableOpacity>
+      )}
+    </FormSheet>
+  );
+}
+
+// ─── GoalFormModal ────────────────────────────────────────────────────────────
+function GoalFormModal({ visible, goal, existingTags, linkableTasks, goals, onSave, onClose, onDelete }: {
+  visible: boolean; goal: TaskGoal | null; existingTags: string[];
+  /** Unarchived tasks, completed ones included — see TaskMultiSelect. */
+  linkableTasks: Task[];
+  /** Every goal, so the picker can name the one a task moves away from. */
+  goals: TaskGoal[];
+  onSave: (data: GoalSaveData) => void;
+  onClose: () => void;
+  /** Only passed when editing — creates have nothing to delete. */
+  onDelete?: () => void;
+}) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const [title, setTitle] = useState('');
+  const [tag, setTag] = useState<string | null>(null);
+  const [deadline, setDeadline] = useState('');
+  /** Hours as typed; parsed on save so "1." mid-typing is not an error yet. */
+  const [plannedText, setPlannedText] = useState('');
+  const [plannedError, setPlannedError] = useState(false);
+  /**
+   * null means "the user has not touched the list yet", so the checkboxes
+   * mirror what is actually linked right now. Once they touch it, their draft
+   * wins. Seeding this from an effect instead would either need `linkableTasks`
+   * as a dependency — wiping the selection under them whenever a background
+   * fetch lands — or would have to ignore it. Deriving has neither problem.
+   */
+  const [draftTaskIds, setDraftTaskIds] = useState<string[] | null>(null);
+  // See the task form above: the floor is captured on open and held, because the
+  // native picker writes a new date before it relaxes an old floor.
+  const [datePickerFloor, setDatePickerFloor] = useState<Date | null>(null);
+  const [titleError, setTitleError] = useState(false);
+  // useWindowDimensions, not Dimensions.get(): the latter is read once and goes
+  // stale on rotation, which is when a too-tall modal hurts most.
+  const { height: windowHeight } = useWindowDimensions();
+  // A category the user invents here does not exist anywhere yet — categories
+  // are derived from the tags already in use, so a brand new one has to live in
+  // local state until this goal is saved and starts using it.
+  const [newCategory, setNewCategory] = useState<string | null>(null);
+  const [tasksOpen, setTasksOpen] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setTitle(goal?.title ?? ''); setTag(goal?.tag ?? null);
+      setDeadline(goal?.deadline?.substring(0, 10) ?? '');
+      setPlannedText(plannedHoursText(goal?.plannedMinutes ?? null));
+      setPlannedError(false);
+      setDraftTaskIds(null);
+      setNewCategory(null);
+      setTasksOpen(false);
+      setTitleError(false);
+      // This form previously reset nothing about the picker, so a calendar left
+      // open on one goal was still mounted when the next goal's deadline was
+      // seeded into it — the transition that crashes.
+      setDatePickerFloor(null);
+    }
+  }, [visible, goal]);
+
+  // What is linked to this goal right now, straight from the task list.
+  const linkedNow = useMemo(
+    () => (goal ? linkableTasks.filter((t) => t.taskGoalId === goal.id).map((t) => t.id) : []),
+    [goal, linkableTasks],
+  );
+  const taskIds = draftTaskIds ?? linkedNow;
+  const byId = useMemo(() => new Map(linkableTasks.map((t) => [t.id, t])), [linkableTasks]);
+  // Ordered by SELECTION, not by the task list, so a task you just picked lands
+  // at the bottom of the checklist where you are looking.
+  const selectedTasks = useMemo(
+    () => taskIds.map((id) => byId.get(id)).filter((t): t is Task => !!t),
+    [taskIds, byId],
+  );
+  const availableTasks = useMemo(
+    () => linkableTasks.filter((t) => !taskIds.includes(t.id)),
+    [linkableTasks, taskIds],
+  );
+
+  const handleSave = () => {
+    if (!title.trim()) { setTitleError(true); return; }
+    const plannedMinutes = parsePlannedHours(plannedText);
+    if (plannedMinutes === undefined) { setPlannedError(true); return; }
+    // Send the calendar day as-is. This used to convert to an instant via
+    // `new Date(deadline + 'T00:00:00').toISOString()`, which baked in the
+    // creating device's timezone — the same goal then read as a different day
+    // elsewhere. The server column is a plain date now.
+    onSave({
+      title: title.trim(),
+      tag: tag || null,
+      deadline: deadline || null,
+      plannedMinutes,
+      taskIds,
+    });
+  };
+  const toggleTask = (id: string) =>
+    setDraftTaskIds((prev) => {
+      const base = prev ?? linkedNow;
+      return base.includes(id) ? base.filter((t) => t !== id) : [...base, id];
+    });
+  const datePickerValue = useMemo(
+    () => (deadline ? parseLocalDate(deadline) : new Date()),
+    [deadline],
+  );
+  const openDatePicker = () => setDatePickerFloor(pickerMinimumDate(datePickerValue));
+  const datePickerOpen = datePickerFloor !== null
+    && pickerAcceptsValue(datePickerFloor, datePickerValue);
+  /**
+   * Close on selection, on EVERY platform.
+   *
+   * Android already dismissed itself; iOS's inline calendar stayed mounted, so
+   * a 350px picker sat between the fields and the bottom of the sheet with no
+   * way to put it away. Unmounting is also the safe move rather than a risky
+   * one: the picker crashes when a new value is written against a stale
+   * minimumDate, and the fix recorded for that is to unmount rather than hand
+   * it a value beneath its floor. `dismissed` is Android's cancel event, where
+   * no date comes back and the deadline must not change.
+   */
+  const handleDateChange = (event: DateTimePickerEvent, date?: Date) => {
+    setDatePickerFloor(null);
+    if (event.type === 'dismissed' || !date) return;
+    setDeadline(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
+  };
+
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'center' }} pointerEvents="box-none">
+        <TouchableOpacity activeOpacity={1} style={{ marginHorizontal: 20 }}>
+          {/* maxHeight is load-bearing, not polish. The card is vertically
+              CENTERED, and its ScrollView sizes to its content — so without a
+              ceiling the card grows past the viewport and overflows off BOTH
+              ends, carrying this header (Cancel and Save) off the top of the
+              screen. Opening the inline date picker adds ~350px and does
+              exactly that. The same bug was found once before in this file's
+              BottomSheet: always pair a scrolling child with a height bound. */}
+          <View style={{ backgroundColor: Colors.surface, borderRadius: 20, overflow: 'hidden', maxHeight: windowHeight * 0.82 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: Colors.border }}>
+              <TouchableOpacity onPress={onClose} hitSlop={10}><Text style={{ color: Colors.subtext, fontSize: 15, fontWeight: '500' }}>Cancel</Text></TouchableOpacity>
+              <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>{goal ? 'Edit Goal' : 'New Goal'}</Text>
+              <TouchableOpacity onPress={handleSave} hitSlop={10}><Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Save</Text></TouchableOpacity>
+            </View>
+            <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+              <TextInput style={[styles.input, { fontSize: 16, fontWeight: '600', color: Colors.textBright }, titleError && { borderColor: ROSE }]} placeholder="e.g. Complete Calculus unit" placeholderTextColor={Colors.subtext} value={title} onChangeText={(t) => { setTitle(t); if (titleError) setTitleError(false); }} autoFocus={!goal} maxLength={80} />
+              {titleError && <Text style={{ color: ROSE, fontSize: 11, marginTop: -8, marginBottom: 12 }}>Goal title can't be empty</Text>}
+              <Text style={styles.fieldLabel}>Category</Text>
+              {/* Categories used to be a closed set: whatever tags already
+                  existed, and nothing else. Creating one meant going and
+                  tagging a TASK first, then coming back. The chip row now ends
+                  in "+ New", and a category the user types is shown selected
+                  immediately even though nothing uses it yet. */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: newCategory !== null ? 8 : 16 }} keyboardShouldPersistTaps="handled">
+                {['None', ...existingTags, ...(tag && !existingTags.includes(tag) ? [tag] : [])].map((t) => { const sel = t === 'None' ? !tag : tag === t; return (
+                  <TouchableOpacity key={t} onPress={() => { setTag(t === 'None' ? null : t); setNewCategory(null); }} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: sel ? Colors.primary : Colors.raised, borderWidth: 1, borderColor: sel ? Colors.primary : Colors.border }}>
+                    <Text style={{ color: sel ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{t}</Text>
+                  </TouchableOpacity>
+                ); })}
+                <TouchableOpacity
+                  onPress={() => setNewCategory((v) => (v === null ? '' : null))}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, marginRight: 8, backgroundColor: Colors.raised, borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.border }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Create a new category"
+                >
+                  <Ionicons name="add" size={13} color={Colors.primarySoft} style={{ marginRight: 3 }} />
+                  <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>New</Text>
+                </TouchableOpacity>
+              </ScrollView>
+              {newCategory !== null && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 14 }]}
+                    placeholder="Category name"
+                    placeholderTextColor={Colors.subtext}
+                    value={newCategory}
+                    onChangeText={setNewCategory}
+                    autoFocus
+                    maxLength={30}
+                    returnKeyType="done"
+                    onSubmitEditing={() => { const v = newCategory.trim(); if (v) setTag(v); setNewCategory(null); }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => { const v = newCategory.trim(); if (v) setTag(v); setNewCategory(null); }}
+                    disabled={!newCategory.trim()}
+                    style={{ paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, backgroundColor: Colors.primary, opacity: newCategory.trim() ? 1 : 0.4 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add category"
+                  >
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {/* The session stepper used to sit here, above the deadline, and
+                  it is why nobody could find the deadline. A goal is measured on
+                  its tasks now, so the two things it asks for are WHEN and
+                  WHICH — in that order. */}
+              <Text style={styles.fieldLabel}>Due date</Text>
+              {deadline ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: Colors.primaryDim, marginRight: 8 }}>
+                    <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} style={{ marginRight: 6 }} />
+                    <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '600' }}>{new Date(deadline + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setDeadline('')}><Ionicons name="close-circle" size={18} color={Colors.subtext} /></TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: 16 }]} onPress={openDatePicker}>
+                  <Ionicons name="calendar-outline" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
+                  <Text style={{ color: Colors.subtext, fontSize: 14 }}>Set deadline</Text>
+                </TouchableOpacity>
+              )}
+              {datePickerOpen && <DateTimePicker value={datePickerValue} mode="date" display={Platform.OS === 'ios' ? 'inline' : 'default'} onChange={handleDateChange} minimumDate={datePickerFloor!} />}
+
+              {/* Planned focus time. Optional, and never part of whether the
+                  goal is done (that stays task-based): it only adds planned vs
+                  done and pace to the time screen. Hours, decimals allowed. */}
+              <Text style={styles.fieldLabel}>Planned focus time</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: plannedError ? 4 : 16, gap: 8 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 14 }, plannedError && { borderColor: ROSE }]}
+                  placeholder="e.g. 20"
+                  placeholderTextColor={Colors.subtext}
+                  value={plannedText}
+                  onChangeText={(t) => { setPlannedText(t); if (plannedError) setPlannedError(false); }}
+                  keyboardType="decimal-pad"
+                  maxLength={7}
+                  accessibilityLabel="Planned focus time in hours"
+                />
+                <Text style={{ color: Colors.subtext, fontSize: 14, fontWeight: '600' }}>hours</Text>
+              </View>
+              {plannedError && <Text style={{ color: ROSE, fontSize: 11, marginBottom: 12 }}>Enter hours between 1 minute and 1,666 hours, or leave it empty</Text>}
+
+              {/* What the goal is actually measured on. Previously reachable
+                  only from the other side — open a task, pick its goal — so
+                  linking twelve tasks meant opening twelve tasks. */}
+              <Text style={styles.fieldLabel}>
+                Tasks{selectedTasks.length > 0 ? ` · ${selectedTasks.length}` : ''}
+              </Text>
+              {/* A dropdown to ADD, a checklist below of what is ON. One
+                  always-open list of every task, with the chosen ones checked
+                  somewhere inside it, buried the answer to "what is on this
+                  goal" among fifty rows — and nested a scroll view inside the
+                  form's own scroll view for the whole life of the sheet. */}
+              <TouchableOpacity
+                onPress={() => setTasksOpen((v) => !v)}
+                style={[styles.input, { flexDirection: 'row', alignItems: 'center', marginBottom: tasksOpen ? 0 : 12 }]}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: tasksOpen }}
+                accessibilityLabel={tasksOpen ? 'Close the task list' : `Add tasks, ${availableTasks.length} available`}
+              >
+                <Ionicons name="add-circle-outline" size={16} color={Colors.subtext} style={{ marginRight: 8 }} />
+                <Text style={{ color: Colors.subtext, fontSize: 14, flex: 1 }}>
+                  {tasksOpen ? 'Done adding' : `Add tasks${availableTasks.length > 0 ? ` (${availableTasks.length})` : ''}`}
+                </Text>
+                <Ionicons name={tasksOpen ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.subtext} />
+              </TouchableOpacity>
+              {tasksOpen && (
+                <View style={{ borderWidth: 1, borderColor: Colors.border, borderTopWidth: 0, borderBottomLeftRadius: 13, borderBottomRightRadius: 13, marginBottom: 12, overflow: 'hidden' }}>
+                  <TaskPicker
+                    tasks={availableTasks}
+                    goals={goals}
+                    goalId={goal?.id ?? null}
+                    onPick={toggleTask}
+                  />
+                </View>
+              )}
+              <SelectedTaskList tasks={selectedTasks} onRemove={toggleTask} />
+
+              {/* Editing only. Goals previously had no delete affordance anywhere
+                  in the app — they could be created but never removed. */}
+              {goal && onDelete && (
+                <TouchableOpacity
+                  onPress={onDelete}
+                  // 24, not 8. The task checklist directly above ends in a row
+                  // of small circle-X buttons that remove ONE task; this button
+                  // deletes the whole goal. Two removal gestures at very
+                  // different scales should not be a thumb-width apart.
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, marginTop: 24, borderRadius: 12, borderWidth: 1, borderColor: ROSE }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete goal"
+                >
+                  <Ionicons name="trash-outline" size={16} color={ROSE} style={{ marginRight: 7 }} />
+                  <Text style={{ color: ROSE, fontSize: 14, fontWeight: '600' }}>Delete goal</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-// ─── Main screen ─────────────────────────────────────────────────────────────
-
-const SCOPES = [
-  { key: 'friends', label: 'Friends' },
-  { key: 'global',  label: 'Global' },
-] as const;
-
-type Scope = typeof SCOPES[number]['key'];
-
-// The board is all-time only. The month/all-time toggle was removed, so this is
-// the single value sent to the server; the endpoint still takes the parameter.
-const LEADERBOARD_PERIOD = 'all_time';
-
-export default function AscendScreen() {
+// ─── TaskRow ──────────────────────────────────────────────────────────────────
+/**
+ * The visual body of a task row, with no gesture wrapper.
+ *
+ * Split out so a dormant recurring row can reuse the exact chrome while sitting
+ * OUTSIDE Swipeable. Hiding the checkbox alone would not have been enough:
+ * swipe-left completes a task, so a dormant row rendered through TaskRow could
+ * still be completed by a gesture that leaves no visual sign.
+ */
+/**
+ * Memoised, and the callbacks below are why it can be.
+ *
+ * The row props used to be inline arrows (`onTap={() => setStatsTask(task)}`),
+ * which are a new function on every parent render — memo would have compared
+ * them, found them different, and re-rendered anyway. The handlers now take the
+ * task as an ARGUMENT so the parent can pass stable references straight through.
+ *
+ * Worth it because this body recomputes getDueChip and a goals.find per row, and
+ * before this every mounted row redid both whenever anything on the Tasks screen
+ * changed.
+ */
+const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, onLongPressTag, dormant = false, subtitle }: {
+  task: Task; isActive: boolean; goals: TaskGoal[];
+  onTap: (task: Task) => void; onLongPressTag?: (t: string) => void;
+  dormant?: boolean; subtitle?: string;
+}) {
   const Colors = useTheme();
-  const SURFACE = Colors.surface;
-  const { BORDER_SOFT, ROSE } = Colors;
-  /**
-   * Selected fields, not the whole store.
-   *
-   * This screen is 1600+ lines and it subscribed to ALL of socialStore — posts,
-   * groups, notifications, followers, following, leaderboards and five loading
-   * flags in one flat object. Any change to any of them re-rendered the entire
-   * tab, including the composer modal and the own-recap card, whether or not the
-   * thing that changed was on screen.
-   *
-   * useShallow compares the picked fields one level deep, so a re-render happens
-   * when one of THESE changes and not otherwise. The shape is kept identical so
-   * the body below reads exactly as it did.
-   */
-  const social = useSocialStore(
-    useShallow((s) => ({
-      posts: s.posts,
-      postsCursor: s.postsCursor,
-      studyGroups: s.studyGroups,
-      selectedGroupId: s.selectedGroupId,
-      // Added after this selector was introduced. A field the screen reads but
-      // the selector omits is invisible to tsc only until it is dereferenced —
-      // it typechecks as a missing property, which is how this was caught.
-      feedScope: s.feedScope,
-      setFeedScope: s.setFeedScope,
-      notifications: s.notifications,
-      notificationsCursor: s.notificationsCursor,
-      isLoadingMoreNotifications: s.isLoadingMoreNotifications,
-      unreadCount: s.unreadCount,
-      isLoading: s.isLoading,
-      focusLeaderboard: s.focusLeaderboard,
-      myFocusEntry: s.myFocusEntry,
-      fetchPosts: s.fetchPosts,
-      fetchMorePosts: s.fetchMorePosts,
-      fetchStudyGroups: s.fetchStudyGroups,
-      fetchFocusLeaderboard: s.fetchFocusLeaderboard,
-      fetchNotifications: s.fetchNotifications,
-      fetchMoreNotifications: s.fetchMoreNotifications,
-      markNotificationsRead: s.markNotificationsRead,
-      setSelectedGroup: s.setSelectedGroup,
-      toggleReaction: s.toggleReaction,
-      createPost: s.createPost,
-    })),
-  );
-  const currentUserId = useAuthStore((s) => s.user?.id ?? '');
-  const router      = useRouter();
+  const isCompleted = task.isCompleted;
+  const barColor = dormant ? Colors.border : isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
+  // A template has no due date and no sessions, so these stay inert rather than
+  // rendering something untrue.
+  const chip = dormant ? null : getDueChip(task, Colors);
+  const prioColor = priorityColor(task.priority);
+  const categoryTag = task.tags.length > 0 ? task.tags[0] : null;
+  const tagStyle = useTagStyle(categoryTag ?? '');
+  const progressFrac = !dormant && task.estimatedMinutes ? Math.min(1, task.totalTimeOnTask / (task.estimatedMinutes * 60)) : null;
+  const linkedGoal = task.taskGoalId ? goals.find((g) => g.id === task.taskGoalId) : null;
+  // A day row and a dormant recurring task both carry isRecurring.
+  const isRecurringRow = task.isRecurring;
 
-  const [activeTab,          setActiveTab]          = useState<'feed' | 'leaderboard'>('feed');
-  const [showCreatePost,     setShowCreatePost]     = useState(false);
-  const [showNotifications,  setShowNotifications]  = useState(false);
-  const [refreshing,         setRefreshing]         = useState(false);
-  const [scope,              setScope]              = useState<Scope>('global');
-
-  useEffect(() => {
-    social.fetchPosts(social.selectedGroupId ?? undefined);
-    social.fetchStudyGroups();
-    social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
-    social.fetchNotifications();
-  }, []);
-
-  // ── Your own day, read locally ────────────────────────────────────────────
-  // See OwnRecapCard for why this is computed on the device rather than fetched.
-  const gamification = useGamification();
-  const tasks = useTaskStore((s) => s.tasks);
-  const profileAvatar = useUserProfileStore((s) => s.avatarEmoji);
-  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
-
-  // Re-read whenever the screen regains focus: a session finished on the Focus
-  // tab writes to this cache, and coming back here must show it.
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      getSessionHistory().then((s) => { if (!cancelled) setSessionHistory(s); });
-      return () => { cancelled = true; };
-    }, []),
-  );
-
-  const todayRecap = useMemo(
-    () => computeTodayRecap({ sessionHistory, tasks, currentStreak: gamification.currentStreak }),
-    [sessionHistory, tasks, gamification.currentStreak],
-  );
-
-  /**
-   * The feed minus the server's copy of the card already drawn at the top.
-   *
-   * Without this the user sees their own day twice — once locally and once as
-   * it came back from /social/posts — which looks like a duplicate-post bug
-   * rather than a design. Only today's AUTO recap is dropped; a recap they wrote
-   * by hand is a real post and stays in the list.
-   */
-  const feedPosts = useMemo(() => {
-    const today = getLocalDateString();
-    return social.posts.filter((p) => !(
-      p.authorId === currentUserId
-      && p.type === 'session_recap'
-      && p.auto === true
-      && p.localDate === today
-    ));
-  }, [social.posts, currentUserId]);
-
-  useEffect(() => {
-    social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD);
-  }, [scope]);
-
-  const handleRefreshFeed = useCallback(async () => {
-    setRefreshing(true);
-    await social.fetchPosts(social.selectedGroupId ?? undefined);
-    setRefreshing(false);
-  }, [social.selectedGroupId]);
-
-  /**
-   * The destination strip has THREE states, not two.
-   *
-   *   Public chip on   -> every public post, from anyone      (the default)
-   *   nothing on       -> only people you follow, plus you
-   *   a group chip on  -> that group
-   *
-   * Every chip toggles. Tapping the one that is already lit turns it off, which
-   * is how you reach the follow-only feed: it is the state where nothing is
-   * selected, so it needs no chip of its own.
-   *
-   * Public is the default because a follow-scoped feed shows a new account
-   * nothing at all — the tab used to open empty and stay empty until you went
-   * looking for people to follow.
-   */
-  const showPublicFeed = () => {
-    social.setSelectedGroup(null);
-    social.setFeedScope('public');
-    social.fetchPosts();
-  };
-
-  const showFollowingFeed = () => {
-    social.setSelectedGroup(null);
-    social.setFeedScope('following');
-    social.fetchPosts();
-  };
-
-  const handleGroupSelect = (groupId: string | null) => {
-    if (groupId === null) {
-      // The Public chip: on if off, and off to Following if already on.
-      if (isPublicFeed) showFollowingFeed(); else showPublicFeed();
-      return;
-    }
-    if (social.selectedGroupId === groupId) {
-      showFollowingFeed();
-      return;
-    }
-    social.setSelectedGroup(groupId);
-    social.fetchPosts(groupId);
-  };
-
-  const isPublicFeed = social.selectedGroupId === null && social.feedScope === 'public';
-  const isFollowingFeed = social.selectedGroupId === null && social.feedScope === 'following';
-
-  // Drives the context bar under the destination strip.
-  const selectedGroup = social.selectedGroupId
-    ? social.studyGroups.find((g) => g.id === social.selectedGroupId) ?? null
-    : null;
-
-  const handleToggleReaction = useCallback((postId: string, emoji: string) => {
-    social.toggleReaction(postId, emoji, currentUserId);
-  }, [currentUserId]);
-
-  const handleAuthorPress = useCallback((authorId: string) => {
-    router.push(`/user/${authorId}` as never);
-  }, []);
-
-  const handleCreatePost = useCallback(async (draft: Partial<SocialPost>) => {
-    const ok = await social.createPost(draft);
-    if (!ok) {
-      Alert.alert('Post failed', 'Something went wrong. Please try again.');
-    }
-  }, []);
-
-  const { focusLeaderboard, myFocusEntry } = social;
-  const aboveMe = myFocusEntry && myFocusEntry.position > 1
-    ? focusLeaderboard.find((e) => e.position === myFocusEntry.position - 1) ?? null
-    : null;
-  // The friends list always includes you, so "no friends to compare" means
-  // there's nobody besides yourself — not length === 0.
-  const friendsEmpty = focusLeaderboard.filter((e) => !e.isMe).length === 0;
-  // The podium only renders with ≥3 entries and covers ranks 1–3. When there's
-  // no podium (1–2 entries), the list must show every rank, otherwise ranks 1–3
-  // would never be drawn and the board looks empty. In the friends scope, the
-  // lone "you" row is suppressed in favour of the empty-state below.
-  const hasPodium = focusLeaderboard.length >= 3;
-  const listEntries = (scope === 'friends' && friendsEmpty)
-    ? []
-    : focusLeaderboard.filter((e) => (hasPodium ? e.position > 3 : true));
-
-  // ── Feed tab ──────────────────────────────────────────────────────────────
-
-  const renderFeed = () => (
-    <View style={{ flex: 1 }}>
-      {/* Destination strip: where you read is the same set of places you post to.
-          The heading is gone because the row is no longer only groups. */}
-      <View style={{ paddingTop: 12, paddingBottom: 4 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
-          <PublicFeedChip
-            selected={isPublicFeed}
-            onPress={() => handleGroupSelect(null)}
-          />
-          {social.studyGroups.map((g) => (
-            <GroupChip
-              key={g.id} group={g}
-              selected={social.selectedGroupId === g.id}
-              onPress={() => handleGroupSelect(g.id)}
-            />
-          ))}
-          <JoinChip onPress={() => router.push('/groups' as never)} />
-        </ScrollView>
-      </View>
-
-      {/* With a group selected, name it and offer the way into its details.
-          Tapping the chip filters; this is how you reach members and settings. */}
-      {selectedGroup && (
-        <Pressable
-          onPress={() => router.push(`/group/${selectedGroup.id}` as never)}
-          accessibilityRole="button"
-          accessibilityLabel={`Open details for ${selectedGroup.name}`}
-          style={{
-            flexDirection: 'row', alignItems: 'center',
-            marginHorizontal: 16, marginTop: 10, marginBottom: 2,
-            backgroundColor: SURFACE, borderRadius: 12,
-            borderWidth: 1, borderColor: BORDER_SOFT,
-            paddingHorizontal: 12, paddingVertical: 9,
-          }}
-        >
-          <Text style={{ fontSize: 15, marginRight: 8 }}>{selectedGroup.emoji}</Text>
-          <Text numberOfLines={1} style={{ flex: 1, color: Colors.textBright, fontSize: 13, fontWeight: '600' }}>
-            {selectedGroup.name}
-          </Text>
-          <Text style={{ color: Colors.subtext, fontSize: 11, marginRight: 6 }}>
-            {selectedGroup.memberCount ?? selectedGroup.memberIds.length} members
-          </Text>
-          <Ionicons name="chevron-forward" size={15} color={Colors.subtext} />
-        </Pressable>
-      )}
-
-      <FlatList
-        data={feedPosts}
-        keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefreshFeed} tintColor={Colors.primary} />}
-        onEndReached={() => { if (social.postsCursor) social.fetchMorePosts(); }}
-        onEndReachedThreshold={0.3}
-        ListHeaderComponent={
-          <View style={{ paddingTop: 8 }}>
-            {/* Only on your own feed. Inside a group, the card would be claiming
-                you posted today's recap there, which you may not have. */}
-            {!social.selectedGroupId && (
-              <OwnRecapCard
-                emoji={profileAvatar || getAvatarEmoji(currentUserId)}
-                sessionCount={todayRecap.sessionCount}
-                focusSeconds={todayRecap.focusSeconds}
-                tasksCompleted={todayRecap.tasksCompleted}
-                streakDays={todayRecap.streakDays}
-                onStartSession={() => router.push('/(tabs)/focus' as never)}
-              />
-            )}
-          </View>
-        }
-        ListFooterComponent={
-          social.postsCursor
-            ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
-            : <View style={{ height: 80 }} />
-        }
-        ListEmptyComponent={
-          social.isLoading ? (
-            <View style={{ paddingTop: 8 }}>
-              {[0, 1, 2].map((i) => (
-                <View key={i} style={{ backgroundColor: SURFACE, borderRadius: 16, marginHorizontal: 16, marginBottom: 12, height: 130 }} />
-              ))}
+  return (
+    <TouchableOpacity activeOpacity={0.75} onPress={() => onTap(task)} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
+      <View style={{ width: 3, backgroundColor: barColor }} />
+      <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: progressFrac !== null ? 10 : 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {dormant ? (
+            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primaryDim }}>
+              <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>{'\u21BA'}</Text>
             </View>
           ) : (
-            // Sits UNDER your own recap card, which is always drawn above. So
-            // this is never the whole screen — it explains what is missing
-            // (other people) rather than implying you have done nothing.
-            <View style={{ alignItems: 'center', paddingVertical: 36, paddingHorizontal: 32 }}>
-              <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '600', textAlign: 'center' }}>
-                {social.selectedGroupId ? 'No recaps in this group yet'
-                  : isFollowingFeed ? 'Nobody you follow has posted'
-                  : 'Nobody else here yet'}
-              </Text>
-              {/* Three empty states because they mean three different things.
-                  An empty PUBLIC feed means the app is quiet. An empty
-                  FOLLOWING feed means you follow nobody, or they are quiet —
-                  and telling that user to go find people is the useful thing,
-                  where telling it to someone on the open feed is not. */}
-              <Text style={{ color: Colors.subtext, fontSize: 13, lineHeight: 19, marginTop: 8, textAlign: 'center' }}>
-                {social.selectedGroupId ? 'Be the first to leave one.'
-                  : isFollowingFeed ? 'Follow a few people, or tap the globe to see everyone.'
-                  : 'Be the first to check in today.'}
-              </Text>
-              {isFollowingFeed && (
-                <Pressable
-                  onPress={() => router.push('/search' as never)}
-                  accessibilityRole="button"
-                  style={{
-                    marginTop: 16, paddingHorizontal: 24, paddingVertical: 10,
-                    backgroundColor: Colors.primary, borderRadius: 20,
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Find people</Text>
-                </Pressable>
-              )}
+            <View style={{ width: 20, height: 20, borderRadius: 10, marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isCompleted ? Colors.accent : 'transparent', borderWidth: isCompleted ? 0 : 1.5, borderColor: isCompleted ? Colors.accent : isActive ? Colors.primary : Colors.subtext }}>
+              {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
             </View>
-          )
-        }
-        renderItem={({ item }) => (
-          <PostCard post={item} currentUserId={currentUserId} onToggleReaction={handleToggleReaction} onAuthorPress={handleAuthorPress} />
+          )}
+          <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
+          <View style={{ marginLeft: 6, alignItems: 'flex-end', gap: 4 }}>
+            {(isRecurringRow || categoryTag) && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {isRecurringRow && (
+                  <View style={{ backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 }}>
+                    <Text style={{ color: Colors.primarySoft, fontSize: 11, fontWeight: '700' }}>↺</Text>
+                  </View>
+                )}
+                {categoryTag && (
+                  <TouchableOpacity
+                    onLongPress={() => onLongPressTag?.(categoryTag)} delayLongPress={400}
+                    style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: tagStyle.bg }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: prioColor + '22' }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
+            </View>
+          </View>
+        </View>
+        {subtitle && (
+          <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 5 }} numberOfLines={1}>
+            {subtitle}
+          </Text>
         )}
-      />
+        {linkedGoal && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5 }}>
+            <Ionicons name="flag-outline" size={10} color={Colors.primarySoft} style={{ marginRight: 4 }} />
+            <Text style={{ color: Colors.primarySoft, fontSize: 11 }} numberOfLines={1}>Goal: {linkedGoal.title}</Text>
+          </View>
+        )}
+        {(task.sessionsOnTask > 0 || chip) && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
+            {task.sessionsOnTask > 0 && <Text style={{ color: isActive ? Colors.primarySoft : Colors.subtext, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
+            {chip && <View accessible accessibilityLabel={chip.a11yLabel} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
+          </View>
+        )}
+        {progressFrac !== null && (
+          <View style={{ height: 3, backgroundColor: Colors.inactive, borderRadius: 2, marginTop: 10, overflow: 'hidden' }}>
+            <View style={{ width: `${Math.round(progressFrac * 100)}%`, height: '100%', borderRadius: 2, backgroundColor: isCompleted ? Colors.accent : Colors.primary }} />
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+const TaskRow = memo(function TaskRow({ task, isActive, goals, onTap, onEdit, onComplete, onLongPressTag }: {
+  task: Task; isActive: boolean; goals: TaskGoal[];
+  onTap: (task: Task) => void;
+  onEdit: (task: Task) => void;
+  onComplete: (taskId: string) => void;
+  onLongPressTag?: (t: string) => void;
+}) {
+  const Colors = useTheme();
+  const { ROSE, ROSE_DIM } = Colors;
+  const isCompleted = task.isCompleted;
+  const swipeRef = useRef<SwipeableMethods>(null);
+  // ReanimatedSwipeable reports the direction of the SWIPE, not the panel:
+  // dragging right reveals the left ("Done") panel and reports RIGHT. The old
+  // Animated-based Swipeable (removed in gesture-handler 3) reported 'left' for
+  // the same gesture, so the comparison flipped with the upgrade.
+  const handleSwipeOpen = useCallback((direction: SwipeDirection) => { swipeRef.current?.close(); if (direction === SwipeDirection.RIGHT) onComplete(task.id); else onEdit(task); }, [onComplete, onEdit, task]);
+
+  const renderLeftActions = () => (
+    <View style={{ width: 72, marginRight: 6, marginBottom: 8, borderRadius: 14, backgroundColor: isCompleted ? ROSE_DIM : Colors.accentDim, justifyContent: 'center', alignItems: 'center' }}>
+      <Ionicons name={isCompleted ? 'arrow-undo' : 'checkmark-circle'} size={22} color={isCompleted ? ROSE : Colors.accent} />
+      <Text style={{ color: isCompleted ? ROSE : Colors.accent, fontSize: 9, fontWeight: '700', marginTop: 3 }}>{isCompleted ? 'Undo' : 'Done'}</Text>
+    </View>
+  );
+  const renderRightActions = () => (
+    <View style={{ width: 72, marginLeft: 6, marginBottom: 8, borderRadius: 14, backgroundColor: Colors.primaryDim, justifyContent: 'center', alignItems: 'center' }}>
+      <Ionicons name="pencil" size={20} color={Colors.primarySoft} />
+      <Text style={{ color: Colors.primarySoft, fontSize: 9, fontWeight: '700', marginTop: 3 }}>Edit</Text>
     </View>
   );
 
-  // ── Leaderboard tab ───────────────────────────────────────────────────────
-
-  const renderLeaderboard = () => (
-    <ScrollView
-      refreshControl={
-        <RefreshControl
-          refreshing={social.isLoading}
-          onRefresh={() => social.fetchFocusLeaderboard(scope, LEADERBOARD_PERIOD)}
-          tintColor={Colors.primary}
-        />
-      }
-    >
-      {/* Scope selector */}
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 14 }}>
-        {SCOPES.map(({ key, label }, i) => (
-          <Pressable
-            key={key}
-            onPress={() => setScope(key)}
-            style={{
-              flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20,
-              backgroundColor: scope === key ? Colors.primary : SURFACE,
-              borderWidth: 1, borderColor: scope === key ? Colors.primary : BORDER_SOFT,
-              marginRight: i < SCOPES.length - 1 ? 8 : 0,
-              ...(scope === key ? { shadowColor: Colors.primary, shadowOpacity: 0.4, shadowRadius: 6, elevation: 3 } : {}),
-            }}
-          >
-            <Text style={{ color: scope === key ? '#fff' : Colors.subtext, fontSize: 12, fontWeight: '600' }}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {/* Empty states */}
-      {scope === 'friends' && friendsEmpty && !social.isLoading && (
-        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
-          <Ionicons name="people-outline" size={48} color={Colors.subtext} />
-          <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
-            Follow people to see how you compare
-          </Text>
-        </View>
-      )}
-
-      {scope === 'global' && focusLeaderboard.length === 0 && !social.isLoading && (
-        <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 }}>
-          <Ionicons name="trophy-outline" size={48} color={Colors.subtext} />
-          <Text style={{ color: Colors.text, fontSize: 14, textAlign: 'center', marginTop: 16 }}>
-            No one's on the leaderboard yet — finish a focus session to claim a spot
-          </Text>
-        </View>
-      )}
-
-      {social.isLoading && <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 32 }} />}
-
-      {/* Podium */}
-      {focusLeaderboard.length >= 3 && !social.isLoading && (
-        <PodiumBlock entries={focusLeaderboard} />
-      )}
-
-      {/* Ranked list */}
-      {listEntries.length > 0 && !social.isLoading && (
-        <View style={{
-          backgroundColor: SURFACE, borderRadius: 16, borderWidth: 1,
-          borderColor: BORDER_SOFT, marginHorizontal: 16, marginBottom: 12, overflow: 'hidden',
-        }}>
-          {listEntries.map((entry, idx) => (
-            <View key={entry.userId}>
-              {idx > 0 && <View style={{ height: 1, backgroundColor: BORDER_SOFT, marginHorizontal: 16 }} />}
-              <LeaderboardListRow entry={entry} />
-            </View>
-          ))}
-          {myFocusEntry && myFocusEntry.position > 10 && (
-            <>
-              <View style={{ alignItems: 'center', paddingVertical: 4 }}>
-                <Text style={{ color: Colors.subtext, letterSpacing: 4 }}>· · ·</Text>
-              </View>
-              <LeaderboardListRow entry={{ ...myFocusEntry, isMe: true }} />
-            </>
-          )}
-        </View>
-      )}
-
-      <NextTargetCard me={myFocusEntry} above={aboveMe} />
-      <View style={{ height: 80 }} />
-    </ScrollView>
+  return (
+    <Swipeable ref={swipeRef} renderLeftActions={renderLeftActions} renderRightActions={renderRightActions} onSwipeableOpen={handleSwipeOpen} overshootLeft={false} overshootRight={false} friction={2}>
+      <TaskRowBody task={task} isActive={isActive} goals={goals} onTap={onTap} onLongPressTag={onLongPressTag} />
+    </Swipeable>
   );
+});
 
-  // ── Render ────────────────────────────────────────────────────────────────
+/**
+ * A recurring task with no instance today, shown through its template.
+ *
+ * No Swipeable, so it cannot be completed by gesture: there is no row for today
+ * to complete. Tapping opens the template editor rather than the stats modal,
+ * which exposes both completion and selectTask, and a template id in
+ * selectedTaskId would leave the focus tab holding a dangling id.
+ */
+const DormantRecurringRow = memo(function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag }: {
+  template: Task; goals: TaskGoal[]; subtitle: string;
+  onEdit: (task: Task) => void; onLongPressTag?: (t: string) => void;
+}) {
+  return (
+    <TaskRowBody
+      task={template}
+      isActive={false}
+      goals={goals}
+      onTap={onEdit}
+      onLongPressTag={onLongPressTag}
+      dormant
+      subtitle={subtitle}
+    />
+  );
+});
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function Toast({ message }: { message: string | null }) {
+  const Colors = useTheme();
+  // useMemo rather than useRef(...).current, which allocates a fresh
+  // Animated.Value on every render and discards it. Stable identity also lets it
+  // be an honest effect dependency.
+  const opacity = useMemo(() => new Animated.Value(0), []);
+  useEffect(() => {
+    if (message) {
+      Animated.sequence([Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }), Animated.delay(1500), Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true })]).start();
+    }
+  }, [message, opacity]);
+  if (!message) return null;
+  return (
+    <Animated.View style={{ position: 'absolute', bottom: 96, alignSelf: 'center', backgroundColor: Colors.accentDim, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20, borderWidth: 0.5, borderColor: Colors.accent, opacity }}>
+      <Text style={{ color: Colors.accent, fontSize: 13, fontWeight: '700' }}>{message}</Text>
+    </Animated.View>
+  );
+}
+
+// ─── GroupHeader ──────────────────────────────────────────────────────────────
+function GroupHeader({ dotColor, label, count }: { dotColor: string; label: string; count: number }) {
+  const Colors = useTheme();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginTop: 4 }}>
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: dotColor, marginRight: 8 }} />
+      <Text style={{ color: Colors.textBright, fontSize: 12, fontWeight: '700', flex: 1, letterSpacing: 0.5 }}>{label.toUpperCase()}</Text>
+      <View style={{ backgroundColor: dotColor + '25', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}><Text style={{ color: dotColor, fontSize: 11, fontWeight: '700' }}>{count}</Text></View>
+    </View>
+  );
+}
+
+// ─── BarColumn ────────────────────────────────────────────────────────────────
+/**
+ * One day of the week strip, scaled by TIME.
+ *
+ * This used to plot session COUNT, so a ninety-minute session and a
+ * five-minute one drew the same bar — the same defect corrected in
+ * getPeakHour, where the client ranked peak focus by count while the server
+ * ranked it by seconds.
+ */
+/**
+ * One day's bar in a week strip.
+ *
+ * `value` and `formatValue` rather than `seconds` and a hardcoded duration
+ * format: the same strip now draws focus time on the Goals screen and a count
+ * of tasks finished on the Tasks screen. A prop called `seconds` holding a task
+ * count is the kind of small lie that outlives everyone's memory of it.
+ */
+function BarColumn({ dayLabel, value, max, isToday, isFuture, formatValue = compactDuration }: {
+  dayLabel: string; value: number; max: number; isToday: boolean; isFuture: boolean;
+  formatValue?: (n: number) => string;
+}) {
+  const Colors = useTheme();
+  const BAR_MAX_H = 56;
+  const barHeight = isFuture ? 3 : Math.max(value > 0 ? (value / max) * BAR_MAX_H : 3, 3);
+  const barColor = isToday ? Colors.accent : Colors.primary;
+  const countLabel = isFuture ? '—' : formatValue(value);
+  const labelColor = isToday ? Colors.accent : Colors.subtext;
+  return (
+    <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 2 }}>
+      <View style={{ height: BAR_MAX_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' }}>
+        <View style={{ width: '70%', height: barHeight, borderRadius: 3, backgroundColor: isFuture ? Colors.inactive : barColor, opacity: isFuture ? 0.15 : value === 0 && !isToday ? 0.25 : 1 }} />
+      </View>
+      <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 5, color: labelColor }}>{countLabel}</Text>
+      <Text style={{ fontSize: 10, fontWeight: '500', marginTop: 2, color: labelColor }}>{dayLabel}</Text>
+    </View>
+  );
+}
+
+
+
+// ─── TodayPill ────────────────────────────────────────────────────────────────
+function TodayPill({ value, label }: { value: string; label: string }) {
+  const Colors = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.surface, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 10, alignItems: 'center', borderWidth: 0.5, borderColor: Colors.border }}>
+      <Text style={{ color: Colors.primarySoft, fontSize: 18, fontWeight: '700', marginBottom: 3 }}>{value}</Text>
+      <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center' }}>{label.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+function getStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    input: { backgroundColor: c.raised, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: c.textBright, marginBottom: 16, fontSize: 14, borderWidth: 1, borderColor: c.border },
+    fieldLabel: { color: c.subtext, fontSize: 11, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 },
+    stepper: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' },
+    card: { backgroundColor: c.surface, borderRadius: 16, borderWidth: 0.5, borderColor: c.border, padding: 16 },
+  });
+}
+
+
+// ─── DailyTargetModal ─────────────────────────────────────────────────────────
+// Its own component because two screens open it: the Tasks tab pill strip and
+// the Goal Progress drill-down. It used to be written inline in the Tasks tab
+// return only, so tapping "Today's target" inside Goal Progress flipped the flag
+// with nothing mounted to render it. The sheet then appeared on the way back to
+// the Tasks tab, which reads as a dead tap followed by a stray modal.
+function DailyTargetModal({ visible, draft, onDraftChange, onCancel, onSave }: {
+  visible: boolean; draft: number; onDraftChange: (next: number) => void;
+  onCancel: () => void; onSave: () => void;
+}) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 }}>
+        <Text style={{ color: Colors.textBright, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Daily Focus Goal</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 13, marginBottom: 24 }}>How much focus time do you want to put in each day?</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 32 }}>
+          <TouchableOpacity
+            onPress={() => onDraftChange(stepGoalMinutes(draft, -1))}
+            disabled={draft <= GOAL_MIN_MINUTES}
+            accessibilityRole="button"
+            accessibilityLabel="Decrease daily focus goal"
+            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft <= GOAL_MIN_MINUTES ? 0.3 : 1 }]}
+          >
+            <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>−</Text>
+          </TouchableOpacity>
+          <View style={{ width: 150, alignItems: 'center' }}>
+            <Text style={{ color: Colors.textBright, fontSize: 38, fontWeight: '800' }} numberOfLines={1} adjustsFontSizeToFit>
+              {formatSeconds(draft * 60)}
+            </Text>
+            <Text style={{ color: Colors.subtext, fontSize: 12 }}>of focus per day</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => onDraftChange(stepGoalMinutes(draft, 1))}
+            disabled={draft >= GOAL_MAX_MINUTES}
+            accessibilityRole="button"
+            accessibilityLabel="Increase daily focus goal"
+            style={[styles.stepper, { width: 48, height: 48, borderRadius: 14, opacity: draft >= GOAL_MAX_MINUTES ? 0.3 : 1 }]}
+          >
+            <Text style={{ color: Colors.primarySoft, fontSize: 24, fontWeight: '600' }}>+</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity onPress={onCancel} style={{ flex: 1, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' }}>
+            <Text style={{ color: Colors.subtext, fontWeight: '600' }}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onSave}
+            style={{ flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── PillStrip ────────────────────────────────────────────────────────────────
+function PillStrip({ completedToday, yesterdayCompleted, totalActive, weeklyRate, lastWeekRate, focusSecondsToday, dailyGoalSeconds, onSetGoal }: {
+  completedToday: number; yesterdayCompleted: number; totalActive: number;
+  weeklyRate: number | null; lastWeekRate: number | null;
+  focusSecondsToday: number; dailyGoalSeconds: number;
+  onSetGoal: () => void;
+}) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const AMBER = Colors.warning;
+  const taskDelta = completedToday - yesterdayCompleted;
+  const taskDeltaColor = taskDelta > 0 ? Colors.accent : taskDelta < 0 ? ROSE : Colors.subtext;
+  const taskDeltaLabel = taskDelta > 0 ? '↑ vs yesterday' : taskDelta < 0 ? '↓ vs yesterday' : 'Same as yesterday';
+
+  const rateDiff = weeklyRate !== null && lastWeekRate !== null ? weeklyRate - lastWeekRate : null;
+  const rateColor = rateDiff !== null && rateDiff > 2 ? Colors.accent : rateDiff !== null && rateDiff < -2 ? ROSE : Colors.subtext;
+  const rateLabel = rateDiff !== null && rateDiff > 2 ? `+${rateDiff}% this week` : rateDiff !== null && rateDiff < -2 ? `${rateDiff}% this week` : 'Steady this week';
+
+  const noTarget = dailyGoalSeconds <= 0;
+  const remaining = dailyGoalSeconds - focusSecondsToday;
+  const focusValue = focusSecondsToday > 0 ? formatDuration(focusSecondsToday) : '—';
+  const focusSubLabel = noTarget ? 'Set a goal →' : focusSecondsToday === 0 ? 'Start your first session' : remaining > 0 ? `${formatDuration(remaining)} to goal` : 'Goal reached ✓';
+  const focusSubColor = noTarget || focusSecondsToday === 0 ? Colors.subtext : remaining > 0 ? AMBER : Colors.accent;
+
+  const pillStyle = { flex: 1, backgroundColor: Colors.surface, borderRadius: 14, padding: 12, borderWidth: 0.5, borderColor: Colors.border };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
-      {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
+    <View style={{ flexDirection: 'row', paddingHorizontal: 20, gap: 8, marginBottom: 16 }}>
+      <View style={pillStyle}>
+        <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800', marginBottom: 1 }}>{completedToday}/{totalActive}</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 3 }}>TASKS DONE</Text>
+        <Text style={{ color: taskDeltaColor, fontSize: 10, fontWeight: '600' }}>{taskDeltaLabel}</Text>
+      </View>
+      <View style={pillStyle}>
+        <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800', marginBottom: 1 }}>{weeklyRate !== null ? `${weeklyRate}%` : '—'}</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 3 }}>COMPLETION</Text>
+        <Text style={{ color: rateColor, fontSize: 10, fontWeight: '600' }}>{rateLabel}</Text>
+      </View>
+      {/* Always tappable. This used to be `onPress={noTarget ? onSetGoal : undefined}`,
+          but the goal clamps to a minimum, so noTarget could never be true — the
+          picker was unreachable and the goal could not be changed at all.
+          `noTarget` itself is kept as a guard: the goal is read off disk, where
+          no clamp applies, and "Goal reached ✓" on a zero goal is the one
+          reading that would be actively wrong. */}
+      <TouchableOpacity
+        onPress={onSetGoal}
+        activeOpacity={0.7}
+        style={pillStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Change daily focus goal"
+      >
+        <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800', marginBottom: 1 }}>{focusValue}</Text>
+        <Text style={{ color: Colors.subtext, fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 3 }}>FOCUS TODAY</Text>
+        <Text style={{ color: focusSubColor, fontSize: 10, fontWeight: '600' }}>{focusSubLabel}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── GoalZoneRow — compact goal row used in Zone 2 of the main screen ─────────
+// Spells out the components behind a blended percentage, so a 'both' goal at 58%
+// isn't opaque — e.g. "3/5 tasks · 8/12 sessions".
+function goalSubMetrics(goal: TaskGoal): string {
+  const parts: string[] = [];
+  if (goal.progressMode !== 'sessions') {
+    parts.push(`${goal.completedTaskCount}/${goal.linkedTaskCount} tasks`);
+  }
+  if (goal.progressMode !== 'tasks' && goal.targetSessions) {
+    parts.push(`${goal.actualSessions}/${goal.targetSessions} sessions`);
+  }
+  return parts.join(' · ');
+}
+
+function GoalZoneRow({ goal }: { goal: TaskGoal }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  // Server-computed. Recomputing from the local task list gave a different
+  // answer (it excludes recurring templates) and couldn't see the sessions
+  // component at all.
+  const pct = Math.round(goal.overallProgress * 100);
+  const ts = useTagStyle(goal.tag ?? '');
+  const deadlineDays = daysUntilLocalDate(goal.deadline);
+  const deadlineLabel = formatDeadlineLabel(goal.deadline);
+  const barColor = pct >= 100 ? Colors.accent : Colors.primary;
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 7 }}>
+        {goal.tag && (
+          <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: ts.bg, marginRight: 8 }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: ts.text }}>{ts.icon} {goal.tag}</Text>
+          </View>
+        )}
+        <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+          {goal.title}
+        </Text>
+        <Text style={{ color: pct >= 100 ? Colors.accent : Colors.textBright, fontSize: 14, fontWeight: '800', marginLeft: 10 }}>
+          {pct}%
+        </Text>
+      </View>
+      <View style={{ height: 5, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden' }}>
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: barColor }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+        <Text style={{ color: Colors.subtext, fontSize: 10 }}>
+          {goalSubMetrics(goal)}
+        </Text>
+        {deadlineLabel && (
+          <Text style={{ color: (deadlineDays ?? 0) < 0 ? ROSE : Colors.subtext, fontSize: 10 }}>
+            {deadlineLabel}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ─── GoalCard ─────────────────────────────────────────────────────────────────
+function GoalCard({ goal, onLongPressTag }: { goal: TaskGoal; onLongPressTag?: (t: string) => void }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const pct = Math.round(goal.overallProgress * 100);
+  const ts = useTagStyle(goal.tag ?? '');
+  const deadlineDays = daysUntilLocalDate(goal.deadline);
+  const deadlineLabel = formatDeadlineLabel(goal.deadline);
+  // A finished goal is never late, however long its date has been gone.
+  const isOverdue = !goal.isCompleted && deadlineDays !== null && deadlineDays < 0;
+  // Nothing linked means 0% forever, and the number alone cannot say why.
+  // The most common cause is a goal that predates goals being counted in tasks.
+  const isEmpty = !goal.isCompleted && goal.linkedTaskCount === 0;
+
+  return (
+    <View style={[
+      styles.card,
+      { marginBottom: 12 },
+      isOverdue && { borderColor: ROSE, borderWidth: 1 },
+    ]}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
         <View style={{ flex: 1 }}>
-          <AscendWordmark size={26} />
-        </View>
-        {/* Streak first, then the two actions. The number is the only thing in
-            this cluster that is about you rather than about navigating. */}
-        {gamification.currentStreak > 0 && <StreakPill days={gamification.currentStreak} />}
-        <Pressable
-          style={{ marginRight: 14 }}
-          accessibilityRole="button"
-          accessibilityLabel="Search people and groups"
-          onPress={() => router.push('/search' as never)}
-        >
-          <Ionicons name="search" size={22} color={Colors.text} />
-        </Pressable>
-        <Pressable style={{ marginRight: 14 }} onPress={() => {
-          social.markNotificationsRead();
-          setShowNotifications(true);
-        }}>
-          <Ionicons name="notifications-outline" size={24} color={Colors.text} />
-          {social.unreadCount > 0 && (
-            <View style={{
-              position: 'absolute', top: -2, right: -2,
-              width: 8, height: 8, borderRadius: 4, backgroundColor: ROSE,
-            }} />
-          )}
-        </Pressable>
-      </View>
-
-      {/* Tab switcher */}
-      <View style={{ flexDirection: 'row', marginHorizontal: 16, marginBottom: 4, backgroundColor: SURFACE, borderRadius: 24, padding: 4 }}>
-        {([
-          ['feed', 'Feed', 'newspaper-outline'],
-          ['leaderboard', 'Leaderboard', 'podium-outline'],
-        ] as const).map(([tab, label, icon]) => {
-          const isActive = activeTab === tab;
-          const tint = isActive ? '#fff' : Colors.subtext;
-          return (
-            <Pressable
-              key={tab}
-              onPress={() => setActiveTab(tab)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: isActive }}
-              style={{
-                flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                gap: 6, paddingVertical: 8, borderRadius: 20,
-                backgroundColor: isActive ? Colors.primary : 'transparent',
-              }}
-            >
-              <Ionicons name={icon} size={14} color={tint} />
-              <Text style={{ color: tint, fontSize: 13, fontWeight: '600' }}>
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={{ flex: 1 }}>
-        <View style={{ flex: 1, display: activeTab === 'feed' ? 'flex' : 'none' }}>
-          {renderFeed()}
-        </View>
-        <View style={{ flex: 1, display: activeTab === 'leaderboard' ? 'flex' : 'none' }}>
-          {renderLeaderboard()}
-        </View>
-      </View>
-
-      {/* FAB — Feed tab only */}
-      {activeTab === 'feed' && (
-        <Pressable
-          onPress={() => setShowCreatePost(true)}
-          style={{
-            position: 'absolute', bottom: 24, right: 20,
-            width: 52, height: 52, borderRadius: 26,
-            backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
-            shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 14, elevation: 8,
-          }}
-        >
-          <Ionicons name="add" size={26} color="#fff" />
-        </Pressable>
-      )}
-
-      {/* Notifications modal */}
-      <Modal visible={showNotifications} transparent animationType="slide" onRequestClose={() => setShowNotifications(false)}>
-        <View style={{ flex: 1, backgroundColor: '#00000080', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: SURFACE, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%' }}>
-            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border }} />
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
-              <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>Notifications</Text>
-              <Pressable onPress={() => setShowNotifications(false)}>
-                <Ionicons name="close" size={22} color={Colors.subtext} />
-              </Pressable>
-            </View>
-            {social.notifications.length === 0 ? (
-              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                <Text style={{ color: Colors.subtext, fontSize: 13 }}>No notifications yet</Text>
+          <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{goal.title}</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+            {isOverdue && (
+              <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, backgroundColor: ROSE }}>
+                <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.6, color: '#fff' }}>OVERDUE</Text>
               </View>
-            ) : (
-              <FlatList
-                data={social.notifications}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ paddingBottom: 32 }}
-                // Older pages load as the list nears its end; the cursor is
-                // null once the oldest notification is on screen.
-                onEndReached={() => { if (social.notificationsCursor) social.fetchMoreNotifications(); }}
-                onEndReachedThreshold={0.5}
-                ListFooterComponent={social.isLoadingMoreNotifications
-                  ? <ActivityIndicator color={Colors.primary} style={{ paddingVertical: 16 }} />
-                  : undefined}
-                renderItem={({ item }) => (
-                  <View style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: BORDER_SOFT }}>
-                    <Text style={{ color: item.isRead ? Colors.subtext : Colors.textBright, fontSize: 14 }}>
-                      {item.text}
-                    </Text>
-                    <Text style={{ color: Colors.subtext, fontSize: 11, marginTop: 4 }}>{timeAgo(item.createdAt)}</Text>
-                  </View>
-                )}
-              />
             )}
+            {goal.tag && (
+              <TouchableOpacity onLongPress={() => onLongPressTag?.(goal.tag!)} delayLongPress={400}
+                style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: ts.bg }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: ts.text }}>{ts.icon} {goal.tag}</Text>
+              </TouchableOpacity>
+            )}
+            {deadlineLabel && <Text style={{ color: isOverdue ? ROSE : Colors.subtext, fontSize: 11 }}>{deadlineLabel}</Text>}
           </View>
         </View>
-      </Modal>
+        <Text style={{ color: Colors.textBright, fontSize: 20, fontWeight: '800' }}>{pct}%</Text>
+      </View>
+      <View style={{ height: 6, backgroundColor: Colors.inactive, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 3, backgroundColor: goal.isCompleted ? Colors.accent : Colors.primary }} />
+      </View>
+      {isEmpty ? (
+        // States the fact and stops there: tapping this card opens the stats
+        // modal, whose status line already offers the link-a-task action. Copy
+        // that promises something the gesture does not do is worse than none.
+        <Text style={{ color: Colors.warning, fontSize: 12 }}>
+          No tasks linked yet.
+        </Text>
+      ) : (
+        <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goalSubMetrics(goal)}</Text>
+      )}
+    </View>
+  );
+}
 
-      <CreatePostSheet
-        visible={showCreatePost}
-        onClose={() => setShowCreatePost(false)}
-        onPost={handleCreatePost}
-        studyGroups={social.studyGroups}
-        defaultGroupId={social.selectedGroupId}
+// ─── Hero card shared header ──────────────────────────────────────────────────
+function HeroLabel({ text, color }: { text: string; color?: string }) {
+  const Colors = useTheme();
+  return <Text style={{ color: color ?? Colors.subtext, fontSize: 9, fontWeight: '700', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>{text}</Text>;
+}
+
+// ─── Card 1: Urgency ──────────────────────────────────────────────────────────
+function UrgencyCard({ tasks, onSelectAndFocus }: { tasks: Task[]; onSelectAndFocus: (id: string) => void }) {
+  const Colors = useTheme();
+  const { ROSE } = Colors;
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  // One clock for the whole pass. The previous `new Date()` inside .map ran once
+  // per task, so a list evaluated across midnight could measure two different
+  // "todays" in one render.
+  // One clock for the whole pass, and one ordering rule shared with the two
+  // gates that decide whether this card renders at all.
+  const now = new Date();
+  const urgent = urgentTasks(tasks, now).slice(0, 3);
+
+  if (urgent.length === 0) return null;
+
+  const overdue = urgent.filter((u) => u.daysLeft < 0).length;
+  // Amber for a fresh slip, rose once it has been sitting. ROSE is this app's
+  // destructive colour — the delete button, and `error` itself in the light
+  // palette — so it has to be earned rather than applied to anything late.
+  const dayColor = (d: number) => (d < -2 ? ROSE : d <= 1 ? AMBER : Colors.subtext);
+  const dayLabel = (d: number) =>
+    d < 0 ? formatOverdue(d) : d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : `${d}d`;
+  // "Due soon" is simply false once overdue rows are in the list, and calling the
+  // whole card "Overdue" mislabels the today-items sitting underneath.
+  const heading = overdue === 0
+    ? '⚠ Due soon'
+    : overdue === urgent.length
+      ? `⚠ ${overdue} overdue`
+      : '⚠ Needs attention';
+  const accent = overdue > 0 ? AMBER : ROSE;
+
+  return (
+    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: accent }]}>
+      <HeroLabel text={heading} color={accent} />
+      {urgent.map(({ task: t, daysLeft }) => (
+        <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+          <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: dayColor(daysLeft), marginRight: 10 }} />
+          <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{t.title}</Text>
+          <Text style={{ color: dayColor(daysLeft), fontSize: 12, fontWeight: '700', marginLeft: 8 }}>
+            {dayLabel(daysLeft)}
+          </Text>
+        </View>
+      ))}
+      <TouchableOpacity
+        onPress={() => onSelectAndFocus(urgent[0].task.id)}
+        accessibilityRole="button"
+        style={{ marginTop: 4, backgroundColor: accent + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: accent + '40' }}
+      >
+        <Text style={{ color: accent, fontWeight: '700', fontSize: 13 }}>Focus on this now →</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── Card 2: Goal Progress ────────────────────────────────────────────────────
+function GoalProgressCard({ goals, onGoalPress }: { goals: TaskGoal[]; onGoalPress: (goalId: string) => void }) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const activeGoals = goals.filter((g) => !g.isCompleted && !g.isArchived);
+  if (activeGoals.length === 0) return null;
+
+  // Surface the goal most at risk, not the one closest to done. Sorting by
+  // completion meant a goal with nothing linked read 0% and could never appear —
+  // even with a deadline tomorrow, which is exactly when it needs attention.
+  // Soonest deadline wins; no deadline sorts last; ties break toward the goal
+  // with further to go.
+  const goal = [...activeGoals].sort((a, b) => {
+    const da = daysUntilLocalDate(a.deadline);
+    const db = daysUntilLocalDate(b.deadline);
+    if (da !== db) {
+      if (da === null) return 1;
+      if (db === null) return -1;
+      return da - db;
+    }
+    return a.overallProgress - b.overallProgress;
+  })[0];
+
+  const pct = Math.round(goal.overallProgress * 100);
+  const deadlineLabel = formatDeadlineLabel(goal.deadline);
+  const milestones = [25, 50, 75, 100];
+
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={() => onGoalPress(goal.id)} accessibilityRole="button" accessibilityLabel={`View goal ${goal.title}`} style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.primary }]}>
+      <HeroLabel text="🎯 Goal progress" />
+      <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 12 }} numberOfLines={2}>{goal.title}</Text>
+      <View style={{ height: 7, backgroundColor: Colors.inactive, borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
+        <View style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: 4, backgroundColor: pct >= 100 ? Colors.accent : Colors.primary }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+        {milestones.map((m) => (
+          <View key={m} style={{ alignItems: 'center', gap: 3 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: pct >= m ? Colors.accent : Colors.inactive }} />
+            <Text style={{ color: Colors.subtext, fontSize: 9 }}>{m}%</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+        {pct}% · {goalSubMetrics(goal)}{deadlineLabel ? ` · ${deadlineLabel}` : ''}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Card 3: Time Nudge ───────────────────────────────────────────────────────
+function TimeNudgeCard({ peakHour, sessionHistory, onFocus }: { peakHour: number | null; sessionHistory: SessionRecord[]; onFocus: () => void }) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const now = new Date();
+  const hourLabel = `${now.getHours() % 12 || 12}:${String(now.getMinutes()).padStart(2, '0')} ${now.getHours() < 12 ? 'am' : 'pm'}`;
+  const peakLabel = peakHour !== null ? formatPeakWindow(peakHour) : '—';
+
+  const counts: Record<number, number> = {};
+  for (const s of sessionHistory) counts[new Date(s.completedAt).getHours()] = (counts[new Date(s.completedAt).getHours()] ?? 0) + 1;
+  const maxCount = Math.max(...Object.values(counts), 1);
+  const bars = Array.from({ length: 12 }, (_, i) => ({ h: (18 + i) % 24, isPeak: (18 + i) % 24 === peakHour }))
+    .map(({ h, isPeak }) => ({ pct: ((counts[h] ?? 0) / maxCount) * 100, isPeak }));
+
+  return (
+    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.accent }]}>
+      <HeroLabel text={`⚡ Peak time — ${hourLabel}`} color={Colors.accent} />
+      <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700', marginBottom: 4 }}>
+        You focus best around {peakLabel}
+      </Text>
+      <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 12 }}>
+        Now is your prime focus window
+      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 36, gap: 2, marginBottom: 12 }}>
+        {bars.map(({ pct, isPeak }, i) => (
+          <View key={i} style={{ flex: 1, height: Math.max(3, pct / 100 * 36), borderRadius: 2, backgroundColor: isPeak ? Colors.accent : pct >= 60 ? Colors.primarySoft : pct >= 25 ? Colors.primary + '60' : Colors.inactive }} />
+        ))}
+      </View>
+      <TouchableOpacity onPress={onFocus} style={{ backgroundColor: Colors.accent + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: Colors.accent + '40' }}>
+        <Text style={{ color: Colors.accent, fontWeight: '700', fontSize: 13 }}>Start a session now →</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── Card 4: Momentum ─────────────────────────────────────────────────────────
+function MomentumCard({ currentStreak, longestStreak, sessionHistory }: { currentStreak: number; longestStreak: number; sessionHistory: SessionRecord[] }) {
+  const Colors = useTheme();
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const isPersonalBest = currentStreak > 0 && currentStreak === longestStreak;
+  const thisWeekStart = startOfThisWeekMs();
+  const thisWeekHours = sessionHistory
+    .filter((s) => s.completedAt >= thisWeekStart).reduce((sum, s) => sum + s.durationSeconds, 0) / 3600;
+
+  let last4Total = 0;
+  for (let n = 1; n <= 4; n++) {
+    const wStart = startOfWeekNMs(n); const wEnd = startOfWeekNMs(n - 1);
+    last4Total += sessionHistory.filter((s) => s.completedAt >= wStart && s.completedAt < wEnd).reduce((sum, s) => sum + s.durationSeconds, 0);
+  }
+  const last4Avg = last4Total / 4 / 3600;
+  const isAhead = thisWeekHours > last4Avg;
+
+  // Week dots Mon(1)–Sun(0)
+  const weekDots = [1, 2, 3, 4, 5, 6, 0].map((day) =>
+    sessionHistory.some((s) => { const d = new Date(s.completedAt); return s.completedAt >= thisWeekStart && d.getDay() === day; }),
+  );
+  const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+  return (
+    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: AMBER }]}>
+      <HeroLabel text="🔥 Momentum" color={AMBER} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+        <Text style={{ color: Colors.textBright, fontSize: 36, fontWeight: '800', marginRight: 12 }}>{currentStreak}</Text>
+        <View>
+          <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '700' }}>day streak</Text>
+          <Text style={{ color: isPersonalBest ? AMBER : Colors.subtext, fontSize: 12 }}>{isPersonalBest ? '🔥 Personal best!' : 'Study today to keep it alive'}</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+        {weekDots.map((active, i) => (
+          <View key={i} style={{ alignItems: 'center', gap: 4 }}>
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: active ? Colors.accent : Colors.inactive }} />
+            <Text style={{ color: Colors.subtext, fontSize: 9 }}>{dayLabels[i]}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={{ backgroundColor: isAhead ? Colors.accent + '15' : AMBER + '15', borderRadius: 10, padding: 10 }}>
+        <Text style={{ color: isAhead ? Colors.accent : AMBER, fontSize: 12, fontWeight: '600' }}>
+          {isAhead
+            ? `Best week this month ↑ +${(thisWeekHours - last4Avg).toFixed(1)}h vs avg`
+            : `${(last4Avg - thisWeekHours).toFixed(1)}h behind your average — keep going`}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Card 5: Self-comparison ──────────────────────────────────────────────────
+function SelfComparisonCard({ sessionHistory, onFocus }: { sessionHistory: SessionRecord[]; onFocus: () => void }) {
+  const Colors = useTheme();
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const thisWeekStart = startOfThisWeekMs();
+  const lastWeekStart = startOfWeekNMs(1);
+  const thisHours = sessionHistory.filter((s) => s.completedAt >= thisWeekStart).reduce((sum, s) => sum + s.durationSeconds, 0) / 3600;
+  const lastHours = sessionHistory.filter((s) => s.completedAt >= lastWeekStart && s.completedAt < thisWeekStart).reduce((sum, s) => sum + s.durationSeconds, 0) / 3600;
+  const delta = thisHours - lastHours;
+  const isAhead = delta > 0;
+  const isNew = thisHours === 0 && lastHours === 0;
+
+  if (isNew) {
+    return (
+      <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.primary }]}>
+        <HeroLabel text="📊 Your progress" />
+        <Text style={{ color: Colors.textBright, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>
+          Complete your first focus session to start tracking your progress.
+        </Text>
+        <TouchableOpacity onPress={onFocus} style={{ backgroundColor: Colors.primary + '20', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: Colors.primary + '40' }}>
+          <Text style={{ color: Colors.primarySoft, fontWeight: '700', fontSize: 13 }}>Start focusing →</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: Colors.primary }]}>
+      <HeroLabel text="📊 This week vs last week" />
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 16, marginBottom: 12 }}>
+        <View>
+          <Text style={{ color: Colors.textBright, fontSize: 32, fontWeight: '800' }}>{thisHours.toFixed(1)}h</Text>
+          <Text style={{ color: Colors.subtext, fontSize: 12 }}>this week</Text>
+        </View>
+        <View style={{ paddingBottom: 4 }}>
+          <Text style={{ color: Colors.subtext, fontSize: 20, fontWeight: '300' }}>vs</Text>
+        </View>
+        <View>
+          <Text style={{ color: Colors.subtext, fontSize: 22, fontWeight: '700' }}>{lastHours.toFixed(1)}h</Text>
+          <Text style={{ color: Colors.subtext, fontSize: 12 }}>last week</Text>
+        </View>
+      </View>
+      <View style={{ backgroundColor: isAhead ? Colors.accent + '15' : AMBER + '15', borderRadius: 10, padding: 10 }}>
+        <Text style={{ color: isAhead ? Colors.accent : AMBER, fontSize: 12, fontWeight: '600' }}>
+          {isAhead ? `↑ ${delta.toFixed(1)}h ahead of last week` : `${Math.abs(delta).toFixed(1)}h behind last week — you can catch up`}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Card 6: Recent Activity ──────────────────────────────────────────────────
+// Was a standalone section above the pill strip. It answers "what have I already
+// done", which is the same question SelfComparisonCard asks at a different
+// resolution — so it belongs in the rotation rather than competing for the top of
+// the screen with the cards that drive action.
+function RecentActivityCard() {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  return (
+    <View style={styles.card}>
+      <HeroLabel text="🕒 Recent activity" />
+      <RecentActivity limit={4} />
+    </View>
+  );
+}
+
+// ─── HeroCard (swipe via RNGH Gesture.Pan + tappable dots) ────────────────────
+function HeroCard({ activeCard, setCard, tasks, goals, sessionHistory, peakHour, currentStreak, longestStreak, hasActivity, onSelectAndFocus, onGoalPress, onFocus }: {
+  activeCard: HeroCardType; setCard: (c: HeroCardType) => void;
+  tasks: Task[]; goals: TaskGoal[]; sessionHistory: SessionRecord[]; peakHour: number | null;
+  currentStreak: number; longestStreak: number; hasActivity: boolean;
+  onSelectAndFocus: (id: string) => void; onGoalPress: (goalId: string) => void; onFocus: () => void;
+}) {
+  const Colors = useTheme();
+  // Only include cards that have real content — prevents empty cards (urgency with no
+  // due tasks, goal_progress with no goals) from falling back to self_comparison and
+  // appearing as duplicate cards in the rotation. self_comparison is always the anchor.
+  const availableCards = CARD_ORDER.filter((c) => {
+    switch (c) {
+      case 'urgency':
+        // Whatever the card would actually render. Asking the same function
+        // rather than re-deriving the rule is what stops this gate and the card
+        // disagreeing — which they did, in two different ways, before.
+        return urgentTasks(tasks, new Date()).length > 0;
+      case 'goal_progress': return goals.some((g) => !g.isCompleted && !g.isArchived);
+      case 'time_nudge':    return peakHour !== null;
+      case 'momentum':      return currentStreak > 0;
+      case 'recent_activity': return hasActivity;
+      case 'self_comparison': return true;
+      default: return false;
+    }
+  });
+
+  const effectiveCard = availableCards.includes(activeCard) ? activeCard : 'self_comparison';
+  const idx = Math.max(0, availableCards.indexOf(effectiveCard));
+
+  const go = (dir: 'next' | 'prev') => {
+    if (availableCards.length <= 1) return;
+    const nextIdx = dir === 'next'
+      ? (idx + 1) % availableCards.length
+      : (idx - 1 + availableCards.length) % availableCards.length;
+    setCard(availableCards[nextIdx]);
+  };
+
+  // Horizontal swipe paging via react-native-gesture-handler (cooperates with the
+  // vertical ScrollView). tx always returns to 0, so the card can never strand off-screen.
+  const tx = useSharedValue(0);
+  const pan = Gesture.Pan()
+    .activeOffsetX([-15, 15])   // only claim the gesture on horizontal movement
+    .failOffsetY([-12, 12])     // let vertical scrolling pass through
+    .onUpdate((e) => { tx.value = e.translationX * 0.4; })
+    .onEnd((e) => {
+      if (e.translationX <= -48) runOnJS(go)('next');
+      else if (e.translationX >= 48) runOnJS(go)('prev');
+      tx.value = withTiming(0, { duration: 150 });
+    });
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }] }));
+
+  const renderCard = () => {
+    switch (effectiveCard) {
+      case 'urgency':         return <UrgencyCard tasks={tasks} onSelectAndFocus={onSelectAndFocus} />;
+      case 'goal_progress':   return <GoalProgressCard goals={goals} onGoalPress={onGoalPress} />;
+      case 'time_nudge':      return <TimeNudgeCard peakHour={peakHour} sessionHistory={sessionHistory} onFocus={onFocus} />;
+      case 'momentum':        return <MomentumCard currentStreak={currentStreak} longestStreak={longestStreak} sessionHistory={sessionHistory} />;
+      case 'self_comparison': return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
+      case 'recent_activity': return <RecentActivityCard />;
+      default:                return <SelfComparisonCard sessionHistory={sessionHistory} onFocus={onFocus} />;
+    }
+  };
+
+  return (
+    <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
+      <GestureDetector gesture={pan}>
+        <Reanimated.View style={animStyle}>
+          {renderCard()}
+        </Reanimated.View>
+      </GestureDetector>
+      {/* Page indicator dots — one per available card */}
+      {availableCards.length > 1 && (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 12, gap: 6 }}>
+          {availableCards.map((card) => (
+            <TouchableOpacity key={card} onPress={() => setCard(card)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+              <View style={{
+                width: card === effectiveCard ? 20 : 6, height: 6, borderRadius: 3,
+                backgroundColor: card === effectiveCard ? Colors.primary : Colors.inactive,
+              }} />
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── TagOverrideSheet ─────────────────────────────────────────────────────────
+function TagOverrideSheet({ tag, visible, onClose }: { tag: string; visible: boolean; onClose: () => void }) {
+  const Colors = useTheme();
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const { overrides, setOverride, clearOverride } = useTagOverrideStore();
+  const current = overrides[tag];
+  // Initialize to null — the effect sets the correct value the moment visible becomes true,
+  // preventing a stale value from showing on any frame before the sheet opens.
+  const [selColor, setSelColor] = useState<TagColorKey | null>(null);
+  const [selIcon, setSelIcon]   = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible) {
+      const ov = useTagOverrideStore.getState().overrides[tag];
+      setSelColor((ov?.colorKey ?? getTagColor(tag).key) as TagColorKey);
+      setSelIcon(ov?.icon ?? getTagIcon(tag));
+    }
+  }, [visible, tag]);
+
+  const preview = (selColor ? TAG_COLOR_TOKENS.find((t) => t.key === selColor) : null) ?? TAG_COLOR_TOKENS[0];
+
+  return (
+    <BottomSheet visible={visible} onClose={onClose} sheetHeight={SCREEN_H * 0.65}>
+      <View style={{ paddingHorizontal: 20, paddingBottom: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: preview.bg }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: preview.text }}>{selIcon} {tag}</Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={Colors.subtext} /></TouchableOpacity>
+        </View>
+      </View>
+      <View style={{ height: 0.5, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
+        <Text style={styles.fieldLabel}>Color</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
+          {TAG_COLOR_TOKENS.map((token) => (
+            <TouchableOpacity key={token.key} onPress={() => setSelColor(token.key as TagColorKey)} style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: token.bar, alignItems: 'center', justifyContent: 'center', borderWidth: selColor === token.key ? 3 : 0, borderColor: '#fff' }}>
+              {selColor === token.key && <Ionicons name="checkmark" size={18} color="#fff" />}
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.fieldLabel}>Icon</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
+          {TAG_ICONS.map((icon) => (
+            <TouchableOpacity key={icon} onPress={() => setSelIcon(icon)} style={{ width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: selIcon === icon ? Colors.raised : 'transparent', borderWidth: selIcon === icon ? 1.5 : 0.5, borderColor: selIcon === icon ? Colors.primary : Colors.border }}>
+              <Text style={{ fontSize: 22 }}>{icon}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity onPress={() => { if (selColor && selIcon) setOverride(tag, selColor, selIcon); onClose(); }} style={{ backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Save</Text>
+        </TouchableOpacity>
+        {current && (
+          <TouchableOpacity onPress={() => { clearOverride(tag); onClose(); }} style={{ borderRadius: 14, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: Colors.border }}>
+            <Text style={{ color: Colors.subtext, fontWeight: '600', fontSize: 14 }}>Reset to default</Text>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
+    </BottomSheet>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
+type ActiveView = null | 'goal-detail' | 'time-tracker' | 'task-list' | 'calendar';
+
+export default function TasksScreen() {
+  const Colors = useTheme();
+  const AMBER = Colors.warning;
+  const styles = useMemo(() => getStyles(Colors), [Colors]);
+  const tasks = useTasksList();
+  // Every recurring task, so one with no row today still appears. GET /tasks
+  // lists a recurring task only on the days it is due.
+  const recurringTemplates = useTaskStore((s) => s.recurringTemplates);
+  const selectedTaskId = useSelectedTaskId();
+  const taskActions = useTaskActions();
+  const settings = useSettings();
+  const sessionLengthMinutes = Math.round(settings.workDuration / 60);
+
+  const goals = useGoalStore((s) => s.goals);
+  const goalActions = useGoalStore(
+    useShallow((s) => ({
+      fetchGoals: s.fetchGoals,
+      createGoal: s.createGoal,
+      updateGoal: s.updateGoal,
+      linkTasks: s.linkTasks,
+      deleteGoal: s.deleteGoal,
+      toggleGoalComplete: s.toggleGoalComplete,
+    })),
+  );
+
+  const router = useRouter();
+  const dailyFocusMinutes = settings.dailyFocusMinutes;
+  const streak = useGamificationStore((s) => s.currentStreak ?? 0);
+  const longestStreak = useGamificationStore((s) => s.longestStreak ?? 0);
+  // Drives whether the recent-activity card appears in the rotation at all. The
+  // screen fetches it (below) rather than leaving it to the card: a card that is
+  // filtered out never mounts, so a card-owned fetch could never populate itself.
+  const hasActivity = useGamificationStore((s) => s.activity.length > 0);
+
+  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
+  const [activeView, setActiveView] = useState<ActiveView>(null);
+  // One period for both the summary card and the full report, so "See more"
+  // always opens the period you were already looking at.
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('month');
+  const [timeLens, setTimeLens] = useState<Lens>('overview');
+  const [statsTask, setStatsTask] = useState<Task | null>(null);
+  // Held as an ID, not the goal object: GoalStatsModal reads the goal live from
+  // the store so it cannot show numbers that went stale while it was open, or
+  // render a goal that was deleted underneath it.
+  const [statsGoalId, setStatsGoalId] = useState<string | null>(null);
+  const [showFormModal, setShowFormModal] = useState(false);
+  const [formTask, setFormTask] = useState<Task | null>(null);
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [formGoal, setFormGoal] = useState<TaskGoal | null>(null);
+  const [overrideTag, setOverrideTag] = useState<string | null>(null);
+  const [showTargetPicker, setShowTargetPicker] = useState(false);
+  const [draftTarget, setDraftTarget] = useState(dailyFocusMinutes);
+  const setDailyFocusMinutes = useTimerStore((s) => s.setDailyFocusMinutes);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Load data ──
+  useEffect(() => {
+    useTagOverrideStore.getState().loadOverrides();
+    const userId = useAuthStore.getState().user?.id;
+    if (!userId) return;
+    if (useTaskStore.getState().tasks.length === 0) {
+      useTaskStore.getState().hydrateTasks(userId).then(() => useTaskStore.getState().fetchTasks(true));
+    }
+    // Today's recurring rows depend on the day, so read them fresh.
+    useTaskStore.getState().refreshRecurring();
+    // Sibling: proactively reset the overall day-streak on a missed day.
+    useGamificationStore.getState().checkAndResetDayStreak();
+  }, []);
+
+  // When the app returns to foreground it may be a new day, with new rows.
+  useAppForeground(() => {
+    useTaskStore.getState().refreshRecurring();
+    useGamificationStore.getState().checkAndResetDayStreak();
+  });
+
+  const loadSessionHistory = useCallback(async () => {
+    try {
+      const hist = await getSessionHistory();
+      setSessionHistory(hist);
+      // Deliver anything queued first, so the server list below already has it.
+      await syncQueuedSessions();
+      const userId = useAuthStore.getState().user?.id;
+      const res = await api.get<{ sessions: { id: string; completedAt: string; durationSeconds: number; taskId: string | null; taskLabel: string | null; clientSessionId: string | null }[] }>('/timer/sessions');
+      if (res.success && res.data?.sessions) {
+        const queued = userId ? await getQueuedSessionIds(userId) : new Set<string>();
+        await mergeWithServerSessions(res.data.sessions, queued);
+        setSessionHistory(await getSessionHistory());
+      }
+    } catch { /* non-critical */ }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    useTaskStore.getState().fetchTasks(true);
+    useGoalStore.getState().fetchGoals(true);
+    useGamificationStore.getState().fetchActivity();
+    // Templates were only ever fetched after editing a recurring task, so the
+    // store was empty on a cold start and nothing could render them.
+    useTaskStore.getState().fetchRecurringTemplates();
+    loadSessionHistory();
+  }, [loadSessionHistory]));
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  // ── Date anchors — live clock, updates at the start of every minute ──
+  const [now, setNow] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
+  const monday = useMemo(() => getMonday(now), [now]);
+  const nextMonday = useMemo(() => { const d = new Date(monday); d.setDate(d.getDate() + 7); return d; }, [monday]);
+  const todayColIndex = useMemo(() => { const d = now.getDay(); return d === 0 ? 6 : d - 1; }, [now]);
+  // Overdue goals first, worst first; everything else keeps its order. A goal
+  // whose date has passed is the one thing on this screen needing a decision
+  // rather than a glance, so it should not sit somewhere down the list. Lives
+  // here, with the other clock-derived memos, because `now` is a live value —
+  // reading it above its own declaration is a temporal dead zone crash.
+  const goalsByUrgency = useMemo(() => sortGoalsByUrgency(goals, now), [goals, now]);
+
+  // ── Session analytics ──
+  const todaySessions = useMemo(() => sessionHistory.filter((s) => s.type === 'focus' && isToday(s.completedAt)), [sessionHistory]);
+  const sessionsToday = todaySessions.length;
+  const focusSecondsToday = useMemo(() => todaySessions.reduce((sum, s) => sum + s.durationSeconds, 0), [todaySessions]);
+
+  // Seconds, not session count: a 90-minute session and a 5-minute one are not
+  // the same amount of work and must not draw the same bar.
+  const thisWeekByDay = useMemo(() => {
+    const seconds = [0,0,0,0,0,0,0];
+    for (const s of sessionHistory) { if (s.type !== 'focus') continue; const d = new Date(s.completedAt); if (d >= monday && d < nextMonday) { const dow = d.getDay(); seconds[dow === 0 ? 6 : dow-1] += s.durationSeconds; } }
+    return seconds;
+  }, [sessionHistory, monday, nextMonday]);
+
+  const maxDaySeconds = useMemo(() => Math.max(...thisWeekByDay, 1), [thisWeekByDay]);
+
+  // Tasks finished per weekday. Reads the UNFILTERED task list on purpose:
+  // completed recurring instances are archived the next day, and a habit you
+  // ticked on Monday is still a task you finished this week. Filtering to
+  // nonArchived would quietly erase every habit completion older than today —
+  // the same trap loadGoalCounts documents on the server.
+  const tasksDoneByDay = useMemo(() => {
+    const counts = [0, 0, 0, 0, 0, 0, 0];
+    for (const t of tasks) {
+      if (!t.isCompleted || !t.completedAt) continue;
+      const d = new Date(t.completedAt);
+      if (d >= monday && d < nextMonday) {
+        const dow = d.getDay();
+        counts[dow === 0 ? 6 : dow - 1] += 1;
+      }
+    }
+    return counts;
+  }, [tasks, monday, nextMonday]);
+  const maxTasksInDay = useMemo(() => Math.max(...tasksDoneByDay, 1), [tasksDoneByDay]);
+
+
+  // Category totals used to be derived here, from the local session cache, and
+  // that second derivation is what disagreed with the server. The Time Tracker
+  // card reads GET /time-report now, so there is nothing left to compute.
+
+  // ── Peak focus ──
+  const allFocusSessions = useMemo(() => sessionHistory.filter((s) => s.type === 'focus'), [sessionHistory]);
+  const peakHour = useMemo(() => getPeakHour(allFocusSessions), [allFocusSessions]);
+  const weeklyCompletionRate = useMemo(() => getCompletionRate(tasks, 'week'), [tasks]);
+
+  // ── Task groups ──
+  const nonArchived = useMemo(() => tasks.filter((t) => !t.isArchived), [tasks]);
+  const doneTasks = useMemo(() => nonArchived.filter((t) => t.isCompleted), [nonArchived]);
+  const existingTags = useMemo(() => { const s = new Set<string>(); for (const t of tasks) t.tags.forEach((tag) => s.add(tag)); return Array.from(s); }, [tasks]);
+
+  // ── Pill strip data ──
+  const completedToday = useMemo(() => tasks.filter((t) => t.isCompleted && t.completedAt && isToday(new Date(t.completedAt).getTime())).length, [tasks]);
+  const yesterdayCompleted = useMemo(() => tasks.filter((t) => t.isCompleted && t.completedAt && isYesterdayLocal(new Date(t.completedAt).getTime())).length, [tasks]);
+  const totalActiveTasks = nonArchived.length;
+  const lastWeekCompletionRate = useMemo(() => getLastWeekCompletionRate(tasks), [tasks]);
+  // The stored goal, in the unit everything else on this screen counts in.
+  // Shared with the Focus tab's "Target left" card — see lib/dailyTarget.ts.
+  const dailyGoalSeconds = dailyFocusMinutes * 60;
+
+  // ── Smart hero card ──
+  const goalsForHero = goals; // goalStore exists; pass through
+  const hero = useHeroCard({ tasks, goals: goalsForHero, sessionHistory, peakHour });
+  const goToFocus = useCallback(() => router.push('/(tabs)/focus'), [router]);
+  const selectAndFocus = useCallback((id: string) => { taskActions.selectTask(id); router.push('/(tabs)/focus'); }, [taskActions, router]);
+
+  // ── Task board ──
+  // The main tab's top tasks and the See-more sections both come from here.
+  // Deliberately kept apart from `nonArchived`: that array feeds
+  // totalActiveTasks and the PillStrip denominator, and counting recurring
+  // templates there would show a completion total the user can never reach.
+  const board = useMemo(
+    () => buildTaskBoard({ tasks, templates: recurringTemplates as RecurringTemplate[], now }),
+    [tasks, recurringTemplates, now],
+  );
+  const topOpenTasks = useMemo(() => topTasks(nonArchived, now, TOP_TASK_COUNT), [nonArchived, now]);
+  const hiddenOpenCount = board.notStarted.length + board.inProgress.length - topOpenTasks.length;
+  // All three sections always render so the categories stay put; an empty
+  // section says what would put something there. With nothing at all, no
+  // sections, so the list's own empty state shows instead.
+  const boardSections = useMemo(() => {
+    const sections = [
+      { key: 'not_started', title: 'Not started', dotColor: Colors.subtext, data: board.notStarted, emptyText: 'Nothing waiting to be started.' },
+      { key: 'in_progress', title: 'In progress', dotColor: Colors.primary, data: board.inProgress, emptyText: 'Run a focus session on a task and it moves here.' },
+      { key: 'completed', title: 'Completed', dotColor: Colors.accent, data: board.completed, emptyText: 'Nothing finished yet. The first one counts most.' },
+    ];
+    return sections.some((section) => section.data.length > 0) ? sections : [];
+  }, [board, Colors]);
+
+  // ── Handlers ──
+  /**
+   * The inline action offered by the goal modal's status line.
+   *
+   * Every branch closes the sheet first: all three destinations are themselves
+   * modal or navigational, and two sheets open at once is the stacking bug
+   * FormSheet already documents.
+   */
+  const handleGoalAction = useCallback((action: GoalStatusAction, goalId: string) => {
+    setStatsGoalId(null);
+    if (action === 'start-session') { router.push('/(tabs)/focus'); return; }
+    // Both linking and rescheduling now happen in the GOAL form: it owns the
+    // due date, and since goals became task-counted it owns the task list too.
+    // `link-task` used to open a blank NEW task form, because taskGoalId could
+    // only be set from the task side — so repairing an empty goal meant
+    // creating a task and remembering to pick the right goal on it. Opening the
+    // goal itself is the same repair in one step, against the goal you tapped.
+    const goal = goals.find((g) => g.id === goalId);
+    if (goal) { setFormGoal(goal); setShowGoalForm(true); }
+  }, [router, goals]);
+
+  const openCreate = useCallback(() => { setFormTask(null); setShowFormModal(true); }, []);
+
+  // ── Notifications inbox ──
+  // Fetched each time Today gains focus: tabs stay mounted, so a mount-only
+  // fetch would leave the badge stale after the first visit.
+  const unreadCount = useSocialStore((s) => s.unreadCount);
+  const fetchNotifications = useSocialStore((s) => s.fetchNotifications);
+  const markNotificationsRead = useSocialStore((s) => s.markNotificationsRead);
+  const [showInbox, setShowInbox] = useState(false);
+  useFocusEffect(useCallback(() => { fetchNotifications(); }, [fetchNotifications]));
+  const openInbox = useCallback(() => {
+    markNotificationsRead();
+    setShowInbox(true);
+  }, [markNotificationsRead]);
+  const openEdit = useCallback((task: Task) => { setFormTask(task); setShowFormModal(true); }, []);
+
+  // A failed create is said out loud, with the same task one tap from a retry.
+  const createTaskWithRetry = useCallback(async function attempt(data: FormSaveData): Promise<void> {
+    const { error } = await taskActions.createTask(data);
+    if (!error) return;
+    Alert.alert('Task not saved', error, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Try again', onPress: () => { void attempt(data); } },
+    ]);
+  }, [taskActions]);
+
+  const handleFormSave = useCallback(async (data: FormSaveData) => {
+    setShowFormModal(false);
+    const { isRecurring } = data;
+    // Any edit that touches a recurring task can change what represents it
+    // today: its day row, its entry in the recurring list, or neither.
+    const touchesRecurring = !!formTask && (!!isRecurring || formTask.isRecurring);
+    if (formTask) {
+      // A recurring task's day row carries the task's own id, so the edit goes
+      // to the task itself, schedule and all.
+      await taskActions.updateTask(formTask.id, data);
+    } else {
+      // No cast: taskGoalId must survive to the server, and the types now say so.
+      await createTaskWithRetry(data);
+    }
+    if (touchesRecurring) await taskActions.refreshRecurring();
+    setFormTask(null);
+  }, [formTask, taskActions, createTaskWithRetry]);
+
+  const handleDeleteTask = useCallback((task: Task) => {
+    // A recurring task's day row is the task itself: delete means the task.
+    const [title, message] = task.isRecurring
+      ? ['Delete recurring task?', "This stops the task repeating and removes it from your list. Focus time you've already logged on it is kept. This can't be undone."]
+      : ['Delete task?', "This removes the task from your list. Focus time you've already logged on it is kept. This can't be undone."];
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: async () => {
+            // Focus time is kept either way, so there are no totals to refresh.
+            await taskActions.deleteTask(task.id);
+            setShowFormModal(false); setFormTask(null);
+          } },
+      ],
+    );
+  }, [taskActions]);
+
+  const handleComplete = useCallback(async (taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    await taskActions.toggleComplete(taskId);
+    showToast(task.isCompleted ? 'Marked incomplete' : '✓ Marked complete');
+  }, [tasks, taskActions, showToast]);
+
+
+  /**
+   * Stable renderItem for the All Tasks list.
+   *
+   * Defined once rather than inline so SectionList is not handed a new function
+   * on every render — which would defeat the memo on TaskRow it exists to serve.
+   * Every handler it passes is already a stable reference (useState setters and
+   * useCallback'd handlers), so a row only re-renders when its own task,
+   * selection or the goals list actually changes.
+   */
+  const renderBoardItem = useCallback(({ item }: { item: BoardItem }) => (
+    item.kind === 'task' ? (
+      <TaskRow
+        task={item.task}
+        isActive={item.task.id === selectedTaskId}
+        goals={goals}
+        onTap={setStatsTask}
+        onEdit={openEdit}
+        onComplete={handleComplete}
+        onLongPressTag={setOverrideTag}
       />
+    ) : (
+      <DormantRecurringRow
+        template={item.template}
+        goals={goals}
+        subtitle={nextOccurrenceLabel(item.template)}
+        onEdit={openEdit}
+        onLongPressTag={setOverrideTag}
+      />
+    )
+  ), [selectedTaskId, goals, openEdit, handleComplete]);
+
+  const handleGoalDelete = useCallback(() => {
+    if (!formGoal) return;
+    const goalToDelete = formGoal;
+    Alert.alert(
+      'Delete goal?',
+      `"${goalToDelete.title}" will be removed. Linked tasks are kept — they just won't belong to a goal any more.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setShowGoalForm(false);
+            setFormGoal(null);
+            await goalActions.deleteGoal(goalToDelete.id);
+            // The server clears taskGoalId on every linked task, so refetch to
+            // drop the now-stale goal chips.
+            await useTaskStore.getState().fetchTasks(true);
+          },
+        },
+      ],
+    );
+  }, [formGoal, goalActions]);
+
+  const handleGoalSave = useCallback(async (data: GoalSaveData) => {
+    setShowGoalForm(false);
+    const { taskIds, ...fields } = data;
+
+    if (!formGoal) {
+      // One request: the tasks go in WITH the create, so there is no window in
+      // which a goal exists without the tasks the user just picked.
+      await goalActions.createGoal({ ...fields, taskIds });
+      setFormGoal(null);
+      return;
+    }
+
+    await goalActions.updateGoal(formGoal.id, fields);
+
+    // Deltas against what was linked when the sheet opened. Sending the whole
+    // set would tell the server to unlink everything absent from it — including
+    // completed tasks and archived recurring instances the picker never showed.
+    const before = tasks.filter((t) => t.taskGoalId === formGoal.id).map((t) => t.id);
+    const link = taskIds.filter((id) => !before.includes(id));
+    const unlink = before.filter((id) => !taskIds.includes(id));
+    if (link.length > 0 || unlink.length > 0) {
+      await goalActions.linkTasks(formGoal.id, { link, unlink });
+      // Linking can move a task off another goal, so the task rows are stale.
+      await taskActions.fetchTasks();
+    }
+    setFormGoal(null);
+  }, [formGoal, goalActions, taskActions, tasks]);
+
+  // ── Back from detail view ──
+  const goBack = useCallback(() => setActiveView(null), []);
+  const openTime = useCallback((lens: Lens) => { setTimeLens(lens); setActiveView('time-tracker'); }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // DETAIL VIEWS
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  if (activeView === 'goal-detail') {
+    const tasksDoneToday = tasks.filter((t) => t.isCompleted && t.completedAt && isToday(new Date(t.completedAt).getTime())).length;
+    const totalActive = nonArchived.length;
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
+          <TouchableOpacity onPress={goBack} style={{ marginRight: 12 }}><Ionicons name="chevron-back" size={24} color={Colors.text} /></TouchableOpacity>
+          <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>Goal Progress</Text>
+          <TouchableOpacity onPress={() => { setFormGoal(null); setShowGoalForm(true); }} style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TodayPill value={String(sessionsToday)} label="Sessions done" />
+              {/* Tappable: this pill IS the daily goal, so it is the natural
+                  place to change it. */}
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                activeOpacity={0.7}
+                onPress={() => { setDraftTarget(dailyFocusMinutes); setShowTargetPicker(true); }}
+                accessibilityRole="button"
+                accessibilityLabel={`Daily focus goal ${formatSeconds(dailyGoalSeconds)}. Change it`}
+              >
+                {/* Shows the goal itself, not what is left of it — "Focus today"
+                    sits right beside it and already carries the progress.
+                    "Today's target", not "...goal": the old label read as a
+                    Goal, which is a different feature entirely, listed below. */}
+                <TodayPill value={formatSeconds(dailyGoalSeconds)} label="Today's target" />
+              </TouchableOpacity>
+              <TodayPill value={formatDuration(focusSecondsToday)} label="Focus today" />
+              <TodayPill value={`${tasksDoneToday}/${totalActive}`} label="Tasks done" />
+            </View>
+          </View>
+          <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700' }}>Goals</Text>
+              <Text style={{ color: Colors.subtext, fontSize: 12 }}>{goals.filter((g) => !g.isCompleted).length} active</Text>
+            </View>
+            {goals.length === 0 ? (
+              <View style={[styles.card, { alignItems: 'center', paddingVertical: 32 }]}>
+                <Text style={{ color: Colors.subtext, fontSize: 13 }}>No goals yet. Group your tasks into something worth finishing.</Text>
+              </View>
+            ) : goalsByUrgency.map((g) => (
+              // Tap opens stats; editing moved to the modal's footer link, the
+              // same split TaskRow/TaskStatsModal already uses. Long-press is
+              // NOT available as a second hatch here — `onLongPressTag` on the
+              // card below already owns that gesture.
+              <TouchableOpacity
+                key={g.id}
+                activeOpacity={0.85}
+                onPress={() => setStatsGoalId(g.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`View goal ${g.title}`}
+              >
+                <GoalCard goal={g} onLongPressTag={setOverrideTag} />
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
+            <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
+            <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
+              {DAY_LABELS.map((label, i) => <BarColumn key={i} dayLabel={label} value={thisWeekByDay[i]} max={maxDaySeconds} isToday={i === todayColIndex} isFuture={i > todayColIndex} />)}
+            </View>
+          </View>
+          {weeklyCompletionRate !== null && (
+            <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
+              <View style={[styles.card, { flexDirection: 'row', alignItems: 'center' }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>WEEKLY COMPLETION RATE</Text>
+                  <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginTop: 4 }}>{weeklyCompletionRate}%</Text>
+                </View>
+                <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.accent : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700' }}>
+                  {weeklyCompletionRate >= 80 ? '🎯 Great planning' : weeklyCompletionRate < 50 ? 'Plan fewer tasks' : 'tasks done / planned'}
+                </Text>
+              </View>
+            </View>
+          )}
+        </ScrollView>
+        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
+        <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
+        {/* Mounted here as well as in the Tasks tab: this screen owns a control
+            that opens it, so it has to be able to render it. */}
+        <DailyTargetModal
+          visible={showTargetPicker}
+          draft={draftTarget}
+          onDraftChange={setDraftTarget}
+          onCancel={() => setShowTargetPicker(false)}
+          onSave={() => { setDailyFocusMinutes(draftTarget); setShowTargetPicker(false); }}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (activeView === 'time-tracker') {
+    // The time screen. Goal time in it follows each task's CURRENT goal
+    // (backend lib/goalAttribution.ts), so relinking a task moves its history
+    // with it. The goal form is mounted here too, because the Goals lens has
+    // "Set a plan", and the form is where planned time is set.
+    return (
+      <>
+        <TimeAnalyticsView
+          initialLens={timeLens}
+          period={reportPeriod}
+          onPeriodChange={setReportPeriod}
+          onBack={goBack}
+          onLongPressTag={setOverrideTag}
+          onEditGoal={(g) => { setFormGoal(g); setShowGoalForm(true); }}
+        />
+        <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
+        <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
+      </>
+    );
+  }
+
+  if (activeView === 'task-list') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}>
+          <TouchableOpacity onPress={goBack} style={{ marginRight: 12 }}><Ionicons name="chevron-back" size={24} color={Colors.text} /></TouchableOpacity>
+          <Text style={{ flex: 1, color: Colors.textBright, fontSize: 18, fontWeight: '700' }}>All Tasks</Text>
+          <TouchableOpacity onPress={openCreate} style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+        {/* Grouped by progress, read from session stats: no sessions is Not
+            started, sessions without a tick is In progress. Every recurring
+            task appears once — through today's instance when it has one, else
+            as its template in Not started, labelled with when it next fires.
+            Virtualised, since this is the whole list rather than a capped one. */}
+        <SectionList
+          sections={boardSections}
+          keyExtractor={(item) => (item.kind === 'task' ? item.task.id : `recurring-${item.template.id}`)}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}
+          renderItem={renderBoardItem}
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) => (
+            <View style={{ marginTop: section.key === 'not_started' ? 0 : 16 }}>
+              <GroupHeader dotColor={section.dotColor} label={section.title} count={section.data.length} />
+            </View>
+          )}
+          renderSectionFooter={({ section }) => (section.data.length === 0 ? (
+            <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 4 }}>{section.emptyText}</Text>
+          ) : null)}
+          ListEmptyComponent={
+            <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
+              <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
+                Nothing planned yet. What has to move today?
+              </Text>
+            </View>
+          }
+          ListFooterComponent={
+            <>
+            {/* This Week — the same shape the Goals drill-down uses, counting what
+                this screen is about. Goals plots focus SECONDS per day; here the
+                bars are tasks FINISHED per day, because that is the unit the list
+                above is made of.
+
+                Below the list rather than above it, for the same reason it sits
+                at the bottom of the Goals screen: the list is why you opened this,
+                and a summary that pushes it down is a summary in the way. */}
+            <View style={{ marginTop: 28 }}>
+              <Text style={{ color: Colors.textBright, fontSize: 16, fontWeight: '700', marginBottom: 14 }}>This Week</Text>
+              <View style={[styles.card, { flexDirection: 'row', alignItems: 'flex-end' }]}>
+                {DAY_LABELS.map((label, i) => (
+                  <BarColumn
+                    key={i}
+                    dayLabel={label}
+                    value={tasksDoneByDay[i]}
+                    max={maxTasksInDay}
+                    isToday={i === todayColIndex}
+                    isFuture={i > todayColIndex}
+                    formatValue={(n) => String(n)}
+                  />
+                ))}
+              </View>
+
+              {weeklyCompletionRate !== null && (
+                <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', marginTop: 12 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>WEEKLY COMPLETION RATE</Text>
+                    <Text style={{ color: Colors.textBright, fontSize: 28, fontWeight: '800', marginTop: 4 }}>{weeklyCompletionRate}%</Text>
+                  </View>
+                  <Text style={{ color: weeklyCompletionRate >= 80 ? Colors.accent : weeklyCompletionRate < 50 ? AMBER : Colors.subtext, fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' }}>
+                    {weeklyCompletionRate >= 80 ? '🎯 Great planning' : weeklyCompletionRate < 50 ? 'Plan fewer tasks' : 'tasks done / planned'}
+                  </Text>
+                </View>
+              )}
+            </View>
+            </>
+          }
+        />
+        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+        <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteTask(formTask) : undefined} />
+        <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
+        <Toast message={toast} />
+      </SafeAreaView>
+    );
+  }
+
+  // The calendar view that used to live here has moved to the Calendar tab —
+  // there is no reason for two calendars in one app. Days studied / best day /
+  // streak now appear in the Calendar tab's Stats panel, and the month heat grid
+  // sits under its Month view.
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // MAIN SCREEN
+  // ─────────────────────────────────────────────────────────────────────────────
+  const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }}>
+
+        {/* Header */}
+        <View style={{ paddingHorizontal: 20, paddingTop: 8, marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <View>
+              <Text style={{ color: Colors.subtext, fontSize: 12, fontWeight: '500', marginBottom: 2 }}>{dateLabel}</Text>
+              <Text accessibilityRole="header" style={{ color: Colors.textBright, fontSize: 28, fontWeight: '700', letterSpacing: -0.5 }}>Today</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <TouchableOpacity
+                onPress={openInbox}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+                style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Ionicons name="notifications-outline" size={21} color={Colors.text} />
+                {unreadCount > 0 && (
+                  <View style={{ position: 'absolute', top: 8, right: 9, width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.ROSE }} />
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={openCreate}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel="Add task"
+                style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Ionicons name="add" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {/* Pill strip */}
+        <PillStrip
+          completedToday={completedToday}
+          yesterdayCompleted={yesterdayCompleted}
+          totalActive={totalActiveTasks}
+          weeklyRate={weeklyCompletionRate}
+          lastWeekRate={lastWeekCompletionRate}
+          focusSecondsToday={focusSecondsToday}
+          dailyGoalSeconds={dailyGoalSeconds}
+          onSetGoal={() => { setDraftTarget(dailyFocusMinutes); setShowTargetPicker(true); }}
+        />
+
+        {/* Smart hero card */}
+        <HeroCard
+          activeCard={hero.activeCard}
+          setCard={hero.setCard}
+          tasks={tasks}
+          goals={goals}
+          sessionHistory={sessionHistory}
+          peakHour={peakHour}
+          currentStreak={streak}
+          longestStreak={longestStreak}
+          hasActivity={hasActivity}
+          onSelectAndFocus={selectAndFocus}
+          onGoalPress={(goalId) => setStatsGoalId(goalId)}
+          onFocus={goToFocus}
+        />
+
+        <DailyTargetModal
+          visible={showTargetPicker}
+          draft={draftTarget}
+          onDraftChange={setDraftTarget}
+          onCancel={() => setShowTargetPicker(false)}
+          onSave={() => { setDailyFocusMinutes(draftTarget); setShowTargetPicker(false); }}
+        />
+
+        {/* Zone 2 — Task List */}
+        <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
+          <ZoneHeader title="Tasks" onSeeMore={() => setActiveView('task-list')} />
+          {nonArchived.length === 0 && recurringTemplates.length === 0 ? (
+            <View style={[styles.card, { alignItems: 'center', paddingVertical: 36 }]}>
+              <Ionicons name="checkbox-outline" size={32} color={Colors.subtext} />
+              <Text style={{ color: Colors.subtext, fontSize: 13, marginTop: 10 }}>Nothing planned yet. What has to move today?</Text>
+            </View>
+          ) : (<>
+            {/* The most pressing open tasks: priority first, then the closest
+                due date. Everything else, recurring tasks not due today
+                included, is one tap away in See more. */}
+            {(topOpenTasks.length > 0 || hiddenOpenCount > 0) && (
+              <View style={{ marginBottom: 12 }}>
+                {topOpenTasks.map((task) => (
+                  <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />
+                ))}
+                {hiddenOpenCount > 0 && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{hiddenOpenCount} more →</Text></TouchableOpacity>}
+              </View>
+            )}
+            {doneTasks.slice(0, 2).length > 0 && <View>
+              <GroupHeader dotColor={Colors.accent} label="Done" count={doneTasks.length} />
+              {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />)}
+            </View>}
+          </>)}
+        </View>
+
+        {/* Zone 3 — Goals */}
+        <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
+          <ZoneHeader title="Goals" onSeeMore={() => setActiveView('goal-detail')} />
+          {goals.filter((g) => !g.isCompleted && !g.isArchived).length === 0 ? (
+            <View style={[styles.card, { alignItems: 'center', paddingVertical: 28 }]}>
+              <Text style={{ color: Colors.subtext, fontSize: 13 }}>No active goals — every task is standalone right now</Text>
+              <TouchableOpacity onPress={() => { setFormGoal(null); setShowGoalForm(true); }}>
+                <Text style={{ color: Colors.primarySoft, fontSize: 13, fontWeight: '600', marginTop: 10 }}>+ Add a goal</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={[styles.card]}>
+              {goals.filter((g) => !g.isCompleted && !g.isArchived).slice(0, 3).map((goal, i, arr) => (
+                <View key={goal.id}>
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setStatsGoalId(goal.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View goal ${goal.title}`}
+                  >
+                    <GoalZoneRow goal={goal} />
+                  </TouchableOpacity>
+                  {i < arr.length - 1 && (
+                    <View style={{ height: 0.5, backgroundColor: Colors.border, marginVertical: 14 }} />
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Zone 4 — Time. This week and the all-time climb, from the same
+            routes as the full time screen behind it, so the two cannot
+            disagree. */}
+        <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
+          <ZoneHeader title="Time" onSeeMore={() => openTime('overview')} />
+          <View style={[styles.card]}>
+            <TimeCard onOpen={openTime} />
+          </View>
+        </View>
+
+      </ScrollView>
+
+      {/* Modals */}
+      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={(id) => { taskActions.selectTask(id); setStatsTask(null); }} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+      <GoalStatsModal
+        goalId={statsGoalId}
+        lastSessionAt={lastSessionOnGoal(statsGoalId, tasks, sessionHistory)}
+        onClose={() => setStatsGoalId(null)}
+        onAction={handleGoalAction}
+        onEdit={(goalId) => {
+          setStatsGoalId(null);
+          const g = goals.find((x) => x.id === goalId);
+          if (g) { setFormGoal(g); setShowGoalForm(true); }
+        }}
+      />
+      <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteTask(formTask) : undefined} />
+      <GoalFormModal visible={showGoalForm} goal={formGoal} existingTags={existingTags} linkableTasks={nonArchived} goals={goals} onSave={handleGoalSave} onClose={() => { setShowGoalForm(false); setFormGoal(null); }} onDelete={formGoal ? handleGoalDelete : undefined} />
+      <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
+      <NotificationsSheet visible={showInbox} onClose={() => setShowInbox(false)} />
+      <Toast message={toast} />
     </SafeAreaView>
   );
 }

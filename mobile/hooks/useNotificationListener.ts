@@ -20,14 +20,13 @@ export function useNotificationListener(): void {
       const type = getNotificationType(response);
 
       // Each notification type lands where you can act on it: a timer alarm on
-      // the timer, a goal due-date reminder on the tab that owns goals. Routing
-      // is explicit because /(tabs) lands on Ascend, so a bare group push would
-      // drop the user on the feed instead of the thing they just tapped.
+      // the timer, a goal due-date reminder on Today, which owns goals and is
+      // the /(tabs) index route.
       const destination =
         type === 'focus_complete' || type === 'break_complete' || type === 'daily_reminder'
           ? '/(tabs)/focus'
           : type === 'goal_due'
-            ? '/(tabs)/tasks'
+            ? '/(tabs)'
             : null;
 
       if (destination) {

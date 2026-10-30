@@ -63,40 +63,20 @@ export function RecapStats({ stats }: { stats: RecapStat[] }) {
 
 // ─── Card shell ──────────────────────────────────────────────────────────────
 
-export function RecapCardShell({ own = false, children }: {
-  /** Your own card is ringed in the CTA colour and labelled, like Strava's. */
-  own?: boolean;
-  children: React.ReactNode;
-}) {
+export function RecapCardShell({ children }: { children: React.ReactNode }) {
   const Colors = useTheme();
   return (
     <View style={{
       backgroundColor: Colors.surface,
       borderRadius: 16,
       borderWidth: 1,
-      borderColor: own ? Colors.primary : Colors.BORDER_SOFT,
+      borderColor: Colors.BORDER_SOFT,
       marginHorizontal: 16,
       marginBottom: 10,
       padding: 14,
     }}>
       {children}
     </View>
-  );
-}
-
-/** The small uppercase line above your own card. */
-export function RecapCardLabel({ text }: { text: string }) {
-  const Colors = useTheme();
-  return (
-    <Text style={{
-      color: Colors.primarySoft,
-      fontFamily: Font.mono,
-      fontSize: 9,
-      letterSpacing: 1.2,
-      marginBottom: 9,
-    }}>
-      {text}
-    </Text>
   );
 }
 

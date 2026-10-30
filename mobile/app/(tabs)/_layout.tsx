@@ -1,13 +1,14 @@
 import { Tabs } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import {
-  AscendTabIcon, FocusTabIcon, TasksTabIcon, CalendarTabIcon, ProfileTabIcon,
+  FocusTabIcon, TasksTabIcon, CalendarTabIcon, ProfileTabIcon,
 } from '../../components/TabIcons';
 
-// Ascend is the landing tab, so it owns the group's index route — that is what
+// Today is the landing tab, so it owns the group's index route — that is what
 // makes a cold launch (and every bare `router.replace('/(tabs)')`) open on the
-// feed rather than the timer. Focus keeps its own named route at /(tabs)/focus;
-// anything that means "take me to the timer" must say so explicitly.
+// day's plan. Focus keeps its own named route at /(tabs)/focus; anything that
+// means "take me to the timer" must say so explicitly. The social feed is not a
+// tab: it is the pushed /community screen, reached from You.
 export const unstable_settings = { initialRouteName: 'index' };
 
 export default function TabLayout() {
@@ -38,15 +39,17 @@ export default function TabLayout() {
         },
       }}
     >
-      {/* Order is deliberate: Ascend · Focus · Tasks · Calendar · Profile. Focus
-          sits at position two — one tap from the landing screen — because this
-          is a demotion in landing priority, not in reachability. */}
+      {/* Order is deliberate: Today · Focus · Calendar · Time · You. Focus sits
+          next to Today because starting a session is the next step from the
+          plan; the tools that look back (Time) and the personal ones (You)
+          come last. */}
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Ascend',
+          title: 'Today',
+          tabBarAccessibilityLabel: 'Today',
           tabBarIcon: ({ color, focused }) => (
-            <AscendTabIcon color={color} focused={focused} />
+            <TasksTabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -54,17 +57,9 @@ export default function TabLayout() {
         name="focus"
         options={{
           title: 'Focus',
+          tabBarAccessibilityLabel: 'Focus',
           tabBarIcon: ({ color, focused }) => (
             <FocusTabIcon color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="tasks"
-        options={{
-          title: 'Tasks',
-          tabBarIcon: ({ color, focused }) => (
-            <TasksTabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -72,6 +67,7 @@ export default function TabLayout() {
         name="calendar"
         options={{
           title: 'Calendar',
+          tabBarAccessibilityLabel: 'Calendar',
           tabBarIcon: ({ color, focused }) => (
             <CalendarTabIcon color={color} focused={focused} />
           ),
@@ -80,7 +76,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="goals"
         options={{
-          title: 'Profile',
+          title: 'You',
+          tabBarAccessibilityLabel: 'You',
           tabBarIcon: ({ color, focused }) => (
             <ProfileTabIcon color={color} focused={focused} />
           ),

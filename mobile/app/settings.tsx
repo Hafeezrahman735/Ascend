@@ -397,7 +397,7 @@ export default function SettingsScreen() {
   const xp = useGamificationStore((s) => s.xp);
   const rank = getRank(xp);
 
-  // Selected fields rather than the whole store — see the note in app/(tabs)/index.tsx.
+  // Selected fields rather than the whole store — see the note in app/community.tsx.
   const profile = useUserProfileStore(
     useShallow((s) => ({
       avatarEmoji: s.avatarEmoji,
@@ -407,7 +407,7 @@ export default function SettingsScreen() {
       save: s.save,
     })),
   );
-  // Selected fields rather than the whole store — see the note in app/(tabs)/index.tsx.
+  // Selected fields rather than the whole store — see the note in app/community.tsx.
   const settings = useUserSettingsStore(
     useShallow((s) => ({
       theme: s.theme,

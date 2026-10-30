@@ -348,6 +348,7 @@ export default function RootLayout() {
         <Stack.Screen name="user/[id]" />
         <Stack.Screen name="groups" />
         <Stack.Screen name="group/[id]" />
+        <Stack.Screen name="community" />
         <Stack.Screen name="calendar/google-connected" />
         <Stack.Screen name="calendar/google-failed" />
       </Stack>

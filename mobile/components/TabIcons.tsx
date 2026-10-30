@@ -1,10 +1,8 @@
-import { useId } from 'react';
 import type { ColorValue } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
-import { useTheme } from '../hooks/useTheme';
+import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 /**
- * The five tab-bar icons, drawn as one set.
+ * The tab-bar icons, drawn as one set.
  *
  * These replace the Ionicons filled/outline pairs. Ionicons swapped SHAPE on
  * selection — an outline icon became a solid one — which read as five unrelated
@@ -12,10 +10,7 @@ import { useTheme } from '../hooks/useTheme';
  * line drawing at every state, on the same 24-unit grid at the same weight, and
  * selection is carried by colour and a slightly heavier stroke alone. That is
  * what makes them look like a set rather than five borrowed pictures.
- *
- * Ascend is the exception, and deliberately: its tail and dot stay in the `accent`
- * colour whether or not the tab is selected, because that mark is the brand and
- * it should not go grey. Only its track ring picks up the active/inactive tint.
+
  */
 
 type IconProps = {
@@ -34,22 +29,19 @@ function strokeWidth(focused: boolean): number {
   return focused ? 2 : 1.8;
 }
 
-/** Ascend-tail, small. The same geometry as components/AscendMark. */
-export function AscendTabIcon({ color, focused, size = SIZE }: IconProps) {
-  const Colors = useTheme();
-  const gradientId = `tab-orbit-tail-${useId()}`;
-
+/**
+ * Three bars of different heights on a baseline: where the hours went. Kept a
+ * bar chart rather than a clock so it never reads as a second Focus icon.
+ */
+export function TimeTabIcon({ color, focused, size = SIZE }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Defs>
-        <LinearGradient id={gradientId} x1="0.1" y1="0.95" x2="0.5" y2="0.05">
-          <Stop offset="0" stopColor={Colors.accent} stopOpacity={0} />
-          <Stop offset="1" stopColor={Colors.accent} stopOpacity={1} />
-        </LinearGradient>
-      </Defs>
-      <Circle cx={12} cy={12} r={8} stroke={color} strokeWidth={focused ? 2.2 : 1.8} />
-      <Path d="M4 12 A8 8 0 0 1 12 4" stroke={`url(#${gradientId})`} strokeWidth={2.4} strokeLinecap="round" />
-      <Circle cx={12} cy={4} r={2.6} fill={Colors.accent} />
+      <Path
+        d="M4 20 h16 M7.5 16.5 V12 M12 16.5 V6.5 M16.5 16.5 V10"
+        stroke={color}
+        strokeWidth={strokeWidth(focused)}
+        strokeLinecap="round"
+      />
     </Svg>
   );
 }

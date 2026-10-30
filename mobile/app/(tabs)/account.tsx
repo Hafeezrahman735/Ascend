@@ -63,7 +63,7 @@ export default function AccountScreen() {
   const currentStreak = useGamificationStore((s) => s.currentStreak);
   const totalSessions = useGamificationStore((s) => s.totalSessions);
   const totalFocusMinutes = useGamificationStore((s) => s.totalFocusMinutes);
-  // Selected fields rather than the whole store — see the note in app/(tabs)/index.tsx.
+  // Selected fields rather than the whole store — see the note in app/community.tsx.
   const profile = useUserProfileStore(
     useShallow((s) => ({
       avatarEmoji: s.avatarEmoji,
