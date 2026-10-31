@@ -552,30 +552,38 @@ Lane A: route. Lane B: pure lib. Lane C: modal move. Launch A + B + C; merge; th
 ## Implementation Tasks
 Synthesized from this review's findings. Each task derives from a specific finding above.
 
-- [ ] **T1 (P1, human: ~4h / CC: ~25min)** — backend — Add the unfiltered mode to GET /time-report/sessions
+- [x] **T1 (P1, human: ~4h / CC: ~25min)** — backend — Add the unfiltered mode to GET /time-report/sessions
   - Surfaced by: Spec review R1-1, Section 2 (routes.ts:325-335), D3, D4
   - Files: backend/src/modules/timereport/routes.ts, sessions.integration.test.ts
   - Verify: `npm test -- sessions.integration` (all cases in Section 3), filtered mode unchanged
-- [ ] **T2 (P1, human: ~4h / CC: ~25min)** — mobile/lib — `planVsActual`, `PlannedBlock` adapters, queued merge
+- [x] **T2 (P1, human: ~4h / CC: ~25min)** — mobile/lib — `planVsActual`, `PlannedBlock` adapters, queued merge
   - Surfaced by: OV2, D4, D7, OV11
   - Files: mobile/lib/planVsActual.ts, planVsActual.test.ts
   - Verify: `npx vitest run lib/planVsActual`
-- [ ] **T3 (P1, human: ~3h / CC: ~20min)** — mobile — Move TaskStatsModal; calendar lookup and actions
+- [x] **T3 (P1, human: ~3h / CC: ~20min)** — mobile — Move TaskStatsModal; calendar lookup and actions
   - Surfaced by: D1, OV1, D6
   - Files: mobile/components/TaskStatsModal.tsx (new location), mobile/app/(tabs)/index.tsx, calendar.tsx
   - Verify: tap a one-off and a recurring block on Day; Load into timer respects the session lock
-- [ ] **T4 (P1, human: ~2h / CC: ~15min)** — mobile — `useDaySessions` and the delivery signal
+- [x] **T4 (P1, human: ~2h / CC: ~15min)** — mobile — `useDaySessions` and the delivery signal
   - Surfaced by: Scope finding 2, R2-1, OV8
   - Files: mobile/hooks/useTimeReport.ts, mobile/stores/timerStore.ts
   - Verify: finish a session; the Day view updates after upload
-- [ ] **T5 (P1, human: ~1 day / CC: ~45min)** — mobile — Day overlay, Week bars, Today line
+- [x] **T5 (P1, human: ~1 day / CC: ~45min)** — mobile — Day overlay, Week bars, Today line
   - Surfaced by: Scope finding 1, OV3, OV4, D1
   - Files: mobile/components/calendar/{TimelineView,DayView,WeekView}.tsx, mobile/app/(tabs)/index.tsx
   - Verify: tsc, lint, vitest; manual checks in the test plan
-- [ ] **T6 (P2, human: ~10min / CC: ~2min)** — mobile — Rename the Stats section
+- [x] **T6 (P2, human: ~10min / CC: ~2min)** — mobile — Rename the Stats section
   - Surfaced by: OV7, D8
   - Files: mobile/components/calendar/StatsView.tsx
   - Verify: Stats view reads "Estimate vs time spent"
+
+
+### Build status (2026-10-31)
+All six tasks are built on `staging`: T1-T2 in 99a0df2, T3-T5 in c4fdd61, T6 in the commit that ticks these boxes. Not yet verified on a device.
+Differences from the plan, decided while building:
+- Sheets open one at a time: the Focused row closes the task sheet, then opens SessionsSheet (stacked React Native modals are unreliable on iOS). The mockup showed them stacked.
+- The task sheet keeps its existing buttons (Load into Timer for an open task, Mark Incomplete for a done one); no new "Mark complete" button was added. From the calendar both are wired, and a recurring task's day uses `setOccurrenceCompletion`.
+- Week columns use `compactDuration`, so a 3-hour plan reads "3.0h".
 
 ## Completion summary
 - Step 0 Scope Challenge: scope accepted as-is (D1 keep row, D2 smaller arrangement)

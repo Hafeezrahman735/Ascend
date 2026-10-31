@@ -129,7 +129,10 @@ export default function StatsView({ stats }: { stats: CalendarStats | null }) {
 
       {stats.plannedVsActual.length > 0 && (
         <View style={styles.statCard}>
-          <Text style={styles.statHeading}>Planned vs actual</Text>
+          {/* Estimate against all time ever spent on the task. Not named "planned
+              vs actual": that is the Day view's comparison of the day's schedule
+              with its focus, a different question with different numbers. */}
+          <Text style={styles.statHeading}>Estimate vs time spent</Text>
           {outliers.length > 0 && (
             <Text style={{ color: Colors.ROSE, fontSize: 11, marginTop: 2 }}>
               {outliers.length} task{outliers.length === 1 ? '' : 's'} off estimate by more than 50%
