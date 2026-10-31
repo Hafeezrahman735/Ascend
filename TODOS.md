@@ -318,3 +318,16 @@ Plan: `docs/designs/ascend-direction-freelancer-planner.md`.
       **Pros:** the social layer becomes truly optional for the freelancer audience.
       **Cons:** another setting to keep consistent across You, the notification bell and pushes.
       **Depends on:** the Community screen from the same plan. Deferred E4 (2026-10-29).
+
+## From /plan-eng-review — plan vs actual on the calendar (2026-10-31)
+
+- [ ] **Calendar Stats day bucketing matches the rest of the app.** `GET /calendar/stats`
+      (`backend/src/modules/calendar/routes.ts:729-763`) assigns sessions to days with a
+      `tzOffset`, while the Time tab and the plan-vs-actual overlay use `effectiveLocal`
+      (the frozen local day). For someone who travelled, Stats can put a session on a
+      different day than the Day view does.
+      **Pros:** one definition of "which day" across Stats, Time and the calendar.
+      **Cons:** touches a route and its integration tests; only matters after a timezone change.
+      **Start in** the stats handler, reusing `effectiveLocal` from `modules/timereport`.
+      **Depends on:** nothing. Found by the outside voice (OV7); the section is renamed
+      "Estimate vs time spent" in the plan-vs-actual build (D8), its logic left as is.
