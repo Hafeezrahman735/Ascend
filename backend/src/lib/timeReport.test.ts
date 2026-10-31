@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeTimeReport, type ReportSession, type ReportGoal } from './timeReport';
+import { computeTimeReport, sessionLocalSpan, type ReportSession, type ReportGoal } from './timeReport';
 import { daysBetweenKeys, shiftDateKey } from './localParts';
 
 const MIN = 60;
@@ -413,5 +413,19 @@ describe('which local day a session is filed under', () => {
       ],
     });
     expect(r.approxShare).toBeCloseTo(0.25, 5);
+  });
+});
+
+describe('sessionLocalSpan', () => {
+  it('ends at the local hour plus minute and starts the focused time earlier', () => {
+    expect(sessionLocalSpan(10, 31, 27 * MIN)).toEqual({ startLocalMinutes: 604, endLocalMinutes: 631 });
+  });
+
+  it('clips a session that began before midnight to 0:00', () => {
+    expect(sessionLocalSpan(0, 10, 25 * MIN)).toEqual({ startLocalMinutes: 0, endLocalMinutes: 10 });
+  });
+
+  it('rounds seconds to the nearest minute', () => {
+    expect(sessionLocalSpan(9, 0, 25 * MIN + 31)).toEqual({ startLocalMinutes: 514, endLocalMinutes: 540 });
   });
 });

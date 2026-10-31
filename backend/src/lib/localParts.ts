@@ -74,6 +74,19 @@ export function partsOf(fmt: Intl.DateTimeFormat, d: Date): LocalParts {
   };
 }
 
+/** Minute-of-hour formatter, built once per request like makeFormatter. */
+export function makeMinuteFormatter(timeZone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat('en-US', { timeZone, minute: '2-digit' });
+}
+
+/**
+ * The minute of the hour an instant falls on in the formatter's zone. Not
+ * always the UTC minute: zones such as Asia/Kolkata sit on a half hour.
+ */
+export function minuteOf(fmt: Intl.DateTimeFormat, d: Date): number {
+  return Number(fmt.formatToParts(d).find((p) => p.type === 'minute')?.value ?? 0);
+}
+
 /**
  * The hour of day an instant falls on in the user's zone, or null when the
  * zone is missing or not a real IANA zone.

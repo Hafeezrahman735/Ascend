@@ -189,3 +189,94 @@ describe('GET /time-report/sessions — validation and scope', () => {
     expect(res.status).toBe(401);
   });
 });
+
+/**
+ * Timeline mode: no `by`. Every focus session in the range, oldest first,
+ * placed on its local day for the calendar's plan-vs-actual overlay.
+ */
+describe('GET /time-report/sessions — timeline mode', () => {
+  async function timeline(user: TestUser, from: string, to: string, tz = 'UTC') {
+    const res = await authed(user).get(`/time-report/sessions?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}`);
+    expect(res.status).toBe(200);
+    return res.body.data as {
+      truncated: boolean;
+      sessions: {
+        id: string; clientSessionId: string | null; localDate: string; taskId: string | null;
+        approximateDay: boolean; startLocalMinutes: number; endLocalMinutes: number;
+      }[];
+    };
+  }
+
+  it('returns only the caller’s focus sessions in range, oldest first, positioned on the day', async () => {
+    const me = await createUser();
+    const other = await createUser();
+    const t = await task(me, 'Case study');
+    await prisma.session.createMany({
+      data: [
+        { ...session(me, '2026-07-03T10:31:00Z', 27, t.id), clientSessionId: '11111111-1111-4111-8111-111111111111' },
+        session(me, '2026-07-02T09:47:00Z', 25, t.id),
+        { ...session(me, '2026-07-02T11:00:00Z', 5, t.id), type: 'shortBreak' },
+        session(me, '2026-07-09T10:00:00Z', 30, t.id),
+        session(other, '2026-07-02T10:00:00Z', 30, null),
+      ],
+    });
+
+    const d = await timeline(me, FROM, TO);
+    expect(d.truncated).toBe(false);
+    expect(d.sessions.map((s) => s.localDate)).toEqual(['2026-07-02', '2026-07-03']);
+    expect(d.sessions[0]).toMatchObject({ startLocalMinutes: 9 * 60 + 22, endLocalMinutes: 9 * 60 + 47, clientSessionId: null });
+    expect(d.sessions[1]).toMatchObject({
+      startLocalMinutes: 10 * 60 + 4,
+      endLocalMinutes: 10 * 60 + 31,
+      clientSessionId: '11111111-1111-4111-8111-111111111111',
+    });
+  });
+
+  it('keeps the frozen day and hour of a session saved in another zone, and clips at midnight', async () => {
+    const user = await createUser();
+    // Finished 00:10 on Jul 3 where it was saved (stamped), viewed from New York,
+    // where the same instant is 20:10 on Jul 2.
+    await prisma.session.createMany({
+      data: [{
+        ...session(user, '2026-07-03T00:10:00Z', 25, null),
+        localDate: '2026-07-03', localHour: 0, localWeekday: 5,
+      }],
+    });
+
+    const [s] = (await timeline(user, FROM, TO, NY)).sessions;
+    expect(s.localDate).toBe('2026-07-03');
+    expect(s).toMatchObject({ startLocalMinutes: 0, endLocalMinutes: 10, approximateDay: false });
+  });
+
+  it('places an unstamped row in the requested zone, exactly as the drill-down files it', async () => {
+    const user = await createUser();
+    const t = await task(user, 'Late night');
+    await prisma.session.createMany({ data: [session(user, '2026-07-08T03:30:00Z', 35, t.id, false)] });
+
+    const [s] = (await timeline(user, FROM, TO, NY)).sessions;
+    expect(s).toMatchObject({ localDate: '2026-07-07', approximateDay: true, endLocalMinutes: 23 * 60 + 30 });
+    expect((await drill(user, `by=task&key=${t.id}`, NY)).sessions[0].localDate).toBe(s.localDate);
+  });
+
+  it('rejects drill-down parameters, long or backwards ranges with 400', async () => {
+    const user = await createUser();
+    const bad = [
+      `key=x&from=${FROM}&to=${TO}`,
+      `none=true&from=${FROM}&to=${TO}`,
+      `cursor=x&from=${FROM}&to=${TO}`,
+      `limit=5&from=${FROM}&to=${TO}`,
+      'from=2026-07-01&to=2026-08-01',
+      `from=${TO}&to=${FROM}`,
+      'from=July&to=August',
+    ];
+    for (const q of bad) {
+      const res = await authed(user).get(`/time-report/sessions?${q}`);
+      expect([q, res.status]).toEqual([q, 400]);
+    }
+  });
+
+  it('requires a signed-in user', async () => {
+    const res = await request(app).get(`/time-report/sessions?from=${FROM}&to=${TO}`);
+    expect(res.status).toBe(401);
+  });
+});

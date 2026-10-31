@@ -187,6 +187,30 @@ export function effectiveLocal(
   return partsOf(fmt, s.completedAt);
 }
 
+/**
+ * Where a session sits on a day's timeline, in minutes after local midnight.
+ *
+ * The end is the session's local hour (frozen, see effectiveLocal) plus the
+ * minute of `completedAt` in the caller's zone; no zone is stored on the row,
+ * so after a move between zones whose offsets differ by a non-whole hour the
+ * drawn end can be 30-45 minutes out. That drift is accepted (plan-vs-actual
+ * design, D3). The start is the end minus the focused time, clipped at
+ * midnight: a session that began the evening before shows from 0:00 on the
+ * day it finished. A paused session therefore draws later and shorter than
+ * the span it really covered.
+ */
+export function sessionLocalSpan(
+  endHour: number,
+  endMinute: number,
+  durationSeconds: number,
+): { startLocalMinutes: number; endLocalMinutes: number } {
+  const endLocalMinutes = endHour * 60 + endMinute;
+  return {
+    startLocalMinutes: Math.max(0, endLocalMinutes - Math.round(durationSeconds / 60)),
+    endLocalMinutes,
+  };
+}
+
 export function computeTimeReport(input: {
   /**
    * Every session that could fall in EITHER window once resolved. The caller

@@ -3,8 +3,10 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError } from '../../lib/errors';
-import { shiftDateKey, daysBetweenKeys, safeTimeZone, localPartsOf, makeFormatter } from '../../lib/localParts';
-import { computeTimeReport, effectiveLocal, type ReportSession } from '../../lib/timeReport';
+import {
+  shiftDateKey, daysBetweenKeys, safeTimeZone, localPartsOf, makeFormatter, makeMinuteFormatter, minuteOf,
+} from '../../lib/localParts';
+import { computeTimeReport, effectiveLocal, sessionLocalSpan, type ReportSession } from '../../lib/timeReport';
 import { loadCurrentGoals, SESSION_GOAL_EXPR, SESSION_GOAL_JOIN } from '../../lib/goalAttribution';
 import { Prisma } from '@prisma/client';
 import { postgresTimeZone, sessionLocalDaySql } from '../../lib/localDaySql';
@@ -356,6 +358,10 @@ function parseSessionCursor(raw: string): { at: number; id: string } | null {
  * a 404, because a row can name a task that has since been archived.
  */
 timeReportRouter.get('/time-report/sessions', async (req: Request, res: Response) => {
+  if (req.query.by === undefined) {
+    await sendTimeline(req, res);
+    return;
+  }
   try {
     const userId = authenticate(req);
 
@@ -460,3 +466,114 @@ timeReportRouter.get('/time-report/sessions', async (req: Request, res: Response
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+/**
+ * Longest range for the timeline mode, in days. The calendar's Day and Week
+ * views need at most 7; 31 leaves room for a Month view without another change.
+ */
+const MAX_TIMELINE_DAYS = 31;
+
+/**
+ * Strict: the drill-down's `key`, `none`, `cursor` and `limit` mean nothing
+ * here, and a client sending them has mixed up the two modes.
+ */
+const timelineQuerySchema = z
+  .object({
+    from: z.string().regex(DATE, 'from must be YYYY-MM-DD'),
+    to: z.string().regex(DATE, 'to must be YYYY-MM-DD'),
+    tz: z.string().max(64).optional(),
+  })
+  .strict();
+
+/**
+ * `GET /time-report/sessions?from&to&tz` (no `by`): every focus session in the
+ * range, oldest first and unpaginated, each placed on its local day's timeline
+ * for the calendar's plan-vs-actual overlay.
+ *
+ * Same rules as the drill-down above: fetched by `completedAt` widened a day
+ * each side, filed by the resolved local day (effectiveLocal), and given its
+ * task's CURRENT goal. `clientSessionId` lets the phone drop a session it
+ * still holds in its outbox once the server has it.
+ */
+async function sendTimeline(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = authenticate(req);
+
+    const parsed = timelineQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid query' });
+      return;
+    }
+    const { from, to, tz } = parsed.data;
+    const span = daysBetweenKeys(from, to);
+    if (span < 0 || span + 1 > MAX_TIMELINE_DAYS) {
+      res.status(400).json({ success: false, error: `Range must run forwards and be ${MAX_TIMELINE_DAYS} days or fewer` });
+      return;
+    }
+
+    const rows = await prisma.session.findMany({
+      where: {
+        userId,
+        type: 'focus',
+        completedAt: {
+          gte: new Date(`${shiftDateKey(from, -1)}T00:00:00.000Z`),
+          lte: new Date(`${shiftDateKey(to, 1)}T23:59:59.999Z`),
+        },
+      },
+      orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
+      take: MAX_REPORT_SESSIONS + 1,
+      select: {
+        id: true,
+        clientSessionId: true,
+        completedAt: true,
+        durationSeconds: true,
+        taskId: true,
+        taskTitleSnapshot: true,
+        primaryTag: true,
+        wasRecurring: true,
+        localDate: true,
+        localHour: true,
+        localWeekday: true,
+        localDateApprox: true,
+      },
+    });
+    const truncated = rows.length > MAX_REPORT_SESSIONS;
+    if (truncated) rows.length = MAX_REPORT_SESSIONS;
+
+    const zone = safeTimeZone(tz);
+    const fmt = makeFormatter(zone);
+    const minuteFmt = makeMinuteFormatter(zone);
+    const inRange = rows
+      .map((row) => ({ row, local: effectiveLocal(row, fmt) }))
+      .filter(({ local }) => local.dateKey >= from && local.dateKey <= to);
+    const goalByTask = await loadCurrentGoals(
+      userId,
+      inRange.map(({ row }) => row.taskId).filter((t): t is string => !!t),
+    );
+
+    res.json({
+      success: true,
+      data: {
+        truncated,
+        sessions: inRange.map(({ row, local }) => ({
+          id: row.id,
+          clientSessionId: row.clientSessionId,
+          completedAt: row.completedAt.toISOString(),
+          durationSeconds: row.durationSeconds,
+          localDate: local.dateKey,
+          taskId: row.taskId,
+          taskTitle: row.taskTitleSnapshot,
+          goalId: row.taskId ? goalByTask.get(row.taskId) ?? null : null,
+          primaryTag: row.primaryTag,
+          wasRecurring: row.wasRecurring,
+          approximateDay: row.localDateApprox || row.localDate === null,
+          ...sessionLocalSpan(local.hour, minuteOf(minuteFmt, row.completedAt), row.durationSeconds),
+        })),
+      },
+    });
+  } catch (err) {
+    if (handleAuthError(res, err)) return;
+    console.error('Time timeline error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+}

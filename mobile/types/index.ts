@@ -507,6 +507,36 @@ export interface TimeSessionsPage {
   nextCursor: string | null;
 }
 
+/**
+ * One focus session placed on its local day, from the timeline mode of
+ * `GET /time-report/sessions` (no `by`), or built on the phone from a session
+ * still waiting in the outbox.
+ */
+export interface TimelineSession {
+  id: string;
+  /** Present for sessions sent with one; how a queued copy is matched once the server has it. */
+  clientSessionId: string | null;
+  durationSeconds: number;
+  /** Resolved local day, 'YYYY-MM-DD'. */
+  localDate: string;
+  taskId: string | null;
+  /** Title as it was when the session was logged. */
+  taskTitle: string | null;
+  /** Current goal of the task; null for queued sessions, which the server has not attributed yet. */
+  goalId: string | null;
+  /** Minutes after local midnight; the start is clipped at 0:00. */
+  startLocalMinutes: number;
+  endLocalMinutes: number;
+  /** True while the session is only on this phone. */
+  queued?: boolean;
+}
+
+/** `GET /time-report/sessions?from&to&tz` with no `by`: the timeline mode. */
+export interface TimeTimeline {
+  truncated: boolean;
+  sessions: TimelineSession[];
+}
+
 /** `GET /time-report/history`: all-time focus by local day. Server-confirmed sessions only. */
 export interface TimeHistory {
   timeZone: string;

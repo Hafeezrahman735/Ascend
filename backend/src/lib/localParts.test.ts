@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localHourIn } from './localParts';
+import { localHourIn, makeMinuteFormatter, minuteOf } from './localParts';
 
 /**
  * localHourIn decides Early Bird (< 08:00) and Night Owl (>= 22:00), so the
@@ -52,5 +52,14 @@ describe('localHourIn', () => {
     expect(localHourIn(at('2026-10-21T06:00:00Z'), undefined)).toBeNull();
     expect(localHourIn(at('2026-10-21T06:00:00Z'), '')).toBeNull();
     expect(localHourIn(at('2026-10-21T06:00:00Z'), 'Not/A_Zone')).toBeNull();
+  });
+});
+
+describe('minuteOf', () => {
+  it('reads the minute in the given zone, which differs from UTC on half-hour zones', () => {
+    const d = at('2026-07-01T10:20:00Z');
+    expect(minuteOf(makeMinuteFormatter('UTC'), d)).toBe(20);
+    expect(minuteOf(makeMinuteFormatter('Asia/Kolkata'), d)).toBe(50);
+    expect(minuteOf(makeMinuteFormatter('Asia/Kathmandu'), d)).toBe(5);
   });
 });
