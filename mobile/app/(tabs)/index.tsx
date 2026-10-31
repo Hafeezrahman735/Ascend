@@ -2,7 +2,7 @@ import React, { memo, useEffect, useState, useMemo, useCallback, useRef } from '
 import {
   View, Text, TouchableOpacity, ScrollView, SectionList, Modal, TextInput,
   Alert, Platform, Animated,
-  StyleSheet, ActivityIndicator, Switch, AccessibilityInfo,
+  StyleSheet, Switch, AccessibilityInfo,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +10,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Swipeable, { SwipeDirection, type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
-import { Task, TaskGoal, TaskAnalytics, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
+import { Task, TaskGoal, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../../types';
 import { useTheme, useIsDark } from '../../hooks/useTheme';
 import { getSessionPlan } from '../../lib/sessionPlan';
 import { useAppForeground } from '../../hooks/useAppState';
@@ -28,9 +28,12 @@ import { FocusButton } from '../../components/today/FocusButton';
 import { focusButtonState } from '../../lib/startFocusTarget';
 import RecentActivity from '../../components/RecentActivity';
 import FormSheet from '../../components/FormSheet';
-import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H, MONO } from '../../components/SheetPrimitives';
-import AppPressable from '../../components/AppPressable';
+import { MONO } from '../../components/SheetPrimitives';
 import GoalStatsModal from '../../components/GoalStatsModal';
+import TaskStatsModal, { type FocusedOnDay } from '../../components/TaskStatsModal';
+import PlanSummary from '../../components/PlanSummary';
+import SessionsSheet, { type SessionsTarget } from '../../components/timeReport/SessionsSheet';
+import { planVsActual, plannedBlocksFromTasks, timelineFromHistory } from '../../lib/planVsActual';
 import type { Lens } from '../../components/timeReport/TimeAnalyticsView';
 import TimeCard from '../../components/timeReport/TimeCard';
 import { lastSessionOnGoal, sortGoalsByUrgency, type GoalStatusAction } from '../../lib/goalStats';
@@ -42,18 +45,16 @@ import { api } from '../../services/api';
 import { getQueuedSessionIds } from '../../services/sessionOutbox';
 import { priorityColor, priorityLabel } from '../../utils/priority';
 import {
-  daysUntilLocalDate, formatDeadlineLabel,
+  daysUntilLocalDate, formatDeadlineLabel, getLocalDateString,
   parseLocalDate, pickerAcceptsValue, pickerMinimumDate,
 } from '../../utils/date';
 import { useTagStyle, useTagOverrideStore } from '../../utils/tagStyle';
-import { Space, Radius } from '../../constants/spacing';
 import {
   getMonday, isToday, formatSeconds,
   formatDuration, getDueChip, isYesterdayLocal,
   startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
   getPeakHour, formatPeakWindow, getCompletionRate, formatOverdue,
   compactDuration,
-  formatEstimateDelta, formatLastWorked, formatConsistency,
 } from '../../lib/taskMetrics';
 import { stepGoalMinutes, GOAL_MIN_MINUTES, GOAL_MAX_MINUTES } from '../../lib/dailyTarget';
 import { getStyles } from '../../components/formStyles';
@@ -90,245 +91,6 @@ function ZoneHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => voi
   );
 }
 
-
-// ─── TaskStatsModal ───────────────────────────────────────────────────────────
-// sessionLengthMinutes stays in the prop type (callers still pass it) but is not
-// read here — the modal shows actual logged time, not the configured length.
-function TaskStatsModal({ task, onClose, onLoadTimer, onToggleComplete, onEdit }: {
-  task: Task | null; sessionLengthMinutes: number;
-  onClose: () => void; onLoadTimer: (taskId: string) => void; onToggleComplete: (taskId: string) => void;
-  onEdit: (taskId: string) => void;
-}) {
-  const Colors = useTheme();
-  const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
-  const [analyticsError, setAnalyticsError] = useState(false);
-
-  useEffect(() => {
-    if (!task) return;
-    setAnalytics(null); setAnalyticsError(false);
-    // The server buckets every day and hour in the zone we send. Without it it
-    // falls back to UTC, which is what made "peak hour" wrong by a full offset
-    // for every user outside it.
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    api.get<{ analytics: TaskAnalytics } & Task>(`/tasks/${task.id}?tz=${encodeURIComponent(tz)}`)
-      .then((res) => { if (res.success && res.data) setAnalytics((res.data as any).analytics); else setAnalyticsError(true); })
-      .catch(() => setAnalyticsError(true));
-  }, [task?.id]);
-
-  const categoryTag = task?.tags[0] ?? null;
-  const tagStyle = useTagStyle(categoryTag ?? '');
-
-  if (!task) return null;
-  const isPending = !task.isCompleted;
-  const prioColor = priorityColor(task.priority);
-  // Deliberately NOT clamped to 1. BentoRingCell clamps the arc it draws, so
-  // the ring still reads correctly, while the centre label is free to say 240%
-  // — which is the number an over-running task most needs to show.
-  const progressFrac = task.estimatedMinutes ? task.totalTimeOnTask / (task.estimatedMinutes * 60) : null;
-  // Until analytics land, the server-derived cells show an em-dash; sessions come from the task itself.
-  const ready = !!analytics;
-  const val = (v: string) => (ready ? v : '—');
-  // Read from `task`, not from `analytics`. Every other cell in the grid is
-  // derived and arrives with GET /tasks/:id, so it shows an em-dash behind a
-  // spinner first. A deadline is known locally and instantly, and it is the
-  // INPUT to the decision this sheet exists to support rather than a
-  // measurement of it — so it must not arrive late with the averages.
-  const dueChip = getDueChip(task, Colors);
-  const dueDateLabel = task.dueDate
-    ? parseLocalDate(task.dueDate.substring(0, 10))
-        .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-    : null;
-  const isOverdue = !task.isCompleted && !!dueChip?.a11yLabel.includes('overdue');
-
-  return (
-    <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.66}>
-      {/* header */}
-      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 11 }}>
-          <Text numberOfLines={2} style={{ flex: 1, marginRight: 12, color: Colors.textBright, fontSize: 19, fontWeight: '700', lineHeight: 24, letterSpacing: -0.3 }}>{task.title}</Text>
-          <AppPressable
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-            style={{ width: 30, height: 30, borderRadius: Radius.sm, backgroundColor: Colors.raised, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Ionicons name="close" size={16} color={Colors.text} />
-          </AppPressable>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {categoryTag && (
-            <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: tagStyle.bg }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: tagStyle.text }}>{tagStyle.icon} {categoryTag}</Text>
-            </View>
-          )}
-          <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: prioColor + '22' }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: prioColor }}>{priorityLabel(task.priority)}</Text>
-          </View>
-        </View>
-      </View>
-      <View style={{ height: 1, backgroundColor: Colors.border, marginHorizontal: 20, marginBottom: 16 }} />
-
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
-        {/* Stat bento. Cell SIZE carries rank here, which the previous six
-            equal cells at flexBasis:'47%' could not: the ring is the number
-            people open this sheet for, so it is the only large thing.
-
-            The ring shows estimate consumed, NOT the misnamed old
-            `estimationAccuracy` — see formatEstimateDelta for why a percentage
-            was actively misleading above 100%. Tasks with no estimate have no
-            ring to draw, so they get total focus as the hero instead. */}
-        <View style={{ gap: Space.sm, marginBottom: Space.lg }}>
-          <View style={{ flexDirection: 'row', gap: Space.sm }}>
-            {progressFrac !== null ? (
-              <BentoRingCell
-                style={{ flex: 1.3 }}
-                fraction={progressFrac}
-                centerLabel={`${Math.round(progressFrac * 100)}%`}
-                caption={formatSeconds(task.totalTimeOnTask)}
-                sub={`of ${formatSeconds((task.estimatedMinutes ?? 0) * 60)} estimated`}
-                tint={task.isCompleted ? Colors.accent : Colors.primary}
-                Colors={Colors}
-              />
-            ) : (
-              <BentoRingCell
-                style={{ flex: 1.3 }}
-                fraction={1}
-                centerLabel={val(formatSeconds(analytics?.totalTimeAllTime ?? 0))}
-                caption="Total focus"
-                sub="no estimate set"
-                tint={Colors.primary}
-                Colors={Colors}
-              />
-            )}
-            <View style={{ flex: 1, gap: Space.sm }}>
-              <BentoCell
-                style={{ flex: 1 }} Colors={Colors}
-                icon="timer-outline" label="Sessions"
-                value={String(task.sessionsOnTask)}
-              />
-              <BentoCell
-                style={{ flex: 1 }} Colors={Colors}
-                icon="pulse-outline" label="Avg length"
-                value={val(formatSeconds(analytics?.avgSessionLength ?? 0))}
-              />
-            </View>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: Space.sm }}>
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors}
-              icon="sunny-outline" label="Peak hour"
-              value={val(analytics?.mostProductiveHour?.label ?? '—')}
-            />
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors}
-              icon="calendar-outline" label="Consistency"
-              value={ready ? formatConsistency(analytics?.consistency ?? null) : '—'}
-              sub={ready ? `${analytics?.daysWorked ?? 0} days worked` : undefined}
-            />
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: Space.sm }}>
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors}
-              icon="locate-outline" label="Vs estimate"
-              value={ready ? formatEstimateDelta(analytics?.estimateDeltaSeconds ?? null) : '—'}
-            />
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors}
-              icon="time-outline" label="Last worked"
-              value={ready ? formatLastWorked(analytics?.lastSessionAt ?? null) : '—'}
-            />
-          </View>
-
-          {/* Due date. Rendered only when there is one — the grid already shows
-              six em-dashes while analytics load, and a seventh absence is noise.
-              `feature` when overdue: at most one feature cell per grid, and an
-              overdue deadline is the one thing here that outranks the ring. */}
-          {dueDateLabel && (
-            <BentoCell
-              Colors={Colors}
-              icon="calendar-outline"
-              label="Due"
-              value={dueDateLabel}
-              sub={dueChip?.a11yLabel}
-              feature={isOverdue}
-            />
-          )}
-        </View>
-        {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: Space.md }} />}
-        {analyticsError && <Text style={{ color: Colors.text, fontSize: 12, marginBottom: Space.md }}>Analytics unavailable — try again later.</Text>}
-
-        {/* description — captured when the task was created */}
-        {task.description?.trim() ? (
-          <View style={{ backgroundColor: Colors.raised, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: Colors.border }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
-              <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
-              <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>Description</Text>
-            </View>
-            <Text style={{ color: Colors.textBright, fontSize: 14, lineHeight: 20 }}>{task.description.trim()}</Text>
-          </View>
-        ) : null}
-
-        {/* Recurring history — on a recurring task's day row. The server
-            calculates these from the completion log and sends them on the row,
-            so there is no extra fetch. The 🔥 and ⏱️ emoji are gone — every
-            other glyph in this sheet is an Ionicon, and a screen reader
-            announced the old ones by name. */}
-        {task.isOccurrence && (
-          <View style={{ flexDirection: 'row', gap: Space.sm, marginBottom: Space.lg }}>
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors} feature
-              icon="flame-outline" label="Current streak"
-              value={`${task.currentStreak}d`}
-              sub={`best ${task.longestStreak}d`}
-            />
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors}
-              icon="infinite-outline" label="Lifetime focus"
-              value={formatSeconds(task.totalFocusSeconds)}
-              sub={`${task.totalCompletions} completions`}
-            />
-          </View>
-        )}
-
-        {/* The standalone "Time progress" bar that used to sit here is gone: it
-            showed the same quantity as the ring above, in the same sheet. */}
-      </ScrollView>
-
-      {/* footer */}
-      <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 28 }}>
-        {isPending ? (
-          <AppPressable
-            onPress={() => { onLoadTimer(task.id); onClose(); }}
-            accessibilityRole="button"
-            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Space.sm, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 15 }}
-          >
-            <Ionicons name="play" size={15} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Load into Timer</Text>
-          </AppPressable>
-        ) : (
-          <AppPressable
-            onPress={() => { onToggleComplete(task.id); onClose(); }}
-            accessibilityRole="button"
-            style={{ borderRadius: Radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}
-          >
-            <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '600' }}>Mark Incomplete</Text>
-          </AppPressable>
-        )}
-        <AppPressable
-          onPress={() => onEdit(task.id)}
-          accessibilityRole="button"
-          scaleOnPress={false}
-          style={{ alignItems: 'center', justifyContent: 'center', marginTop: Space.sm, minHeight: 44 }}
-        >
-          <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>Edit task details</Text>
-        </AppPressable>
-      </View>
-    </BottomSheet>
-  );
-}
 
 // ─── GoalPicker ───────────────────────────────────────────────────────────────
 function GoalPickerModal({ visible, goals, selectedGoalId, onSelect, onClose }: {
@@ -1874,6 +1636,40 @@ export default function TasksScreen() {
 
   // ── Task groups ──
   const nonArchived = useMemo(() => tasks.filter((t) => !t.isArchived), [tasks]);
+
+  // ── Plan vs actual for today ──
+  // Focus comes from the same local history as the Focus today pill, so the
+  // two never disagree (design D7); the plan is today's timed tasks and
+  // today's recurring rows. lib/planVsActual holds the rules the calendar shares.
+  const todayKey = getLocalDateString(now);
+  const todayTimeline = useMemo(() => timelineFromHistory(todaySessions, todayKey), [todaySessions, todayKey]);
+  const todayBlocks = useMemo(
+    () => plannedBlocksFromTasks(
+      nonArchived.filter((t) => !t.isRecurring || (t.isOccurrence && t.occurrenceDate === todayKey)),
+      todayKey,
+    ),
+    [nonArchived, todayKey],
+  );
+  const todayPlan = useMemo(() => planVsActual(todayKey, todayBlocks, todayTimeline), [todayKey, todayBlocks, todayTimeline]);
+  const [sessionsTarget, setSessionsTarget] = useState<SessionsTarget | null>(null);
+  const statsFocused = useMemo((): FocusedOnDay | undefined => {
+    if (!statsTask) return undefined;
+    const mine = todayTimeline.filter((s) => s.taskId === statsTask.id);
+    const block = todayBlocks.find((b) => b.taskId === statsTask.id);
+    if (mine.length === 0 && !block) return undefined;
+    return {
+      dayLabel: 'today',
+      seconds: mine.reduce((sum, s) => sum + s.durationSeconds, 0),
+      sessions: mine.length,
+      plannedMinutes: block ? block.endMinutes - block.startMinutes : null,
+    };
+  }, [statsTask, todayTimeline, todayBlocks]);
+  // One sheet at a time: the task sheet closes before the session list opens.
+  const showTaskSessions = useCallback(() => {
+    if (!statsTask) return;
+    setSessionsTarget({ by: 'task', key: statsTask.id, from: todayKey, to: todayKey, title: statsTask.title, subtitle: 'Today' });
+    setStatsTask(null);
+  }, [statsTask, todayKey]);
   const doneTasks = useMemo(() => nonArchived.filter((t) => t.isCompleted), [nonArchived]);
   const existingTags = useMemo(() => { const s = new Set<string>(); for (const t of tasks) t.tags.forEach((tag) => s.add(tag)); return Array.from(s); }, [tasks]);
 
@@ -2255,9 +2051,10 @@ export default function TasksScreen() {
             </>
           }
         />
-        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
         <TaskFormModal visible={showFormModal} task={formTask} existingTags={existingTags} sessionLengthMinutes={sessionLengthMinutes} goals={goals} onSave={handleFormSave} onClose={() => { setShowFormModal(false); setFormTask(null); }} onDelete={formTask ? () => handleDeleteTask(formTask) : undefined} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
+        <SessionsSheet target={sessionsTarget} onClose={() => setSessionsTarget(null)} />
         <Toast message={toast} />
       </SafeAreaView>
     );
@@ -2308,6 +2105,8 @@ export default function TasksScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          {/* Today's plan against what actually got focus; hidden on an empty day. */}
+          <PlanSummary totals={todayPlan.totals} style={{ marginTop: 14 }} />
         </View>
 
         {/* Pill strip */}
@@ -2421,7 +2220,7 @@ export default function TasksScreen() {
       </ScrollView>
 
       {/* Modals */}
-      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
       <GoalStatsModal
         goalId={statsGoalId}
         lastSessionAt={lastSessionOnGoal(statsGoalId, tasks, sessionHistory)}
@@ -2437,6 +2236,7 @@ export default function TasksScreen() {
       <GoalEditor goal={formGoal} visible={showGoalForm} onClose={closeGoalForm} />
       <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
       <NotificationsSheet visible={showInbox} onClose={() => setShowInbox(false)} />
+      <SessionsSheet target={sessionsTarget} onClose={() => setSessionsTarget(null)} />
       <Toast message={toast} />
     </SafeAreaView>
   );

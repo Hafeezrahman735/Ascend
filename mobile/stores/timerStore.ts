@@ -95,6 +95,12 @@ interface TimerState {
   globalTotalTime: number;
   lastSessionDate: string | null;
   lastCompletedSessionId: string | null;
+  /**
+   * Bumped each time the server accepts a finished session (onSessionDelivered).
+   * Screens that read sessions back from the server refetch on it; the session
+   * outbox keeps its one delivery handler, so they subscribe here instead.
+   */
+  sessionsDelivered: number;
   weekActiveDates: string[];
   isLoadingWeek: boolean;
   // Wall-clock timing: immune to multiple-interval stacking
@@ -175,6 +181,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   globalTotalTime: 0,
   lastSessionDate: null,
   lastCompletedSessionId: null,
+  sessionsDelivered: 0,
   weekActiveDates: [],
   isLoadingWeek: false,
   startedAt: null,
@@ -773,6 +780,7 @@ function onSessionDelivered(completion: SessionCompletion, result: CompletionRes
   }
   // Refresh week dots so the session's day fills in.
   useTimerStore.getState().fetchWeekSessions();
+  useTimerStore.setState((s) => ({ sessionsDelivered: s.sessionsDelivered + 1 }));
 }
 
 /**

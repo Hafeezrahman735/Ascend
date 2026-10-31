@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { api } from '../services/api';
+import { getQueuedCompletions, type SessionCompletion } from '../services/sessionOutbox';
+import { useAuthStore } from '../stores/authStore';
+import { useTimerStore } from '../stores/timerStore';
+import { mergeQueuedSessions } from '../lib/planVsActual';
 import { getLocalDateString, getDeviceTimeZone } from '../utils/date';
-import type { TimeReport, TimeHistory, TimeSessionsPage, GoalDaily } from '../types';
+import type { TimeReport, TimeHistory, TimeSessionsPage, GoalDaily, TimeTimeline } from '../types';
 
 /**
  * Fetches `GET /time-report` (by period or window), `/time-report/history`
@@ -101,10 +106,12 @@ function useResource<T>(path: string) {
   const [loaded, setLoaded] = useState<Loaded<T>>({ data: null, error: null, key: '' });
   const [nonce, setNonce] = useState(0);
 
-  const key = `${path}#${nonce}`;
+  // An empty path asks for nothing (a screen showing a view that needs no data).
+  const key = path ? `${path}#${nonce}` : '';
   const loading = loaded.key !== key;
 
   useEffect(() => {
+    if (!path) return;
     let cancelled = false;
     fetchResource<T>(path).then((result) => {
       if (!cancelled) setLoaded({ ...result, key });
@@ -213,4 +220,58 @@ export function useSessionPages(query: SessionsQuery | null) {
     loadMore,
     retry,
   };
+}
+
+/**
+ * Every focus session in a range of local days, placed on each day's timeline,
+ * for the calendar's plan-vs-actual overlay (timeline mode of
+ * `GET /time-report/sessions`, at most 31 days).
+ *
+ * Sessions still waiting in the outbox are merged in, so a session finished
+ * offline shows at once and is not counted twice once it lands. Refetches
+ * when the screen regains focus and when the server accepts a session
+ * (timerStore.sessionsDelivered). Only the last answer is kept; pass
+ * `enabled: false` when the visible view does not need it.
+ */
+export function useDaySessions(from: string, to: string, enabled = true) {
+  const path = enabled ? `/time-report/sessions?from=${from}&to=${to}&${tzParam()}` : '';
+  const { data, error, loading, reload } = useResource<TimeTimeline>(path);
+  const delivered = useTimerStore((s) => s.sessionsDelivered);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  const [queued, setQueued] = useState<SessionCompletion[]>([]);
+
+  // Only on a new delivery: the count is already non-zero for a screen that
+  // mounts after one, and mounting has just fetched.
+  const seenDelivered = useRef(delivered);
+  useEffect(() => {
+    if (delivered === seenDelivered.current) return;
+    seenDelivered.current = delivered;
+    reload();
+  }, [delivered, reload]);
+
+  // Not on the first focus: mounting has just fetched.
+  const firstFocus = useRef(true);
+  useFocusEffect(useCallback(() => {
+    if (firstFocus.current) {
+      firstFocus.current = false;
+      return;
+    }
+    if (enabled) reload();
+  }, [enabled, reload]));
+
+  useEffect(() => {
+    if (!enabled || !userId) return;
+    let cancelled = false;
+    getQueuedCompletions(userId)
+      .then((q) => { if (!cancelled) setQueued(q.filter((c) => c.localDate >= from && c.localDate <= to)); })
+      .catch((err) => console.warn('[timeline] reading queued sessions failed:', err));
+    return () => { cancelled = true; };
+  }, [enabled, userId, from, to, data]);
+
+  const sessions = useMemo(
+    () => mergeQueuedSessions(data?.sessions ?? [], enabled ? queued : []),
+    [data, queued, enabled],
+  );
+
+  return { sessions, error: enabled ? error : null, loading: enabled && loading, reload };
 }

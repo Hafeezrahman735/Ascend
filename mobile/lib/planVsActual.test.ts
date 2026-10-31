@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { CalendarItem, TimelineSession } from '../types';
 import type { SessionCompletion } from '../services/sessionOutbox';
 import {
-  planVsActual, plannedBlocksFromCalendar, plannedBlocksFromTasks, mergeQueuedSessions, type PlannedBlock,
+  planVsActual, plannedBlocksFromCalendar, plannedBlocksFromTasks, mergeQueuedSessions, timelineFromHistory,
+  summaryLine, type PlannedBlock,
 } from './planVsActual';
 
 const DAY = '2026-10-31';
@@ -157,5 +158,38 @@ describe('mergeQueuedSessions', () => {
       utcMinutes,
     );
     expect(merged.map((s) => s.id)).toEqual(['early', 'queued:cs-1', 'late']);
+  });
+});
+
+describe('timelineFromHistory', () => {
+  it('places local history records on the given day by the phone clock', () => {
+    const at = Date.UTC(2026, 9, 31, 10, 31);
+    const utcMinutes = (ms: number) => new Date(ms).getUTCHours() * 60 + new Date(ms).getUTCMinutes();
+    const [s] = timelineFromHistory(
+      [{ sessionId: 'x', completedAt: at, durationSeconds: 27 * MIN, taskId: 'case-study', taskLabel: 'Write case study' }],
+      DAY,
+      utcMinutes,
+    );
+    expect(s).toMatchObject({ id: 'x', localDate: DAY, taskId: 'case-study', startLocalMinutes: 604, endLocalMinutes: 631 });
+  });
+});
+
+describe('summaryLine', () => {
+  it('reads focused of planned, then unplanned', () => {
+    expect(summaryLine({ plannedMinutes: 180, focusedSeconds: 90 * MIN, unplannedSeconds: 38 * MIN }))
+      .toBe('1h 30m of 3h planned · 38m unplanned');
+  });
+
+  it('drops the unplanned part when there is none', () => {
+    expect(summaryLine({ plannedMinutes: 60, focusedSeconds: 25 * MIN, unplannedSeconds: 0 })).toBe('25m of 1h planned');
+  });
+
+  it('says nothing was planned rather than "0m planned"', () => {
+    expect(summaryLine({ plannedMinutes: 0, focusedSeconds: 25 * MIN, unplannedSeconds: 25 * MIN }))
+      .toBe('25m focused, nothing planned');
+  });
+
+  it('is silent on an empty day', () => {
+    expect(summaryLine({ plannedMinutes: 0, focusedSeconds: 0, unplannedSeconds: 0 })).toBeNull();
   });
 });

@@ -2,7 +2,9 @@ import { useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
-import type { CalendarItem, Note } from '../../types';
+import type { CalendarItem, Note, TimelineSession } from '../../types';
+import { planVsActual, plannedBlocksFromCalendar, type DayPlanVsActual } from '../../lib/planVsActual';
+import { compactDuration } from '../../lib/taskMetrics';
 import { addDays, eachDayOfRange, getLocalDateString, parseLocalDate } from '../../utils/date';
 import {
   getCalendarStyles, itemTitle, itemIsDone, typeColor, itemTimeRange,
@@ -53,9 +55,12 @@ export default function WeekView({
   onToggleNote,
   refreshing,
   onRefresh,
+  sessions = [],
 }: {
   start: Date;
   itemsByDate: Map<string, CalendarItem[]>;
+  /** Focus sessions for the week; each column shows focused against planned. */
+  sessions?: TimelineSession[];
   onDayPress: (date: string) => void;
   onToggleNote: (note: Note) => void;
   refreshing: boolean;
@@ -73,6 +78,15 @@ export default function WeekView({
   //
   // `items.length` is the test, not `countsTowardLoad`: a day holding only notes
   // has something on it. See the note on countsTowardLoad in lib/calendarItems.
+  const totalsByDay = useMemo(() => {
+    const map = new Map<string, DayPlanVsActual['totals']>();
+    for (const dateKey of days) {
+      const dayItems = itemsByDate.get(dateKey) ?? [];
+      map.set(dateKey, planVsActual(dateKey, plannedBlocksFromCalendar(dayItems), sessions).totals);
+    }
+    return map;
+  }, [days, itemsByDate, sessions]);
+
   const busyDays = useMemo(
     () => days
       .map((dateKey) => ({ dateKey, items: itemsByDate.get(dateKey) ?? [] }))
@@ -108,6 +122,7 @@ export default function WeekView({
           const isToday = dateKey === todayKey;
           const isWeekend = day.getDay() === 0 || day.getDay() === 6;
           const hidden = cards.length - MAX_COLUMN_CARDS;
+          const totals = totalsByDay.get(dateKey);
 
           return (
             <TouchableOpacity
@@ -115,7 +130,7 @@ export default function WeekView({
               onPress={() => onDayPress(dateKey)}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel={`${day.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}, ${cards.length} items. Open in Day view`}
+              accessibilityLabel={`${day.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}, ${cards.length} items${totals ? `, ${focusLabel(totals)}` : ''}. Open in Day view`}
               style={{
                 flex: 1, minWidth: 0, borderRadius: 12, paddingBottom: 4,
                 backgroundColor: isToday ? Colors.primaryDim : 'transparent',
@@ -135,6 +150,7 @@ export default function WeekView({
                 }}>
                   {day.getDate()}
                 </Text>
+                {totals && <PlanBar totals={totals} />}
               </View>
 
               {/* Cards take whatever the band has left, and clip rather than
@@ -220,6 +236,39 @@ export default function WeekView({
           </View>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+/** "52m of 3h focused", for the column's spoken label. */
+function focusLabel(totals: DayPlanVsActual['totals']): string {
+  return totals.plannedMinutes > 0
+    ? `${compactDuration(totals.focusedSeconds)} of ${compactDuration(totals.plannedMinutes * 60)} focused`
+    : `${compactDuration(totals.focusedSeconds)} focused`;
+}
+
+/**
+ * Focused against planned in a column: "52m/3h" over a thin bar. The bar fills
+ * by the share of the plan that got focus, and is lighter when the focus went
+ * to unplanned work only. Nothing on a day with neither.
+ */
+function PlanBar({ totals }: { totals: DayPlanVsActual['totals'] }) {
+  const Colors = useTheme();
+  const { plannedMinutes, focusedSeconds } = totals;
+  if (plannedMinutes === 0 && focusedSeconds === 0) return null;
+  const share = plannedMinutes > 0 ? Math.min(1, focusedSeconds / (plannedMinutes * 60)) : 1;
+  return (
+    <View style={{ alignSelf: 'stretch', marginTop: 4, paddingHorizontal: 3 }} accessible={false}>
+      <Text numberOfLines={1} style={{ fontSize: 8, textAlign: 'center', color: Colors.subtext, fontVariant: ['tabular-nums'] }}>
+        {compactDuration(focusedSeconds)}
+        {plannedMinutes > 0 ? `/${compactDuration(plannedMinutes * 60)}` : ''}
+      </Text>
+      <View style={{ height: 3, borderRadius: 2, marginTop: 2, backgroundColor: Colors.border, overflow: 'hidden' }}>
+        <View style={{
+          width: `${share * 100}%`, height: 3,
+          backgroundColor: plannedMinutes > 0 ? Colors.primary : Colors.primarySoft,
+        }} />
+      </View>
     </View>
   );
 }

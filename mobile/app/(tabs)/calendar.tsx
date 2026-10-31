@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert } from 'react-native';
+import {
+  View, Text, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert, AccessibilityInfo,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useShallow } from 'zustand/react/shallow';
 import { useCalendarStore } from '../../stores/calendarStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useTheme } from '../../hooks/useTheme';
-import type { CalendarEvent, CalendarItem, Note } from '../../types';
+import { useTaskStore } from '../../stores/taskStore';
+import { useDaySessions } from '../../hooks/useTimeReport';
+import type { CalendarEvent, CalendarItem, Note, Task, TimelineSession } from '../../types';
+import TaskStatsModal, { type FocusedOnDay } from '../../components/TaskStatsModal';
+import SessionsSheet, { type SessionsTarget } from '../../components/timeReport/SessionsSheet';
+import { planVsActual, plannedBlocksFromCalendar } from '../../lib/planVsActual';
+import { taskForCalendarItem, completionToggleFor } from '../../lib/calendarTask';
 import {
   getLocalDateString, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   addDays, addMonths, parseLocalDate,
@@ -44,6 +52,10 @@ export default function CalendarScreen() {
   // hold a stale row while closed — and this cannot.
   const [eventSheet, setEventSheet] = useState<{ event: CalendarEvent | null } | null>(null);
   const [noteSheet, setNoteSheet] = useState<{ note: Note | null } | null>(null);
+  // A planned block's task sheet, and the session list it (or a dashed block) opens.
+  const [taskSheet, setTaskSheet] = useState<{ task: Task; date: string } | null>(null);
+  const [sessionsTarget, setSessionsTarget] = useState<SessionsTarget | null>(null);
+  const router = useRouter();
 
   // Picked inside the selector. Destructuring the result of a bare hook call
   // reads the same fields but subscribes to the whole store, so it re-renders on
@@ -105,6 +117,9 @@ export default function CalendarScreen() {
   useEffect(() => {
     loadVisibleRange();
   }, [loadVisibleRange]);
+
+  // Focus sessions for the plan-vs-actual overlay: Day and Week only.
+  const timeline = useDaySessions(start, end, viewMode === 'day' || viewMode === 'week');
 
   // Tasks are created and edited on another tab, so by the time the calendar is
   // shown again its range can be out of date. taskStore flags the change and
@@ -233,7 +248,81 @@ export default function CalendarScreen() {
   const handleItemPress = useCallback((item: CalendarItem) => {
     if (item.type === 'event') setEventSheet({ event: item.data as CalendarEvent });
     else if (item.type === 'note') setNoteSheet({ note: item.data as Note });
+    else if (item.type === 'task' || item.type === 'habit_instance') {
+      // The block's data is narrow; the sheet needs the full task from the store.
+      const { tasks, recurringTemplates } = useTaskStore.getState();
+      const task = taskForCalendarItem(item, tasks, recurringTemplates);
+      if (task) setTaskSheet({ task, date: item.date });
+      else console.warn('[calendar] task not in the store:', (item.data as { id?: string }).id);
+    }
   }, []);
+
+  const dayLabelFor = useCallback((date: string) => (
+    date === getLocalDateString()
+      ? 'today'
+      : parseLocalDate(date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
+  ), []);
+
+  // The "Focused <day>" row: this task's fill on the sheet's day.
+  const sheetFocused = useMemo((): FocusedOnDay | undefined => {
+    if (!taskSheet) return undefined;
+    const { task, date } = taskSheet;
+    const plan = planVsActual(date, plannedBlocksFromCalendar(itemsByDate.get(date) ?? []), timeline.sessions);
+    const fill = plan.fills.find((f) => f.block.taskId === task.id);
+    const sessions = fill?.sessions ?? plan.unplanned.filter((s) => s.taskId === task.id);
+    return {
+      dayLabel: dayLabelFor(date),
+      seconds: sessions.reduce((sum, s) => sum + s.durationSeconds, 0),
+      sessions: sessions.length,
+      plannedMinutes: fill ? fill.block.endMinutes - fill.block.startMinutes : null,
+    };
+  }, [taskSheet, itemsByDate, timeline.sessions, dayLabelFor]);
+
+  // One sheet at a time: the task sheet closes before the session list opens.
+  const showTaskSessions = useCallback(() => {
+    if (!taskSheet) return;
+    const { task, date } = taskSheet;
+    setTaskSheet(null);
+    setSessionsTarget({ by: 'task', key: task.id, from: date, to: date, title: task.title, subtitle: dayLabelFor(date) });
+  }, [taskSheet, dayLabelFor]);
+
+  const handleSessionPress = useCallback((session: TimelineSession) => {
+    setSessionsTarget({
+      by: 'task',
+      key: session.taskId,
+      from: session.localDate,
+      to: session.localDate,
+      title: session.taskTitle ?? 'Timer, no task',
+      subtitle: `${dayLabelFor(session.localDate)} · unplanned`,
+    });
+  }, [dayLabelFor]);
+
+  // Same lock as Today: a running focus session cannot be moved to another task.
+  const loadTaskIntoTimer = useCallback((id: string) => {
+    setTaskSheet(null);
+    const store = useTaskStore.getState();
+    if (store.selectTask(id)) {
+      router.navigate('/(tabs)/focus');
+      return;
+    }
+    const running = store.tasks.find((t) => t.id === store.selectedTaskId);
+    const message = `A session is running on ${running?.title ?? 'another task'}. Finish it to switch tasks.`;
+    AccessibilityInfo.announceForAccessibility(message);
+    Alert.alert('Session in progress', message);
+  }, [router]);
+
+  const toggleTaskComplete = useCallback(async () => {
+    if (!taskSheet) return;
+    const toggle = completionToggleFor(taskSheet.task);
+    setTaskSheet(null);
+    if (toggle.kind === 'occurrence') {
+      const ok = await useTaskStore.getState().setOccurrenceCompletion(toggle.id, toggle.date, toggle.done);
+      if (!ok) Alert.alert('Not saved', 'That change could not be saved. Try again.');
+    } else {
+      await useTaskStore.getState().toggleComplete(toggle.id);
+    }
+    loadVisibleRange();
+  }, [taskSheet, loadVisibleRange]);
 
   const showSpinner = (isLoading || isLoadingStats) && items.length === 0 && !stats;
 
@@ -295,6 +384,7 @@ export default function CalendarScreen() {
         <WeekView
           start={weekStart}
           itemsByDate={itemsByDate}
+          sessions={timeline.sessions}
           onDayPress={openDay}
           onToggleNote={toggleNote}
           refreshing={refreshing}
@@ -325,6 +415,10 @@ export default function CalendarScreen() {
               onToggleNote={toggleNote}
               onDeleteNote={handleDeleteNote}
               onItemPress={handleItemPress}
+              sessions={timeline.sessions}
+              focusError={timeline.error}
+              onRetryFocus={timeline.reload}
+              onSessionPress={handleSessionPress}
             />
           )}
           {viewMode === 'planning' && (
@@ -361,6 +455,20 @@ export default function CalendarScreen() {
         onDelete={noteSheet?.note ? handleDeleteNoteFromSheet : undefined}
         onClose={() => setNoteSheet(null)}
       />
+
+      {/* Edit is not offered here: the task form lives on Today. */}
+      {taskSheet && (
+        <TaskStatsModal
+          task={taskSheet.task}
+          sessionLengthMinutes={0}
+          focused={sheetFocused}
+          onShowSessions={showTaskSessions}
+          onClose={() => setTaskSheet(null)}
+          onLoadTimer={loadTaskIntoTimer}
+          onToggleComplete={toggleTaskComplete}
+        />
+      )}
+      <SessionsSheet target={sessionsTarget} onClose={() => setSessionsTarget(null)} />
     </SafeAreaView>
   );
 }

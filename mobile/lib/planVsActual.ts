@@ -1,6 +1,7 @@
 import type { CalendarItem, Task, TimelineSession } from '../types';
 import type { SessionCompletion } from '../services/sessionOutbox';
 import { itemTimeRange } from './calendarItems';
+import { formatDuration } from './taskMetrics';
 
 /**
  * Plan against actual for one day: which planned blocks got focus, and which
@@ -134,6 +135,48 @@ export function mergeQueuedSessions(
   return [...server, ...pending].sort(
     (a, b) => a.localDate.localeCompare(b.localDate) || a.endLocalMinutes - b.endLocalMinutes,
   );
+}
+
+/**
+ * Today's sessions from the phone's own session history (the source of Today's
+ * Focus today stat), as timeline sessions on `date`. The caller passes only
+ * that day's focus records.
+ */
+export function timelineFromHistory(
+  records: { sessionId?: string; completedAt: number; durationSeconds: number; taskId: string | null; taskLabel: string | null }[],
+  date: string,
+  toLocalMinutes: (epochMs: number) => number = deviceLocalMinutes,
+): TimelineSession[] {
+  return records.map((r, i) => {
+    const endLocalMinutes = toLocalMinutes(r.completedAt);
+    return {
+      id: r.sessionId ?? `local:${r.completedAt}:${i}`,
+      clientSessionId: null,
+      durationSeconds: r.durationSeconds,
+      localDate: date,
+      taskId: r.taskId,
+      taskTitle: r.taskLabel,
+      goalId: null,
+      startLocalMinutes: Math.max(0, endLocalMinutes - Math.round(r.durationSeconds / SECONDS_PER_MINUTE)),
+      endLocalMinutes,
+    };
+  });
+}
+
+/**
+ * "1h 30m of 3h planned · 38m unplanned", the one-line summary on Today and
+ * the Day view. Null when there is neither a plan nor any focus that day.
+ */
+export function summaryLine(totals: DayPlanVsActual['totals']): string | null {
+  const { plannedMinutes, focusedSeconds, unplannedSeconds } = totals;
+  if (plannedMinutes === 0 && focusedSeconds === 0) return null;
+  const focused = formatDuration(focusedSeconds);
+  const head = plannedMinutes > 0
+    ? `${focused} of ${formatDuration(plannedMinutes * SECONDS_PER_MINUTE)} planned`
+    : `${focused} focused, nothing planned`;
+  return unplannedSeconds > 0 && plannedMinutes > 0
+    ? `${head} · ${formatDuration(unplannedSeconds)} unplanned`
+    : head;
 }
 
 /**

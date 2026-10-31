@@ -193,6 +193,8 @@ interface TaskStoreState {
   selectTask: (id: string | null) => boolean;
   incrementTaskSession: (id: string, duration: number) => void;
   toggleComplete: (id: string) => Promise<void>;
+  /** Tick or un-tick one day of a recurring task, for any day (the calendar). */
+  setOccurrenceCompletion: (id: string, date: string, done: boolean) => Promise<boolean>;
   clearTasks: (userId?: string) => Promise<void>;
   fetchRecurringTemplates: () => Promise<void>;
   refreshRecurring: () => Promise<void>;
@@ -439,6 +441,22 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     } catch (err) {
       console.warn('[tasks] toggleComplete failed:', err);
       setCompletion(task.isCompleted, task.completedAt);
+    }
+  },
+
+  setOccurrenceCompletion: async (id, date, done) => {
+    try {
+      const res = await setOccurrenceDone(id, date, done);
+      if (!res.success) throw new Error(res.error || 'Completion was not saved');
+      // Today's row and its streak may have moved with the tick.
+      await get().fetchTasks(true);
+      const template = get().recurringTemplates.find((t) => t.id === id);
+      if (template?.taskGoalId) refreshGoals();
+      invalidateCalendar();
+      return true;
+    } catch (err) {
+      console.warn('[tasks] setOccurrenceCompletion failed:', err);
+      return false;
     }
   },
 

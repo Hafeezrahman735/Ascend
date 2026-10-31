@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
-import type { CalendarItem } from '../../types';
+import type { CalendarItem, TimelineSession } from '../../types';
 import { getLocalDateString } from '../../utils/date';
+import { formatDuration } from '../../lib/taskMetrics';
+import type { BlockFill, DayPlanVsActual } from '../../lib/planVsActual';
 import {
   itemTimeRange, itemTitle, itemIsDone, isPastEvent, blockStyle, calendarItemKey,
   formatTimeRange, TYPE_META, MINUTES_IN_DAY, type TimeRange,
@@ -15,6 +17,11 @@ import {
  * the agenda below, so nothing is shown twice. The grid fits itself to the hours
  * in use rather than always rendering 00:00–24:00 — a day with one 9am task
  * should not open on fourteen empty rows.
+ *
+ * With a plan-vs-actual result (lib/planVsActual), a planned task block fills
+ * from the left with the focus it got that day, and focus on anything else is
+ * drawn as a dashed "unplanned" block at the time it ran, laid out beside other
+ * blocks like any overlapping item.
  */
 
 const HOUR_HEIGHT = 56;
@@ -30,8 +37,19 @@ const MIN_BLOCK_HEIGHT = 32;
 /** A grid tighter than this is cramped, so short days get breathing room. */
 const MIN_VISIBLE_HOURS = 4;
 
-interface Entry { item: CalendarItem; range: TimeRange }
-interface PlacedEntry extends Entry { column: number; columns: number }
+type Entry =
+  | { kind: 'item'; item: CalendarItem; range: TimeRange }
+  | { kind: 'session'; session: TimelineSession; range: TimeRange };
+type PlacedEntry = Entry & { column: number; columns: number };
+
+function entryKey(entry: Entry): string {
+  return entry.kind === 'item' ? calendarItemKey(entry.item) : `session:${entry.session.id}`;
+}
+
+/** The fill drawn on a planned block: same task, same start (lib/planVsActual matches by task). */
+function fillKey(taskId: string, start: number): string {
+  return `${taskId}:${start}`;
+}
 
 /**
  * Assigns overlapping blocks to side-by-side columns.
@@ -84,9 +102,13 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-export default function TimelineView({ dateKey, items, onItemPress }: {
+export default function TimelineView({ dateKey, items, plan, onItemPress, onSessionPress }: {
   dateKey: string;
   items: CalendarItem[];
+  /** Plan vs actual for this day; without it the grid draws the plan only. */
+  plan?: DayPlanVsActual;
+  /** Opens the sessions behind a dashed unplanned block. */
+  onSessionPress?: (session: TimelineSession) => void;
   /**
    * Opens the item behind a block. Without this there is no path to a timed
    * event at all: DayView's agenda renders only UNTIMED items, so an event with
@@ -102,10 +124,21 @@ export default function TimelineView({ dateKey, items, onItemPress }: {
     const found: Entry[] = [];
     for (const item of items) {
       const range = itemTimeRange(item);
-      if (range) found.push({ item, range });
+      if (range) found.push({ kind: 'item', item, range });
+    }
+    for (const session of plan?.unplanned ?? []) {
+      // At least a minute long, so a very short session still has a block.
+      const start = session.startLocalMinutes;
+      found.push({ kind: 'session', session, range: { start, end: Math.max(session.endLocalMinutes, start + 1) } });
     }
     return found;
-  }, [items]);
+  }, [items, plan]);
+
+  const fills = useMemo(() => {
+    const map = new Map<string, BlockFill>();
+    for (const fill of plan?.fills ?? []) map.set(fillKey(fill.block.taskId, fill.block.startMinutes), fill);
+    return map;
+  }, [plan]);
 
   const placed = useMemo(() => placeEntries(entries), [entries]);
 
@@ -192,38 +225,80 @@ export default function TimelineView({ dateKey, items, onItemPress }: {
           }} />
 
           {placed.map((entry) => {
-            const done = itemIsDone(entry.item);
-            // Events never complete — you do not tick off a dentist appointment.
-            // They dim once they have happened instead, which is a different
-            // statement: it did not fail, it is simply behind you.
-            const past = isPastEvent(entry.item, now);
             const top = offsetFor(entry.range.start);
             const height = Math.max(
               MIN_BLOCK_HEIGHT,
               ((entry.range.end - entry.range.start) / 60) * HOUR_HEIGHT,
             );
             const widthPct = 100 / entry.columns;
+            const position = {
+              position: 'absolute' as const,
+              top,
+              height,
+              left: `${entry.column * widthPct}%` as const,
+              width: `${widthPct}%` as const,
+              paddingRight: 4,
+              paddingTop: 1,
+            };
+
+            if (entry.kind === 'session') {
+              const { session } = entry;
+              const title = session.taskTitle ?? 'Focus';
+              const length = formatDuration(session.durationSeconds);
+              return (
+                <TouchableOpacity
+                  key={entryKey(entry)}
+                  onPress={onSessionPress ? () => onSessionPress(session) : undefined}
+                  disabled={!onSessionPress}
+                  activeOpacity={0.75}
+                  accessibilityRole={onSessionPress ? 'button' : 'text'}
+                  accessibilityLabel={`Unplanned focus: ${title}, ${length}, ${formatTimeRange(entry.range)}`}
+                  style={position}
+                >
+                  <View style={{
+                    flex: 1, borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, overflow: 'hidden',
+                    borderWidth: 1.5, borderStyle: 'dashed', borderColor: Colors.primarySoft,
+                    flexDirection: 'row', alignItems: height >= 44 ? 'flex-start' : 'center', gap: 6,
+                  }}>
+                    <Text numberOfLines={1} style={{ flex: 1, color: Colors.textBright, fontSize: 12, fontWeight: '600' }}>
+                      {title}
+                    </Text>
+                    <Text style={{ color: Colors.subtext, fontSize: 10 }}>unplanned</Text>
+                    <Text style={{ color: Colors.textBright, fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] }}>
+                      {length}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }
+
+            const done = itemIsDone(entry.item);
+            // Events never complete — you do not tick off a dentist appointment.
+            // They dim once they have happened instead, which is a different
+            // statement: it did not fail, it is simply behind you.
+            const past = isPastEvent(entry.item, now);
             const handled = !!onItemPress;
+            const taskId = entry.item.type === 'task' || entry.item.type === 'habit_instance'
+              ? (entry.item.data as { id?: string }).id
+              : undefined;
+            const fill = taskId ? fills.get(fillKey(taskId, entry.range.start)) : undefined;
+            const plannedSeconds = (entry.range.end - entry.range.start) * 60;
+            const over = fill && fill.overSeconds > 0 ? ` +${formatDuration(fill.overSeconds)}` : '';
+            const focusedText = fill
+              ? `${formatDuration(fill.focusedSeconds)} of ${formatDuration(plannedSeconds)}${over}`
+              : null;
 
             return (
               <TouchableOpacity
-                key={calendarItemKey(entry.item)}
+                key={entryKey(entry)}
                 onPress={handled ? () => onItemPress(entry.item) : undefined}
                 disabled={!handled}
                 activeOpacity={0.75}
                 accessibilityRole={handled ? 'button' : 'text'}
                 // The type leads: sighted users get form and colour, VoiceOver
                 // users used to get neither.
-                accessibilityLabel={`${TYPE_META[entry.item.type].label}: ${itemTitle(entry.item)}, ${formatTimeRange(entry.range)}${past ? ', past' : ''}`}
-                style={{
-                  position: 'absolute',
-                  top,
-                  height,
-                  left: `${entry.column * widthPct}%`,
-                  width: `${widthPct}%`,
-                  paddingRight: 4,
-                  paddingTop: 1,
-                }}
+                accessibilityLabel={`${TYPE_META[entry.item.type].label}: ${itemTitle(entry.item)}, ${formatTimeRange(entry.range)}${focusedText ? `, focused ${focusedText}` : ''}${past ? ', past' : ''}`}
+                style={position}
               >
                 <View style={[
                   {
@@ -236,6 +311,15 @@ export default function TimelineView({ dateKey, items, onItemPress }: {
                   },
                   blockStyle(entry.item.type, Colors),
                 ]}>
+                  {fill && fill.share > 0 && (
+                    <View
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute', left: 0, top: 0, bottom: 0,
+                        width: `${fill.share * 100}%`, backgroundColor: Colors.primary, opacity: 0.35,
+                      }}
+                    />
+                  )}
                   <Text
                     numberOfLines={height >= 44 ? 2 : 1}
                     style={{
@@ -250,6 +334,14 @@ export default function TimelineView({ dateKey, items, onItemPress }: {
                   {height >= 44 && (
                     <Text style={{ color: Colors.subtext, fontSize: 10, marginTop: 1 }} numberOfLines={1}>
                       {formatTimeRange(entry.range)}
+                    </Text>
+                  )}
+                  {focusedText && height >= 60 && (
+                    <Text
+                      numberOfLines={1}
+                      style={{ color: Colors.textBright, fontSize: 11, fontWeight: '700', marginTop: 1, fontVariant: ['tabular-nums'] }}
+                    >
+                      {focusedText}
                     </Text>
                   )}
                 </View>

@@ -2,7 +2,9 @@ import { useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
-import type { CalendarItem, CalendarItemType, Note } from '../../types';
+import type { CalendarItem, CalendarItemType, Note, TimelineSession } from '../../types';
+import { planVsActual, plannedBlocksFromCalendar } from '../../lib/planVsActual';
+import PlanSummary from '../PlanSummary';
 import {
   getCalendarStyles, DAY_GROUP_ORDER, TYPE_META, typeColor, itemTimeRange,
   countsTowardLoad, calendarItemKey,
@@ -17,6 +19,10 @@ import TimelineView from './TimelineView';
  *
  * The split is by whether an item carries a time, not by its type, so an item
  * appears in exactly one of the two places and never in both.
+ *
+ * Focus sessions go on the grid too: planned blocks fill with the focus they
+ * got, and other focus shows as unplanned blocks (lib/planVsActual). A day with
+ * sessions but nothing scheduled still gets a grid.
  */
 export default function DayView({
   dateKey,
@@ -27,9 +33,19 @@ export default function DayView({
   onToggleNote,
   onDeleteNote,
   onItemPress,
+  sessions = [],
+  focusError = null,
+  onRetryFocus,
+  onSessionPress,
 }: {
   dateKey: string;
   itemsByDate: Map<string, CalendarItem[]>;
+  /** Focus sessions for the visible range; only this day's are used. */
+  sessions?: TimelineSession[];
+  /** Set when the sessions could not be loaded and none are cached. */
+  focusError?: string | null;
+  onRetryFocus?: () => void;
+  onSessionPress?: (session: TimelineSession) => void;
   noteDraft: string;
   onNoteDraftChange: (value: string) => void;
   onAddNote: () => void;
@@ -41,6 +57,11 @@ export default function DayView({
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
   const dayItems = useMemo(() => itemsByDate.get(dateKey) ?? [], [itemsByDate, dateKey]);
+  const daySessions = useMemo(() => sessions.filter((s) => s.localDate === dateKey), [sessions, dateKey]);
+  const plan = useMemo(
+    () => planVsActual(dateKey, plannedBlocksFromCalendar(dayItems), daySessions),
+    [dateKey, dayItems, daySessions],
+  );
 
   // Anything with a time is drawn on the grid; the agenda below takes the rest.
   const untimedItems = useMemo(
@@ -63,18 +84,41 @@ export default function DayView({
   // Anything at all, notes included. This used to exclude notes, so a day
   // holding only notes rendered "Nothing on this day" directly above the notes
   // it was holding — the empty state contradicting the screen under it.
-  const hasAnything = dayItems.length > 0;
+  const hasAnything = dayItems.length > 0 || daySessions.length > 0;
   // The timeline draws time, so it needs a time-bearing item to be worth
   // showing; a note-only day gets the agenda below and no empty grid.
-  const hasScheduled = useMemo(() => dayItems.some(countsTowardLoad), [dayItems]);
+  const hasScheduledItems = useMemo(() => dayItems.some(countsTowardLoad), [dayItems]);
+  const hasScheduled = hasScheduledItems || plan.unplanned.length > 0;
   const hasUnscheduled = untimedItems.some(countsTowardLoad);
 
   return (
     <View style={{ paddingTop: 6 }}>
+      <PlanSummary totals={plan.totals} style={{ marginHorizontal: 16, marginBottom: 12 }} />
+      {focusError && daySessions.length === 0 && (
+        <TouchableOpacity
+          onPress={onRetryFocus}
+          disabled={!onRetryFocus}
+          accessibilityRole="button"
+          accessibilityLabel="Focus time unavailable. Retry"
+          style={{ marginHorizontal: 16, marginBottom: 12, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+        >
+          <Ionicons name="cloud-offline-outline" size={14} color={Colors.subtext} />
+          <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+            Focus time unavailable · <Text style={{ color: Colors.primarySoft, fontWeight: '600' }}>Retry</Text>
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* When the day is completely empty the box below says so; a second empty
           prompt from the timeline would just be noise. */}
       {hasScheduled && (
-        <TimelineView dateKey={dateKey} items={dayItems} onItemPress={onItemPress} />
+        <TimelineView
+          dateKey={dateKey}
+          items={dayItems}
+          plan={plan}
+          onItemPress={onItemPress}
+          onSessionPress={onSessionPress}
+        />
       )}
 
       <View style={{ paddingHorizontal: 16 }}>
