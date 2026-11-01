@@ -153,7 +153,10 @@ describe('seedDemoAccount — the Tasks screen', () => {
       expect(t.totalTimeOnTask).toBeGreaterThanOrEqual(0);
     }
 
-    const goals = await api.get('/task-goals');
+    // With the account's zone, as the app always sends it (goalStore tzQuery).
+    // Without it the route counts a recurring task's "latest day" in UTC, so
+    // whenever the UTC date is ahead of the demo zone's date this goal read 0%.
+    const goals = await api.get(`/task-goals?tz=${encodeURIComponent(timeZone)}`);
     const rows = goals.body.data as { title: string; overallProgress: number; isCompleted: boolean }[];
     const open = rows.filter((g) => !g.isCompleted);
     expect(open).toHaveLength(GOALS.filter((g) => g.completedDaysAgo === undefined).length);
