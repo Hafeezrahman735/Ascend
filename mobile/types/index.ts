@@ -272,30 +272,6 @@ export interface CalendarItem {
   data: unknown;
 }
 
-export interface CalendarStats {
-  byTag: Record<string, number>;
-  byDayOfWeek: Record<string, number>;
-  plannedVsActual: {
-    taskId: string;
-    title: string;
-    estimatedMinutes: number;
-    actualMinutes: number;
-    ratio: number | null;
-    isOutlier: boolean;
-  }[];
-  totalSeconds: number;
-  sessionCount: number;
-  /** Distinct days with at least one session, in the requested range. */
-  daysStudied: number;
-  /** Most sessions completed on any single day in the range. */
-  bestDaySessions: number;
-  /** 'YYYY-MM-DD' -> session count, for the month heat grid. */
-  sessionsPerDay: Record<string, number>;
-  /** Live user stats — NOT scoped to the requested range. */
-  currentStreak: number;
-  longestStreak: number;
-}
-
 export interface GoogleCalendarStatus {
   configured: boolean;
   connected: boolean;

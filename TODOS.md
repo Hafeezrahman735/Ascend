@@ -97,15 +97,16 @@ Full plan: `docs/plans/adaptive-session-plan.md`
   11pm–1am is rejected rather than clamped to 11pm–11:59pm. Supporting them
   means either a second date or a duration field, and neither is worth it until
   a user hits the wall.
-- **Week and Month rows are still read-only.** Only Day view (grid + agenda) and
-  the Planning sections can open an item. This is consistent with the rest of
-  the calendar, which has never been tappable — but it does mean an event seen
-  in Week view has no path to editing except switching views.
-- **No unscheduled events or notes from Planning.** The sheets offer the seven
-  days of the anchored week, which makes the "created outside the loaded range
-  and vanishes on refetch" failure unreachable. An unscheduled note would need
-  the `notes` slice broken out of being derived from `items`, plus a
-  reconciliation rule between two independent slices.
+- **Week and Month rows are still read-only.** Day view (grid + agenda) and the
+  Plan screen's expanded day rows open an item; Week and Month do not. An event
+  seen in Week view has no path to editing except switching views. (Plan
+  screen, 2026-10-31.)
+- **Events and notes always have a day.** The sheets take any date (a date
+  picker, not the old seven chips), and the calendar follows a save to its
+  week or month and reloads it, so an item saved outside the loaded range no
+  longer vanishes. An unscheduled note would still need the `notes` slice
+  broken out of being derived from `items`, plus a reconciliation rule between
+  two independent slices.
 
 ### Follow-ups
 
@@ -321,13 +322,19 @@ Plan: `docs/designs/ascend-direction-freelancer-planner.md`.
 
 ## From /plan-eng-review — plan vs actual on the calendar (2026-10-31)
 
-- [ ] **Calendar Stats day bucketing matches the rest of the app.** `GET /calendar/stats`
-      (`backend/src/modules/calendar/routes.ts:729-763`) assigns sessions to days with a
-      `tzOffset`, while the Time tab and the plan-vs-actual overlay use `effectiveLocal`
-      (the frozen local day). For someone who travelled, Stats can put a session on a
-      different day than the Day view does.
-      **Pros:** one definition of "which day" across Stats, Time and the calendar.
-      **Cons:** touches a route and its integration tests; only matters after a timezone change.
-      **Start in** the stats handler, reusing `effectiveLocal` from `modules/timereport`.
-      **Depends on:** nothing. Found by the outside voice (OV7); the section is renamed
-      "Estimate vs time spent" in the plan-vs-actual build (D8), its logic left as is.
+- [x] **Calendar Stats day bucketing matches the rest of the app.** Closed 2026-10-31:
+      the Calendar Plan screen build removed the Stats view and deleted `GET /calendar/stats`,
+      so the second day-bucketing rule went with it.
+
+## From /plan-design-review — Calendar Plan screen (2026-10-31)
+
+- [ ] **Write DESIGN.md with /design-consultation.** Ascend has no written design system;
+      each design review maps styles by reading calendar code.
+      **What:** a DESIGN.md built from `mobile/constants/Colors.ts` and `getCalendarStyles`
+      (`mobile/components/calendar/shared.tsx`), plus the rules settled in the Plan screen
+      review: cards only when you interact with them, and colour roles per item type.
+      **Pros:** later screens and reviews start from one written source, so rules stop drifting.
+      **Cons:** a /design-consultation session (human: ~1 day / CC: ~30 min).
+      **Context:** the founder chose amber "Today" text (DR7) over the contrast-safe option;
+      record it as an accepted exception, not a rule.
+      **Depends on:** nothing. Best done before the next new screen (DR10).

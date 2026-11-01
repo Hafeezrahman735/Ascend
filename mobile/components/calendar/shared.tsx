@@ -38,13 +38,13 @@ export {
 } from '../../lib/calendarItems';
 export type { TimeRange } from '../../lib/calendarItems';
 
-// 'planning' replaced 'stats' as a tab: Stats did not disappear, it became one of
-// two modes inside Planning. Planning leads because deciding what to work on
-// comes before looking at any particular day.
+// 'planning' is the Plan screen, the tab's landing view: deciding what to work
+// on comes before looking at any particular day. The Stats mode that used to
+// live inside it is gone; its numbers are in the Time tab.
 export type CalendarViewMode = 'planning' | 'day' | 'week' | 'month';
 
 export const VIEW_MODES: { key: CalendarViewMode; label: string }[] = [
-  { key: 'planning', label: 'Planning' },
+  { key: 'planning', label: 'Plan' },
   { key: 'day', label: 'Day' },
   { key: 'week', label: 'Week' },
   { key: 'month', label: 'Month' },
@@ -135,9 +135,7 @@ export function getCalendarStyles(Colors: ThemeColors) {
     },
     addBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
     emptyBox: { alignItems: 'center', paddingVertical: 34, backgroundColor: Colors.surface, borderRadius: 12 },
-    statCard: { backgroundColor: Colors.surface, borderRadius: 14, padding: 14, marginBottom: 12 },
-    statHeading: { color: Colors.textBright, fontSize: 14, fontWeight: '700', marginBottom: 2 },
-    /** Section label used by Planning: UNSCHEDULED, EVENTS, THIS WEEK. */
+    /** Section label used by the Plan screen: ALSO TODAY, UNSCHEDULED. */
     sectionLabel: {
       color: Colors.subtext, fontSize: 10, fontWeight: '700',
       letterSpacing: 1.2, marginBottom: 10,

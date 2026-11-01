@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert, AccessibilityInfo,
 } from 'react-native';
@@ -13,6 +13,9 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useDaySessions } from '../../hooks/useTimeReport';
 import type { CalendarEvent, CalendarItem, Note, Task, TimelineSession } from '../../types';
 import TaskStatsModal, { type FocusedOnDay } from '../../components/TaskStatsModal';
+import TaskFormModal from '../../components/TaskFormModal';
+import { useTaskForm, type TaskFormChange } from '../../hooks/useTaskForm';
+import type { Slot } from '../../lib/planScreen';
 import SessionsSheet, { type SessionsTarget } from '../../components/timeReport/SessionsSheet';
 import { planVsActual, plannedBlocksFromCalendar } from '../../lib/planVsActual';
 import { taskForCalendarItem, completionToggleFor } from '../../lib/calendarTask';
@@ -26,7 +29,8 @@ import {
 import MonthView from '../../components/calendar/MonthView';
 import WeekView from '../../components/calendar/WeekView';
 import DayView from '../../components/calendar/DayView';
-import PlanningView from '../../components/calendar/PlanningView';
+import PlanningView, { type PlanHighlight } from '../../components/calendar/PlanningView';
+import type { AddKind } from '../../components/calendar/AddRow';
 import EventFormSheet, { type EventDraft } from '../../components/calendar/EventFormSheet';
 import NoteFormSheet, { type NoteDraft } from '../../components/calendar/NoteFormSheet';
 
@@ -41,7 +45,7 @@ export default function CalendarScreen() {
   // Week ranges follow the user's 'week starts on' setting.
   const weekStartsOn = useUserSettingsStore((s) => s.weekStartDay);
 
-  // Planning opens first: what needs doing comes before which day it lands on.
+  // Plan opens first: what needs doing comes before which day it lands on.
   const [viewMode, setViewMode] = useState<CalendarViewMode>('planning');
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
@@ -50,8 +54,10 @@ export default function CalendarScreen() {
   // One piece of state per sheet, holding both "is it open" and "what is it
   // editing". Two separate flags could disagree — open with nothing to edit, or
   // hold a stale row while closed — and this cannot.
-  const [eventSheet, setEventSheet] = useState<{ event: CalendarEvent | null } | null>(null);
-  const [noteSheet, setNoteSheet] = useState<{ note: Note | null } | null>(null);
+  // `date` is the day a NEW item opens on when the caller knows it (Month's
+  // selected day); otherwise the sheet uses sheetDefaultDate.
+  const [eventSheet, setEventSheet] = useState<{ event: CalendarEvent | null; date?: string } | null>(null);
+  const [noteSheet, setNoteSheet] = useState<{ note: Note | null; date?: string } | null>(null);
   // A planned block's task sheet, and the session list it (or a dashed block) opens.
   const [taskSheet, setTaskSheet] = useState<{ task: Task; date: string } | null>(null);
   const [sessionsTarget, setSessionsTarget] = useState<SessionsTarget | null>(null);
@@ -61,19 +67,16 @@ export default function CalendarScreen() {
   // reads the same fields but subscribes to the whole store, so it re-renders on
   // anything — including the Google-sync status this screen never shows.
   const {
-    items, stats, isLoading, isLoadingStats, error, syncWarning,
-    fetchRange, fetchStats, createNote, updateNote, deleteNote,
+    items, isLoading, error, syncWarning,
+    fetchRange, createNote, updateNote, deleteNote,
     createEvent, updateEvent, deleteEvent,
   } = useCalendarStore(
     useShallow((s) => ({
       items: s.items,
-      stats: s.stats,
       isLoading: s.isLoading,
-      isLoadingStats: s.isLoadingStats,
       error: s.error,
       syncWarning: s.syncWarning,
       fetchRange: s.fetchRange,
-      fetchStats: s.fetchStats,
       createNote: s.createNote,
       updateNote: s.updateNote,
       deleteNote: s.deleteNote,
@@ -96,30 +99,23 @@ export default function CalendarScreen() {
         end: getLocalDateString(endOfMonth(anchorDate)),
       };
     }
-    // Week view and Planning both operate on the anchored week.
+    // Week view and Plan both operate on the anchored week.
     return {
       start: getLocalDateString(startOfWeek(anchorDate, weekStartsOn)),
       end: getLocalDateString(endOfWeek(anchorDate, weekStartsOn)),
     };
   }, [viewMode, anchorDate, weekStartsOn]);
 
-  // Stats is the only view built from aggregates; every other view renders the
-  // scheduled items that fetchRange returns.
-  const loadVisibleRange = useCallback(
-    // Planning needs BOTH: stats for its Stats mode, and the range for the
-    // per-day planned hours in its Plan mode.
-    () => (viewMode === 'planning'
-      ? Promise.all([fetchStats(start, end), fetchRange(start, end)]).then(() => undefined)
-      : fetchRange(start, end)),
-    [viewMode, start, end, fetchRange, fetchStats],
-  );
+  // Every view renders the scheduled items that fetchRange returns.
+  const loadVisibleRange = useCallback(() => fetchRange(start, end), [start, end, fetchRange]);
 
   useEffect(() => {
     loadVisibleRange();
   }, [loadVisibleRange]);
 
-  // Focus sessions for the plan-vs-actual overlay: Day and Week only.
-  const timeline = useDaySessions(start, end, viewMode === 'day' || viewMode === 'week');
+  // Focus sessions: the plan-vs-actual overlay on Day and Week, and the task
+  // sheet's Focused row everywhere it opens (Plan included).
+  const timeline = useDaySessions(start, end, viewMode !== 'month');
 
   // Tasks are created and edited on another tab, so by the time the calendar is
   // shown again its range can be out of date. taskStore flags the change and
@@ -190,9 +186,9 @@ export default function CalendarScreen() {
     [anchorDate, weekStartsOn],
   );
 
-  // The day a sheet opens on. The anchored day when it is inside the week the
-  // sheet offers, and the start of that week otherwise — so the preselected chip
-  // is always one the user can see.
+  // The day a new event or note opens on when no caller chose one: the anchored
+  // day when it is inside the anchored week, and the start of that week
+  // otherwise. Any other day can be picked in the sheet.
   const sheetDefaultDate = useMemo(() => {
     const anchored = getLocalDateString(anchorDate);
     const weekEnd = getLocalDateString(endOfWeek(anchorDate, weekStartsOn));
@@ -203,10 +199,10 @@ export default function CalendarScreen() {
   /**
    * Follow a saved item to wherever it landed.
    *
-   * Day view loads exactly one day, so an event moved to Thursday would be
-   * written correctly and then be nowhere on screen. Re-anchoring refetches the
-   * range that now contains it, which is also what the user asked for by
-   * choosing that day.
+   * The sheets accept any date, and the calendar only loads the visible range,
+   * so an item saved outside it would be written correctly and then be nowhere
+   * on screen. Re-anchoring refetches the range that now contains it from the
+   * server, so it stays after the next reload too.
    */
   const followDate = useCallback((date: string) => {
     if (date < start || date > end) setAnchorDate(parseLocalDate(date));
@@ -324,7 +320,50 @@ export default function CalendarScreen() {
     loadVisibleRange();
   }, [taskSheet, loadVisibleRange]);
 
-  const showSpinner = (isLoading || isLoadingStats) && items.length === 0 && !stats;
+  // ── The task form, hosted here for + Task and Find a slot ──
+  // A just-saved task, to open its day row on Plan and tint it (design DR3).
+  const [highlight, setHighlight] = useState<PlanHighlight | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
+
+  /**
+   * After a task save from this screen, show it. The task store only marks the
+   * calendar stale, and the calendar reloads on focus, which never comes while
+   * the calendar is already the focused tab. So: follow the task to its range
+   * if it left this one (the anchor change refetches), otherwise reload now.
+   * Without this, Find a slot would offer the same gap twice.
+   */
+  const handleTaskChanged = useCallback(async (change: TaskFormChange) => {
+    const { dueDate, taskId, kind } = change;
+    if (dueDate && (dueDate < start || dueDate > end)) setAnchorDate(parseLocalDate(dueDate));
+    else await loadVisibleRange();
+    if (kind === 'deleted' || !dueDate || !taskId) return;
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    setHighlight({ date: dueDate, taskId });
+    highlightTimer.current = setTimeout(() => setHighlight(null), 1600);
+  }, [start, end, loadVisibleRange]);
+
+  const taskForm = useTaskForm({ onChanged: handleTaskChanged });
+  const { openCreate: openTaskCreate, openEdit: openTaskEdit } = taskForm;
+
+  const handleAdd = useCallback((kind: AddKind, date?: string) => {
+    // D8: a new task starts with no date, as on Today; it lands in Unscheduled.
+    if (kind === 'task') openTaskCreate();
+    else if (kind === 'event') setEventSheet({ event: null, date });
+    else setNoteSheet({ note: null, date });
+  }, [openTaskCreate]);
+
+  // Find a slot opens the task's own form with the gap filled in; nothing is
+  // written until Save (design D5).
+  const handleFindSlot = useCallback((task: Task, slot: Slot) => {
+    openTaskEdit(task, { dueDate: slot.date, startMinutes: slot.startMinutes, endMinutes: slot.endMinutes });
+  }, [openTaskEdit]);
+
+  const openUnscheduledTask = useCallback((task: Task) => {
+    setTaskSheet({ task, date: getLocalDateString() });
+  }, []);
+
+  const showSpinner = isLoading && items.length === 0;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
@@ -403,6 +442,7 @@ export default function CalendarScreen() {
               itemsByDate={itemsByDate}
               onDayPress={openDay}
               onToggleNote={toggleNote}
+              onAdd={handleAdd}
             />
           )}
           {viewMode === 'day' && (
@@ -423,14 +463,15 @@ export default function CalendarScreen() {
           )}
           {viewMode === 'planning' && (
             <PlanningView
-              stats={stats}
               weekStart={weekStart}
               itemsByDate={itemsByDate}
-              onDayPress={openDay}
-              onAddEvent={() => setEventSheet({ event: null })}
-              onEditEvent={(event) => setEventSheet({ event })}
-              onAddNote={() => setNoteSheet({ note: null })}
-              onEditNote={(note) => setNoteSheet({ note })}
+              highlight={highlight}
+              onAdd={handleAdd}
+              onOpenDay={openDay}
+              onItemPress={handleItemPress}
+              onOpenTask={openUnscheduledTask}
+              onStartFocus={loadTaskIntoTimer}
+              onFindSlot={handleFindSlot}
             />
           )}
         </ScrollView>
@@ -439,8 +480,7 @@ export default function CalendarScreen() {
       <EventFormSheet
         visible={!!eventSheet}
         event={eventSheet?.event ?? null}
-        weekStart={weekStart}
-        defaultDate={sheetDefaultDate}
+        defaultDate={eventSheet?.date ?? sheetDefaultDate}
         onSave={handleSaveEvent}
         onDelete={eventSheet?.event ? handleDeleteEvent : undefined}
         onClose={() => setEventSheet(null)}
@@ -449,14 +489,16 @@ export default function CalendarScreen() {
       <NoteFormSheet
         visible={!!noteSheet}
         note={noteSheet?.note ?? null}
-        weekStart={weekStart}
-        defaultDate={sheetDefaultDate}
+        defaultDate={noteSheet?.date ?? sheetDefaultDate}
         onSave={handleSaveNote}
         onDelete={noteSheet?.note ? handleDeleteNoteFromSheet : undefined}
         onClose={() => setNoteSheet(null)}
       />
 
-      {/* Edit is not offered here: the task form lives on Today. */}
+      <TaskFormModal {...taskForm.props} />
+
+      {/* Edit is not offered from this sheet: the founder chose to keep it on
+          Today (design review D13), even though the form is shared now. */}
       {taskSheet && (
         <TaskStatsModal
           task={taskSheet.task}

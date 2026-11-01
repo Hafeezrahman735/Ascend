@@ -63,6 +63,8 @@ export interface WeekTask {
   priority: Task['priority'];
   isRecurring: boolean;
   task: Task;
+  /** The calendar item the row came from, so a tap can open its sheet. */
+  item: CalendarItem;
 }
 
 function isTaskItem(item: CalendarItem): boolean {
@@ -96,6 +98,7 @@ function toWeekTask(item: CalendarItem, todayKey: string): WeekTask {
     priority: task.priority ?? 'medium',
     isRecurring: item.type === 'habit_instance' || !!task.isRecurring,
     task,
+    item,
   };
 }
 

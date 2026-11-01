@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { touchKey } from '../lib/lruIndex';
 import { api } from '../services/api';
-import type { CalendarEvent, CalendarItem, CalendarStats, GoogleCalendarStatus, Note } from '../types';
+import type { CalendarEvent, CalendarItem, GoogleCalendarStatus, Note } from '../types';
 import { useAuthStore } from './authStore';
 import { isRenderableCalendarItem } from '../lib/calendarItems';
 import {
@@ -126,10 +126,8 @@ interface CalendarStoreState {
   /** Items for the currently-viewed range, server + device merged. */
   items: CalendarItem[];
   notes: Note[];
-  stats: CalendarStats | null;
   googleStatus: GoogleCalendarStatus | null;
   isLoading: boolean;
-  isLoadingStats: boolean;
   error: string | null;
   /** Set when Google is connected but its events couldn't be loaded this fetch. */
   syncWarning: string | null;
@@ -143,7 +141,6 @@ interface CalendarStoreState {
   isStale: boolean;
 
   fetchRange: (start: string, end: string) => Promise<void>;
-  fetchStats: (start: string, end: string) => Promise<void>;
   fetchGoogleStatus: () => Promise<void>;
   createNote: (data: { content: string; date?: string | null; isTodo?: boolean }) => Promise<void>;
   updateNote: (id: string, data: Partial<Note>) => Promise<void>;
@@ -166,10 +163,8 @@ interface CalendarStoreState {
 export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
   items: [],
   notes: [],
-  stats: null,
   googleStatus: null,
   isLoading: false,
-  isLoadingStats: false,
   error: null,
   syncWarning: null,
   loadedRange: null,
@@ -231,20 +226,6 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
       if (userId) writeCache(userId, start, end, items);
     } catch {
       set({ error: 'Failed to load calendar', isLoading: false });
-    }
-  },
-
-  fetchStats: async (start, end) => {
-    set({ isLoadingStats: true });
-    try {
-      // tzOffset so day-of-week buckets follow the user's calendar day.
-      const tzOffset = -new Date().getTimezoneOffset();
-      const res = await api.get<CalendarStats>(
-        `/calendar/stats?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&tzOffset=${tzOffset}`,
-      );
-      set({ stats: res.success && res.data ? res.data : null, isLoadingStats: false });
-    } catch {
-      set({ isLoadingStats: false });
     }
   },
 
@@ -408,7 +389,6 @@ export const useCalendarStore = create<CalendarStoreState>((set, get) => ({
     set({
       items: [],
       notes: [],
-      stats: null,
       googleStatus: null,
       isLoading: false,
       error: null,

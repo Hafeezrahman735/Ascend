@@ -4,7 +4,7 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useIsDark } from '../../hooks/useTheme';
 import FormSheet from '../FormSheet';
-import DayPickerRow from './DayPickerRow';
+import DateField from './DateField';
 import { formatMinutes, MINUTES_IN_DAY } from './shared';
 import type { CalendarEvent } from '../../types';
 
@@ -67,7 +67,6 @@ function TimeButton({ which, value, active, onPress }: {
 export default function EventFormSheet({
   visible,
   event,
-  weekStart,
   defaultDate,
   onSave,
   onDelete,
@@ -76,7 +75,6 @@ export default function EventFormSheet({
   visible: boolean;
   /** null when creating. */
   event: CalendarEvent | null;
-  weekStart: Date;
   /** 'YYYY-MM-DD' the sheet opens on when creating. */
   defaultDate: string;
   onSave: (draft: EventDraft) => void;
@@ -191,7 +189,7 @@ export default function EventFormSheet({
 
       <Text style={label}>DAY</Text>
       <View style={{ marginBottom: 18 }}>
-        <DayPickerRow weekStart={weekStart} selected={date} onSelect={setDate} />
+        <DateField value={date} onChange={setDate} />
       </View>
 
       <View style={{

@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, Switch, Alert } from 'react-na
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import FormSheet from '../FormSheet';
-import DayPickerRow from './DayPickerRow';
+import DateField from './DateField';
 import type { Note } from '../../types';
 
 /**
@@ -11,8 +11,8 @@ import type { Note } from '../../types';
  *
  * Day view already has a one-line inline composer, which is the right shape
  * there — you are looking at the day, so the day is implied. This sheet exists
- * for Planning, where the whole point is that you have not chosen a day yet, and
- * so the day has to be part of the form.
+ * for Plan and Month, where you have not chosen a day yet, and so the day has to
+ * be part of the form. Any day can be picked (DateField).
  */
 
 export interface NoteDraft {
@@ -24,7 +24,6 @@ export interface NoteDraft {
 export default function NoteFormSheet({
   visible,
   note,
-  weekStart,
   defaultDate,
   onSave,
   onDelete,
@@ -33,7 +32,6 @@ export default function NoteFormSheet({
   visible: boolean;
   /** null when creating. */
   note: Note | null;
-  weekStart: Date;
   /** 'YYYY-MM-DD' the sheet opens on when creating. */
   defaultDate: string;
   onSave: (draft: NoteDraft) => void;
@@ -109,7 +107,7 @@ export default function NoteFormSheet({
 
       <Text style={label}>DAY</Text>
       <View style={{ marginBottom: 18 }}>
-        <DayPickerRow weekStart={weekStart} selected={date} onSelect={setDate} />
+        <DateField value={date} onChange={setDate} />
       </View>
 
       <View style={{

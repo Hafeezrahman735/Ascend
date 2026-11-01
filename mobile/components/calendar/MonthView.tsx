@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import type { CalendarItem, Note } from '../../types';
+import AddRow, { type AddKind } from './AddRow';
 import { eachDayOfRange, getLocalDateString, parseLocalDate, startOfMonth, endOfMonth } from '../../utils/date';
 import {
   itemTitle, itemIsDone, typeColor, itemTimeRange, countsTowardLoad, isNote,
@@ -135,11 +136,14 @@ export default function MonthView({
   itemsByDate,
   onDayPress,
   onToggleNote,
+  onAdd,
 }: {
   anchorDate: Date;
   itemsByDate: Map<string, CalendarItem[]>;
   onDayPress: (date: string) => void;
   onToggleNote: (note: Note) => void;
+  /** + Task / + Event / + Note under the grid; `date` is the selected day. */
+  onAdd: (kind: AddKind, date: string) => void;
 }) {
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
@@ -257,6 +261,14 @@ export default function MonthView({
             );
           })}
         </View>
+      </View>
+
+      {/* Adds land on the selected day (task: no date, as everywhere). */}
+      <View style={{ paddingHorizontal: 16, marginTop: 14 }}>
+        <AddRow
+          onAdd={(kind) => onAdd(kind, selectedKey)}
+          dayLabel={parseLocalDate(selectedKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+        />
       </View>
 
       {/* ── Live panel for the selected day ───────────────────────────── */}
