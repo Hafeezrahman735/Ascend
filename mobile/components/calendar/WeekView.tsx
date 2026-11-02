@@ -1,430 +1,261 @@
 import { useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
-import type { CalendarItem, Note, TimelineSession } from '../../types';
-import { planVsActual, plannedBlocksFromCalendar, type DayPlanVsActual } from '../../lib/planVsActual';
-import { compactDuration } from '../../lib/taskMetrics';
-import { addDays, eachDayOfRange, getLocalDateString, parseLocalDate } from '../../utils/date';
+import type { CalendarItem, Note, Task, TimelineSession } from '../../types';
+import { addDays, getLocalDateString, parseLocalDate } from '../../utils/date';
+import { formatMinutes, formatSeconds, typeColor } from './shared';
+import { weekRows, type WeekRow } from '../../lib/planScreen';
 import {
-  getCalendarStyles, itemTitle, itemIsDone, typeColor, itemTimeRange,
-  countsTowardLoad, isNote, calendarItemKey, formatMinutes,
-} from './shared';
-
-/** Cards drawn in a column before it collapses into a "+N" line. */
-const MAX_COLUMN_CARDS = 5;
+  planVsActual, plannedBlocksFromCalendar, summaryLine, type DayPlanVsActual,
+} from '../../lib/planVsActual';
+import { axisTicks, laneSummary, taskFocusOnDay, weekAxis, type LaneAxis } from '../../lib/calendarViews';
+import { DayRowList, dayName, hoursLabel, type PlanHighlight } from './DayRows';
 
 /**
- * Share of the view the pinned strip occupies.
+ * Week as seven day lanes (design W3).
  *
- * A fixed band rather than height-to-content, and that is the point of it: the
- * columns are a comparison, so they only compare if the space they are drawn in
- * is the same every week. It also means how full a column looks IS the day's
- * load, read against a constant, instead of against six neighbours that all
- * shrank together on a quiet week.
+ * Each day is one row: its date, a track with blocks at their real times, and
+ * the hours booked. All seven tracks share one time axis (eng review D2), so 9am
+ * lines up down the screen and the week reads like a heat map: busy mornings,
+ * free evenings, the day you will regret. Blocks are see-through (D11), so a
+ * clash shows as a darker patch.
  *
- * Under half so the list below still reads as the main content — a pane that
- * takes exactly half looks like a split screen, not a header.
+ * Every lane starts folded, as on Plan; tapping one lists the day inline (the
+ * same DayRowList and item row Plan uses) with the day's focus against its plan
+ * and each planned task's own focus (D3). A day with focus but nothing booked
+ * still opens, or that focus would be invisible here. A thin bar under each
+ * track keeps focus-against-plan comparable across the week without a tap (D9).
+ *
+ * Week lives inside the calendar tab's shared ScrollView now: its own scroller
+ * only existed to pin the old seven-column strip.
  */
-const STRIP_HEIGHT = '46%';
 
-/**
- * Week as seven pinned columns for comparison, then a scrolling card list.
- *
- * The strip answers "which day is emptiest" — load visible without reading
- * anything, and it always shows all seven, so an empty day is still visible as
- * an empty column. The cards below answer "what is actually on each day", for
- * every day that has anything: a week you have to tap through a day at a time is
- * a day view with extra steps.
- *
- * The strip stays put while those cards scroll, which is why this owns a
- * ScrollView instead of sitting inside the calendar tab's shared one — a header
- * can only be pinned by the scroll container it is a sibling of. That is also
- * why pull-to-refresh is a prop: the RefreshControl has to live on whichever
- * ScrollView the user is actually dragging.
- *
- * It used to show a single card for whichever column you tapped. That made six
- * of the seven days invisible until you went looking for them, and the one day
- * you most want to see — today — was only the default until you touched
- * anything. Today now pops instead of being selected, so it stays found.
- */
+/** Left column (day and date) and right column (hours) of a lane. */
+const LABEL_WIDTH = 40;
+const META_WIDTH = 48;
+const GAP = 10;
+const CHEVRON_WIDTH = 14;
+/** A block is never drawn thinner than this, so a short meeting stays visible. */
+const MIN_BLOCK_PX = 3;
+/** See-through blocks: overlap reads darker (D11). */
+const BLOCK_OPACITY = 0.55;
+
+interface LaneRow extends WeekRow {
+  plan: DayPlanVsActual;
+  focusCount: number;
+}
+
+function anytimeLabel(anytime: number, notes: number): string {
+  if (anytime > 0) return `+${anytime} any`;
+  if (notes > 0) return `${notes} note${notes === 1 ? '' : 's'}`;
+  return '';
+}
+
+/** Focused against planned under the track: fills by the plan's share that got focus, lighter for unplanned-only. */
+function FocusBar({ totals }: { totals: DayPlanVsActual['totals'] }) {
+  const Colors = useTheme();
+  const { plannedMinutes, focusedSeconds } = totals;
+  const share = plannedMinutes > 0 ? Math.min(1, focusedSeconds / (plannedMinutes * 60)) : focusedSeconds > 0 ? 1 : 0;
+  return (
+    <View style={{ height: 3, borderRadius: 2, marginTop: 3, backgroundColor: Colors.inactive, overflow: 'hidden' }}>
+      <View style={{
+        width: `${share * 100}%`, height: 3,
+        backgroundColor: plannedMinutes > 0 ? Colors.primary : Colors.primarySoft,
+      }} />
+    </View>
+  );
+}
+
+function Track({ items, axis, nowAt, totals, showFocus }: {
+  items: CalendarItem[];
+  axis: LaneAxis;
+  /** 0-1 position of "now" on today's lane, else null. */
+  nowAt: number | null;
+  totals: DayPlanVsActual['totals'];
+  showFocus: boolean;
+}) {
+  const Colors = useTheme();
+  const { segments } = laneSummary(items, axis);
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{
+        height: 22, borderRadius: 6, backgroundColor: Colors.surface,
+        borderWidth: 1, borderColor: Colors.border, overflow: 'hidden',
+      }}>
+        {segments.map((s) => (
+          <View
+            key={s.key}
+            style={{
+              position: 'absolute', top: 3, bottom: 3, borderRadius: 3,
+              left: `${s.left * 100}%`, width: `${s.width * 100}%`, minWidth: MIN_BLOCK_PX,
+              backgroundColor: typeColor(s.type, Colors), opacity: BLOCK_OPACITY,
+            }}
+          />
+        ))}
+        {nowAt !== null && (
+          <View style={{ position: 'absolute', top: 0, bottom: 0, width: 2, left: `${nowAt * 100}%`, backgroundColor: Colors.ROSE }} />
+        )}
+      </View>
+      {showFocus && <FocusBar totals={totals} />}
+    </View>
+  );
+}
+
 export default function WeekView({
   start,
   itemsByDate,
-  onDayPress,
-  onToggleNote,
-  refreshing,
-  onRefresh,
   sessions = [],
+  focusError = null,
+  onRetryFocus,
+  highlight,
+  onDayPress,
+  onItemPress,
+  onToggleNote,
 }: {
   start: Date;
   itemsByDate: Map<string, CalendarItem[]>;
-  /** Focus sessions for the week; each column shows focused against planned. */
+  /** Focus sessions for the week. */
   sessions?: TimelineSession[];
+  /** Set when the sessions could not be loaded; focus figures hide rather than read 0 (D12). */
+  focusError?: string | null;
+  onRetryFocus?: () => void;
+  /** A task just saved here: its lane opens and its row tints. */
+  highlight: PlanHighlight | null;
   onDayPress: (date: string) => void;
+  onItemPress: (item: CalendarItem) => void;
   onToggleNote: (note: Note) => void;
-  refreshing: boolean;
-  onRefresh: () => void;
 }) {
   const Colors = useTheme();
-  const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
-  const todayKey = getLocalDateString();
-  const days = useMemo(() => eachDayOfRange(start, addDays(start, 6)), [start]);
+  // Read per render, never captured: the tab stays mounted across days.
+  const now = new Date();
+  const todayKey = getLocalDateString(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-  // Only the days with something on them get a card. A card reading "Nothing on
-  // this day" costs a full box of vertical space to say the week strip above it
-  // has already said with an empty column — and on a quiet week it said it six
-  // times, pushing the days that DO have something off the screen.
-  //
-  // `items.length` is the test, not `countsTowardLoad`: a day holding only notes
-  // has something on it. See the note on countsTowardLoad in lib/calendarItems.
-  const totalsByDay = useMemo(() => {
-    const map = new Map<string, DayPlanVsActual['totals']>();
-    for (const dateKey of days) {
-      const dayItems = itemsByDate.get(dateKey) ?? [];
-      map.set(dateKey, planVsActual(dateKey, plannedBlocksFromCalendar(dayItems), sessions).totals);
-    }
-    return map;
-  }, [days, itemsByDate, sessions]);
-
-  const busyDays = useMemo(
-    () => days
-      .map((dateKey) => ({ dateKey, items: itemsByDate.get(dateKey) ?? [] }))
-      .filter(({ items }) => items.length > 0),
-    [days, itemsByDate],
+  const dayKeys = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => getLocalDateString(addDays(start, i))),
+    [start],
   );
+  const axis = useMemo(() => weekAxis(dayKeys, itemsByDate), [dayKeys, itemsByDate]);
+  const span = axis.end - axis.start;
+  const ticks = axisTicks(axis);
+  const focusUnavailable = !!focusError && sessions.length === 0;
+
+  const rows: LaneRow[] = useMemo(() => weekRows(dayKeys, itemsByDate, todayKey, { allDays: true }).map((row) => {
+    const daySessions = sessions.filter((s) => s.localDate === row.key);
+    return {
+      ...row,
+      plan: planVsActual(row.key, plannedBlocksFromCalendar(row.items), daySessions),
+      focusCount: daySessions.length,
+    };
+  }), [dayKeys, itemsByDate, todayKey, sessions]);
+
+  const weekBooked = rows.reduce((sum, r) => sum + r.booked, 0);
+  const sideInset = { marginLeft: LABEL_WIDTH + GAP, marginRight: GAP + META_WIDTH + GAP + CHEVRON_WIDTH };
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* ── Seven pinned columns ──────────────────────────────────────── */}
-      <View style={{
-        height: STRIP_HEIGHT,
-        flexDirection: 'row',
-        gap: 5,
-        paddingHorizontal: 10,
-        paddingBottom: 12,
-        // The list scrolls under this, so the band needs an edge of its own or
-        // cards appear to slide out of nowhere.
-        borderBottomWidth: 1,
-        borderBottomColor: Colors.border,
-        backgroundColor: Colors.bg,
-      }}>
-        {days.map((dateKey) => {
-          const dayItems = itemsByDate.get(dateKey) ?? [];
-          // Commitments first, then what you wrote about the day. Notes were
-          // filtered out here entirely, so a day carrying three notes and
-          // nothing else showed an empty column.
-          const cards = [
-            ...dayItems.filter(countsTowardLoad),
-            ...dayItems.filter(isNote),
-          ];
-          const day = parseLocalDate(dateKey);
-          const isToday = dateKey === todayKey;
-          const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-          const hidden = cards.length - MAX_COLUMN_CARDS;
-          const totals = totalsByDay.get(dateKey);
-
-          return (
-            <TouchableOpacity
-              key={dateKey}
-              onPress={() => onDayPress(dateKey)}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`${day.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}, ${cards.length} items${totals ? `, ${focusLabel(totals)}` : ''}. Open in Day view`}
-              style={{
-                flex: 1, minWidth: 0, borderRadius: 12, paddingBottom: 4,
-                backgroundColor: isToday ? Colors.primaryDim : 'transparent',
-                opacity: isWeekend && !isToday ? 0.55 : 1,
-              }}
-            >
-              <View style={{ alignItems: 'center', paddingVertical: 8 }}>
-                <Text style={{
-                  fontSize: 9, fontWeight: '700',
-                  color: isToday ? Colors.primarySoft : Colors.subtext,
-                }}>
-                  {day.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3).toUpperCase()}
-                </Text>
-                <Text style={{
-                  fontSize: 13, fontWeight: isToday ? '700' : '600', marginTop: 1,
-                  color: isToday ? Colors.primarySoft : Colors.textBright,
-                }}>
-                  {day.getDate()}
-                </Text>
-                {totals && <PlanBar totals={totals} />}
-              </View>
-
-              {/* Cards take whatever the band has left, and clip rather than
-                  push. A phone short enough to cut the last card still gets a
-                  strip that ends where the band ends, which is the whole point
-                  of a fixed band — and the count below stays visible because it
-                  sits outside this box. */}
-              <View style={{ flex: 1, overflow: 'hidden' }}>
-                {cards.slice(0, MAX_COLUMN_CARDS).map((item, idx) => (
-                  <View
-                    key={calendarItemKey(item)}
-                    style={{
-                      backgroundColor: Colors.surface,
-                      borderWidth: 1,
-                      borderColor: idx === 0 && isToday ? Colors.primary : Colors.border,
-                      borderRadius: 9,
-                      paddingHorizontal: 5, paddingVertical: 7,
-                      marginHorizontal: isToday ? 4 : 0,
-                      marginBottom: 5,
-                    }}
-                  >
-                    <View style={{
-                      height: 3, borderRadius: 2, marginBottom: 4,
-                      backgroundColor: typeColor(item.type, Colors),
-                    }} />
-                    <Text
-                      numberOfLines={2}
-                      style={{
-                        fontSize: 10, lineHeight: 12.5,
-                        color: itemIsDone(item) ? Colors.subtext : Colors.text,
-                        textDecorationLine: itemIsDone(item) ? 'line-through' : 'none',
-                      }}
-                    >
-                      {itemTitle(item)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              {hidden > 0 && (
-                <Text style={{
-                  fontSize: 9, textAlign: 'center', color: Colors.subtext,
-                  marginHorizontal: isToday ? 4 : 0, paddingTop: 2,
-                }}>
-                  +{hidden}
-                </Text>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* ── The scrolling half ────────────────────────────────────────── */}
-      <ScrollView
-        contentContainerStyle={{ paddingTop: 14, paddingBottom: 120 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
-        }
-      >
-        {/* One card per day that has something on it. */}
-        {busyDays.map(({ dateKey, items }) => (
-          <DayCard
-            key={dateKey}
-            dateKey={dateKey}
-            isToday={dateKey === todayKey}
-            items={items}
-            onDayPress={onDayPress}
-            onToggleNote={onToggleNote}
-          />
-        ))}
-
-      {/* One line for a wholly empty week. Dropping the per-day cards must not
-          leave the section blank under a strip of seven empty columns — that
-          reads as a screen that failed to load rather than a free week. */}
-        {busyDays.length === 0 && (
-          <View style={{ paddingHorizontal: 16 }}>
-            <View style={styles.emptyBox}>
-              <Ionicons name="calendar-clear-outline" size={26} color={Colors.subtext} />
-              <Text style={{ color: Colors.subtext, marginTop: 6, fontSize: 13 }}>
-                Nothing planned this week. Tap a day to add something.
-              </Text>
-            </View>
-          </View>
-        )}
-      </ScrollView>
-    </View>
-  );
-}
-
-/** "52m of 3h focused", for the column's spoken label. */
-function focusLabel(totals: DayPlanVsActual['totals']): string {
-  return totals.plannedMinutes > 0
-    ? `${compactDuration(totals.focusedSeconds)} of ${compactDuration(totals.plannedMinutes * 60)} focused`
-    : `${compactDuration(totals.focusedSeconds)} focused`;
-}
-
-/**
- * Focused against planned in a column: "52m/3h" over a thin bar. The bar fills
- * by the share of the plan that got focus, and is lighter when the focus went
- * to unplanned work only. Nothing on a day with neither.
- */
-function PlanBar({ totals }: { totals: DayPlanVsActual['totals'] }) {
-  const Colors = useTheme();
-  const { plannedMinutes, focusedSeconds } = totals;
-  if (plannedMinutes === 0 && focusedSeconds === 0) return null;
-  const share = plannedMinutes > 0 ? Math.min(1, focusedSeconds / (plannedMinutes * 60)) : 1;
-  return (
-    <View style={{ alignSelf: 'stretch', marginTop: 4, paddingHorizontal: 3 }} accessible={false}>
-      <Text numberOfLines={1} style={{ fontSize: 8, textAlign: 'center', color: Colors.subtext, fontVariant: ['tabular-nums'] }}>
-        {compactDuration(focusedSeconds)}
-        {plannedMinutes > 0 ? `/${compactDuration(plannedMinutes * 60)}` : ''}
+    <View style={{ paddingHorizontal: 16, paddingTop: 4 }}>
+      <Text style={{ color: Colors.subtext, fontSize: 11, textAlign: 'center', marginBottom: 8 }}>
+        {weekBooked > 0 ? `${hoursLabel(weekBooked)} booked` : 'Nothing booked this week'}
       </Text>
-      <View style={{ height: 3, borderRadius: 2, marginTop: 2, backgroundColor: Colors.border, overflow: 'hidden' }}>
-        <View style={{
-          width: `${share * 100}%`, height: 3,
-          backgroundColor: plannedMinutes > 0 ? Colors.primary : Colors.primarySoft,
-        }} />
-      </View>
-    </View>
-  );
-}
 
-/**
- * One day's detail. Only rendered for a day that has something on it, so this
- * never has to draw an empty state — see `busyDays` above.
- *
- * Today gets an accent border and a primary-tinted glow — the same treatment the
- * home tab uses for a selected card — plus a TODAY chip, so it is findable in a
- * stack of cards without having to read the dates.
- */
-function DayCard({
-  dateKey,
-  isToday,
-  items,
-  onDayPress,
-  onToggleNote,
-}: {
-  dateKey: string;
-  isToday: boolean;
-  items: CalendarItem[];
-  onDayPress: (date: string) => void;
-  onToggleNote: (note: Note) => void;
-}) {
-  const Colors = useTheme();
-  const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
-
-  const scheduled = items.filter(countsTowardLoad);
-  // EVERY note, not just the to-dos. Filtering to `isTodo` here meant a plain
-  // note — the kind you write precisely so you will see it on the day — was
-  // unreachable from Week view entirely.
-  const notes = items.filter(isNote).map((i) => i.data as Note);
-  const count = scheduled.length + notes.length;
-
-  const day = parseLocalDate(dateKey);
-  const weekday = day.toLocaleDateString(undefined, { weekday: 'long' }).toUpperCase();
-
-  return (
-    <View
-      style={{
-        marginHorizontal: 16, marginBottom: 10, padding: 15,
-        backgroundColor: Colors.surface,
-        borderWidth: isToday ? 1.5 : 1,
-        borderColor: isToday ? Colors.primary : Colors.border,
-        borderRadius: 16,
-        // Android ignores shadowOpacity and reads elevation, so both are set.
-        ...(isToday
-          ? { shadowColor: Colors.primary, shadowOpacity: 0.5, shadowRadius: 10, elevation: 5 }
-          : {}),
-      }}
-    >
-      <TouchableOpacity
-        onPress={() => onDayPress(dateKey)}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel={`${isToday ? 'Today, ' : ''}${day.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}, ${count} items. Open in Day view`}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}
-      >
-        {isToday && (
-          <View style={{
-            backgroundColor: Colors.primaryDim, borderRadius: 5,
-            paddingHorizontal: 5, paddingVertical: 2,
-          }}>
-            <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.8, color: Colors.primarySoft }}>
-              TODAY
-            </Text>
-          </View>
-        )}
-        <Text
-          numberOfLines={1}
-          style={{
-            flex: 1, fontSize: 10, fontWeight: '700', letterSpacing: 1,
-            color: isToday ? Colors.primarySoft : Colors.subtext,
-          }}
+      {focusUnavailable && (
+        <TouchableOpacity
+          onPress={onRetryFocus}
+          disabled={!onRetryFocus}
+          accessibilityRole="button"
+          accessibilityLabel="Focus time unavailable. Retry"
+          style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 }}
         >
-          {weekday} {day.getDate()}
-          {' · '}
-          {count}
-          {count === 1 ? ' ITEM' : ' ITEMS'}
-        </Text>
-        <Ionicons name="chevron-forward" size={13} color={Colors.subtext} />
-      </TouchableOpacity>
+          <Ionicons name="cloud-offline-outline" size={14} color={Colors.subtext} />
+          <Text style={{ color: Colors.subtext, fontSize: 12 }}>
+            Focus time unavailable · <Text style={{ color: Colors.primarySoft, fontWeight: '600' }}>Retry</Text>
+          </Text>
+        </TouchableOpacity>
+      )}
 
-      {scheduled.map((item, idx) => {
-        const range = itemTimeRange(item);
-        const done = itemIsDone(item);
-        return (
-          <View
-            key={calendarItemKey(item)}
+      {/* One axis for every lane: labels positioned over the track column. */}
+      <View style={[sideInset, { height: 14 }]} importantForAccessibility="no-hide-descendants">
+        {span > 0 && ticks.map((t) => (
+          <Text
+            key={t.minutes}
             style={{
-              flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8,
-              borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: Colors.border,
+              position: 'absolute', left: `${t.at * 100}%`, fontSize: 9, color: Colors.subtext,
+              transform: [{ translateX: t.at === 0 ? 0 : -10 }],
             }}
           >
-            <View style={{
-              width: 3, height: 14, borderRadius: 2,
-              backgroundColor: typeColor(item.type, Colors),
-            }} />
-            <Text
-              numberOfLines={1}
-              style={{
-                flex: 1, fontSize: 13,
-                color: done ? Colors.subtext : Colors.text,
-                textDecorationLine: done ? 'line-through' : 'none',
-              }}
-            >
-              {itemTitle(item)}
-            </Text>
-            {range && (
-              <Text style={{ fontSize: 10, color: Colors.subtext }}>
-                {formatMinutes(range.start)}
-              </Text>
-            )}
-          </View>
-        );
-      })}
+            {formatMinutes(t.minutes).replace(':00', '')}
+          </Text>
+        ))}
+      </View>
 
-      {/* To-dos stay toggleable here — the previous layout allowed it and
-          losing it would be a regression dressed up as a redesign. A plain
-          note is not a checkbox, so it renders as a row rather than being
-          given a control that would do nothing. */}
-      {notes.map((note) => (
-        note.isTodo ? (
-          <TouchableOpacity
-            key={note.id}
-            onPress={() => onToggleNote(note)}
-            style={styles.todoRow}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: note.isCompleted }}
-          >
-            <Ionicons
-              name={note.isCompleted ? 'checkbox' : 'square-outline'}
-              size={15}
-              color={note.isCompleted ? Colors.accent : Colors.subtext}
-            />
-            <Text
-              numberOfLines={1}
-              style={{
-                flex: 1, fontSize: 12,
-                color: note.isCompleted ? Colors.subtext : Colors.text,
-                textDecorationLine: note.isCompleted ? 'line-through' : 'none',
-              }}
-            >
-              {note.content}
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <View key={note.id} style={styles.todoRow} accessibilityRole="text">
-            <Ionicons name="document-text-outline" size={14} color={Colors.subtext} />
-            <Text numberOfLines={2} style={{ flex: 1, fontSize: 12, color: Colors.text }}>
-              {note.content}
-            </Text>
-          </View>
-        )
-      ))}
+      <DayRowList
+        key={dayKeys[0]}
+        rows={rows}
+        highlight={highlight}
+        onItemPress={onItemPress}
+        onToggleNote={onToggleNote}
+        onOpenDay={onDayPress}
+        expandedIndent={LABEL_WIDTH + GAP}
+        isExpandable={(row) => row.items.length > 0 || row.focusCount > 0}
+        a11ySummary={(row) => {
+          const { anytimeCount, noteCount } = laneSummary(row.items, axis);
+          const focus = focusUnavailable ? null : summaryLine(row.plan.totals);
+          return [
+            dayName(row.key, 'long'),
+            row.key === todayKey ? 'today' : null,
+            row.booked > 0 ? `${hoursLabel(row.booked)} booked` : 'nothing booked',
+            anytimeCount > 0 ? `${anytimeCount} without a time` : null,
+            noteCount > 0 ? `${noteCount} note${noteCount === 1 ? '' : 's'}` : null,
+            focus,
+          ].filter(Boolean).join(', ');
+        }}
+        renderSummary={(row) => {
+          const day = parseLocalDate(row.key);
+          const isToday = row.key === todayKey;
+          const isPast = row.key < todayKey;
+          const { anytimeCount, noteCount } = laneSummary(row.items, axis);
+          const nowAt = isToday && span > 0 && nowMinutes >= axis.start && nowMinutes <= axis.end
+            ? (nowMinutes - axis.start) / span : null;
+          return (
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: GAP, opacity: isPast ? 0.5 : 1 }}>
+              <View style={{ width: LABEL_WIDTH }}>
+                <Text style={{ fontSize: 9.5, fontWeight: '700', color: isToday ? Colors.AMBER : Colors.subtext }}>
+                  {day.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3).toUpperCase()}
+                </Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: isToday ? Colors.AMBER : Colors.textBright }}>
+                  {day.getDate()}
+                </Text>
+              </View>
+              <Track
+                items={row.items}
+                axis={axis}
+                nowAt={nowAt}
+                totals={row.plan.totals}
+                showFocus={!focusUnavailable}
+              />
+              <View style={{ width: META_WIDTH, alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 11, color: row.booked > 0 ? Colors.textBright : Colors.subtext, fontVariant: ['tabular-nums'] }}>
+                  {row.booked > 0 ? hoursLabel(row.booked) : '–'}
+                </Text>
+                <Text style={{ fontSize: 9.5, color: Colors.subtext }}>{anytimeLabel(anytimeCount, noteCount)}</Text>
+              </View>
+            </View>
+          );
+        }}
+        renderExpandedHeader={(row) => {
+          const line = focusUnavailable ? null : summaryLine(row.plan.totals);
+          return line ? (
+            <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600', paddingTop: 4 }}>{line}</Text>
+          ) : null;
+        }}
+        itemTrailing={(item, row) => {
+          if (focusUnavailable || (item.type !== 'task' && item.type !== 'habit_instance')) return null;
+          const focus = taskFocusOnDay(row.plan, (item.data as Task).id);
+          if (!focus || focus.plannedMinutes === null || focus.seconds === 0) return null;
+          return `${formatSeconds(focus.seconds)}/${formatSeconds(focus.plannedMinutes * 60)}`;
+        }}
+      />
     </View>
   );
 }

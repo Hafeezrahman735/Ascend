@@ -113,27 +113,8 @@ export function getCalendarStyles(Colors: ThemeColors) {
       backgroundColor: Colors.ROSE_DIM,
     },
     warnText: { color: Colors.ROSE, fontSize: 11, flex: 1 },
-    monthCell: { height: 62, alignItems: 'center', paddingTop: 6 },
-    weekRow: {
-      backgroundColor: Colors.surface, borderRadius: 12, padding: 10, marginBottom: 8,
-      borderWidth: 1, borderColor: Colors.border,
-    },
-    weekRowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
     itemRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7 },
     todoRow: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 4 },
-    groupHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-    groupTitle: { color: Colors.textBright, fontSize: 13, fontWeight: '700', flex: 1 },
-    noteRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9,
-      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border,
-    },
-    addRow: { flexDirection: 'row', gap: 8, marginVertical: 8 },
-    addInput: {
-      flex: 1, backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12,
-      paddingVertical: 9, color: Colors.text, fontSize: 13,
-      borderWidth: 1, borderColor: Colors.border,
-    },
-    addBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
     emptyBox: { alignItems: 'center', paddingVertical: 34, backgroundColor: Colors.surface, borderRadius: 12 },
     /** Section label used by the Plan screen: ALSO TODAY, UNSCHEDULED. */
     sectionLabel: {

@@ -75,7 +75,9 @@ export function formDate(task: Task | null): string | null {
  *
  * New tasks start with no due date: a date is a commitment the user picks, not
  * a default. Pre-filling today made every task look due today, and a task left
- * on that default read as overdue the next morning.
+ * on that default read as overdue the next morning. The one exception is a
+ * prefill the user asked for by context — + Task on a calendar Day view, where
+ * the day is already chosen.
  */
 export function initialFields(task: Task | null, prefill?: TaskFormPrefill): TaskFormFields {
   const fields: TaskFormFields = {

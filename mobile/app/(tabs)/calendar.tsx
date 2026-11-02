@@ -18,6 +18,7 @@ import { useTaskForm, type TaskFormChange } from '../../hooks/useTaskForm';
 import type { Slot } from '../../lib/planScreen';
 import SessionsSheet, { type SessionsTarget } from '../../components/timeReport/SessionsSheet';
 import { planVsActual, plannedBlocksFromCalendar } from '../../lib/planVsActual';
+import { taskFocusOnDay } from '../../lib/calendarViews';
 import { taskForCalendarItem, completionToggleFor } from '../../lib/calendarTask';
 import {
   getLocalDateString, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
@@ -49,7 +50,6 @@ export default function CalendarScreen() {
   const [viewMode, setViewMode] = useState<CalendarViewMode>('planning');
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
-  const [noteDraft, setNoteDraft] = useState('');
 
   // One piece of state per sheet, holding both "is it open" and "what is it
   // editing". Two separate flags could disagree — open with nothing to edit, or
@@ -166,21 +166,6 @@ export default function CalendarScreen() {
     [updateNote],
   );
 
-  const handleAddNote = useCallback(async () => {
-    const content = noteDraft.trim();
-    if (!content) return;
-    setNoteDraft('');
-    // Pinned to the focused day so it appears where the user typed it.
-    await createNote({ content, date: getLocalDateString(anchorDate), isTodo: true });
-  }, [noteDraft, anchorDate, createNote]);
-
-  const handleDeleteNote = useCallback((note: Note) => {
-    Alert.alert('Delete note?', note.content.slice(0, 80), [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteNote(note.id) },
-    ]);
-  }, [deleteNote]);
-
   const weekStart = useMemo(
     () => startOfWeek(anchorDate, weekStartsOn),
     [anchorDate, weekStartsOn],
@@ -264,13 +249,13 @@ export default function CalendarScreen() {
     if (!taskSheet) return undefined;
     const { task, date } = taskSheet;
     const plan = planVsActual(date, plannedBlocksFromCalendar(itemsByDate.get(date) ?? []), timeline.sessions);
-    const fill = plan.fills.find((f) => f.block.taskId === task.id);
-    const sessions = fill?.sessions ?? plan.unplanned.filter((s) => s.taskId === task.id);
+    // The same helper as the Week lane's "52m/1h30", so the two always agree.
+    const focus = taskFocusOnDay(plan, task.id);
     return {
       dayLabel: dayLabelFor(date),
-      seconds: sessions.reduce((sum, s) => sum + s.durationSeconds, 0),
-      sessions: sessions.length,
-      plannedMinutes: fill ? fill.block.endMinutes - fill.block.startMinutes : null,
+      seconds: focus?.seconds ?? 0,
+      sessions: focus?.sessions ?? 0,
+      plannedMinutes: focus?.plannedMinutes ?? null,
     };
   }, [taskSheet, itemsByDate, timeline.sessions, dayLabelFor]);
 
@@ -346,9 +331,15 @@ export default function CalendarScreen() {
   const taskForm = useTaskForm({ onChanged: handleTaskChanged });
   const { openCreate: openTaskCreate, openEdit: openTaskEdit } = taskForm;
 
-  const handleAdd = useCallback((kind: AddKind, date?: string) => {
-    // D8: a new task starts with no date, as on Today; it lands in Unscheduled.
-    if (kind === 'task') openTaskCreate();
+  /**
+   * + Task / + Event / + Note. Events and notes open on `date` when given. A
+   * task starts with no date (D8, as on Today and Plan) unless the caller asks
+   * for it: only Day view does, because there the day is already chosen. An
+   * explicit flag, not "a date was passed" — Month passes its selected day for
+   * events and notes and must keep tasks dateless.
+   */
+  const handleAdd = useCallback((kind: AddKind, date?: string, opts?: { taskOnDate?: boolean }) => {
+    if (kind === 'task') openTaskCreate(opts?.taskOnDate && date ? { dueDate: date } : undefined);
     else if (kind === 'event') setEventSheet({ event: null, date });
     else setNoteSheet({ note: null, date });
   }, [openTaskCreate]);
@@ -413,22 +404,6 @@ export default function CalendarScreen() {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={Colors.primary} />
         </View>
-      ) : viewMode === 'week' ? (
-        // Week view scrolls itself, so it sits OUTSIDE the shared ScrollView
-        // below. Its seven-column strip is pinned while the day cards scroll
-        // under it, and a header can only be pinned by the scroll container it
-        // is a sibling of — nested inside this one it would just scroll away.
-        // It takes the RefreshControl's props for the same reason: pull-to-
-        // refresh has to live on whichever ScrollView is being dragged.
-        <WeekView
-          start={weekStart}
-          itemsByDate={itemsByDate}
-          sessions={timeline.sessions}
-          onDayPress={openDay}
-          onToggleNote={toggleNote}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-        />
       ) : (
         <ScrollView
           contentContainerStyle={{ paddingBottom: 120 }}
@@ -436,6 +411,19 @@ export default function CalendarScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
           }
         >
+          {viewMode === 'week' && (
+            <WeekView
+              start={weekStart}
+              itemsByDate={itemsByDate}
+              sessions={timeline.sessions}
+              focusError={timeline.error}
+              onRetryFocus={timeline.reload}
+              highlight={highlight}
+              onDayPress={openDay}
+              onItemPress={handleItemPress}
+              onToggleNote={toggleNote}
+            />
+          )}
           {viewMode === 'month' && (
             <MonthView
               anchorDate={anchorDate}
@@ -449,11 +437,8 @@ export default function CalendarScreen() {
             <DayView
               dateKey={getLocalDateString(anchorDate)}
               itemsByDate={itemsByDate}
-              noteDraft={noteDraft}
-              onNoteDraftChange={setNoteDraft}
-              onAddNote={handleAddNote}
+              onAdd={(kind) => handleAdd(kind, getLocalDateString(anchorDate), { taskOnDate: true })}
               onToggleNote={toggleNote}
-              onDeleteNote={handleDeleteNote}
               onItemPress={handleItemPress}
               sessions={timeline.sessions}
               focusError={timeline.error}
@@ -469,6 +454,7 @@ export default function CalendarScreen() {
               onAdd={handleAdd}
               onOpenDay={openDay}
               onItemPress={handleItemPress}
+              onToggleNote={toggleNote}
               onOpenTask={openUnscheduledTask}
               onStartFocus={loadTaskIntoTimer}
               onFindSlot={handleFindSlot}

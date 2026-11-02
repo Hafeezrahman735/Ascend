@@ -1,20 +1,20 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
+import { useMemo, type ReactNode } from 'react';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
 import { useTaskStore } from '../../stores/taskStore';
-import type { CalendarItem, Task } from '../../types';
+import type { CalendarItem, Note, Task } from '../../types';
 import { addDays, getLocalDateString, parseLocalDate } from '../../utils/date';
-import {
-  getCalendarStyles, formatMinutes, formatSeconds, itemTimeRange, itemTitle, itemIsDone,
-  calendarItemKey, typeColor,
-} from './shared';
+import { getCalendarStyles, formatMinutes, itemTimeRange, calendarItemKey, typeColor } from './shared';
 import { weekTasksToWorkOn } from '../../lib/planningTasks';
 import { topTasks } from '../../lib/taskBoard';
 import {
   alsoToday, findSlot, nextUp, weekBreakdown, weekPosition, weekRows, type Slot, type WeekRow,
 } from '../../lib/planScreen';
 import AddRow, { type AddKind } from './AddRow';
+import { DayRowList, dayName, hoursLabel, type PlanHighlight } from './DayRows';
+
+export type { PlanHighlight } from './DayRows';
 
 /**
  * The Plan screen, the Calendar tab's landing view (design G).
@@ -31,25 +31,6 @@ import AddRow, { type AddKind } from './AddRow';
 
 /** Rows the Also today list shows before "+N more". */
 const MAX_ALSO_TODAY = 5;
-/** How long a just-saved task's row stays tinted (design DR3). */
-const HIGHLIGHT_MS = 1500;
-const HIGHLIGHT_FADE_MS = 400;
-
-export interface PlanHighlight {
-  date: string;
-  taskId: string;
-}
-
-function dayName(dateKey: string, style: 'short' | 'long' = 'short'): string {
-  return parseLocalDate(dateKey).toLocaleDateString(undefined, style === 'short'
-    ? { weekday: 'short', day: 'numeric' }
-    : { weekday: 'long', month: 'long', day: 'numeric' });
-}
-
-function hoursLabel(minutes: number): string {
-  return formatSeconds(minutes * 60);
-}
-
 function SectionHeader({ label, count, trailing }: { label: string; count?: number; trailing?: string }) {
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
@@ -238,196 +219,22 @@ function TodayCard({ todayKey, todayItems, nowMinutes, fallback, onOpenDay, onSt
   );
 }
 
-// ── Item rows ─────────────────────────────────────────────────
-
-/** Whether a tap on this item opens a sheet (events, notes and tasks do). */
-function opensSheet(item: CalendarItem): boolean {
-  return item.type === 'event' || item.type === 'note' || item.type === 'task' || item.type === 'habit_instance';
-}
-
-function itemA11yLabel(item: CalendarItem): string {
-  const kind = item.type === 'note' ? 'Note' : item.type === 'habit_instance' ? 'Recurring task'
-    : item.type === 'task' ? 'Task' : item.type === 'goal_deadline' ? 'Goal deadline' : 'Event';
-  const range = itemTimeRange(item);
-  return `${kind}: ${itemTitle(item)}${range ? `, ${formatMinutes(range.start)}` : ''}${itemIsDone(item) ? ', done' : ''}`;
-}
-
-/** A row tinted for a moment after its task was just saved here (DR3). */
-function HighlightTint({ active }: { active: boolean }) {
-  const Colors = useTheme();
-  // Lazy state, not a ref: the value is created once and read during render.
-  const [opacity] = useState(() => new Animated.Value(active ? 1 : 0));
-  useEffect(() => {
-    if (!active) return;
-    opacity.setValue(1);
-    const anim = Animated.timing(opacity, {
-      toValue: 0, duration: HIGHLIGHT_FADE_MS, delay: HIGHLIGHT_MS - HIGHLIGHT_FADE_MS,
-      easing: Easing.out(Easing.quad), useNativeDriver: true,
-    });
-    anim.start();
-    return () => anim.stop();
-  }, [active, opacity]);
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={{
-        position: 'absolute', top: 0, bottom: 0, left: -6, right: -6,
-        borderRadius: 8, backgroundColor: Colors.primaryDim, opacity,
-      }}
-    />
-  );
-}
-
-function ItemRow({ item, onPress, highlighted }: {
-  item: CalendarItem;
-  onPress: (item: CalendarItem) => void;
-  highlighted: boolean;
-}) {
-  const Colors = useTheme();
-  const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
-  const range = itemTimeRange(item);
-  const done = itemIsDone(item);
-  const body = (
-    <>
-      <HighlightTint active={highlighted} />
-      <Stripe color={typeColor(item.type, Colors)} />
-      <Text
-        style={{ flex: 1, fontSize: 13, color: done ? Colors.subtext : Colors.text, textDecorationLine: done ? 'line-through' : 'none' }}
-        numberOfLines={1}
-      >
-        {itemTitle(item)}
-      </Text>
-      {item.type === 'habit_instance' && <Ionicons name="repeat" size={12} color={Colors.subtext} />}
-      <Text style={{ fontSize: 11, color: Colors.subtext }}>{range ? formatMinutes(range.start) : ''}</Text>
-    </>
-  );
-  if (!opensSheet(item)) {
-    return <View style={[styles.itemRow, { minHeight: 44 }]} accessible accessibilityLabel={itemA11yLabel(item)}>{body}</View>;
-  }
-  return (
-    <TouchableOpacity
-      onPress={() => onPress(item)}
-      accessibilityRole="button"
-      accessibilityLabel={itemA11yLabel(item)}
-      style={[styles.itemRow, { minHeight: 44 }]}
-    >
-      {body}
-    </TouchableOpacity>
-  );
-}
-
 // ── Week rows (DR8, DR9) ──────────────────────────────────────
-
-function DayRow({ row, expanded, onToggle, onItemPress, onOpenDay, highlight }: {
-  row: WeekRow;
-  expanded: boolean;
-  onToggle: () => void;
-  onItemPress: (item: CalendarItem) => void;
-  onOpenDay: (date: string) => void;
-  highlight: PlanHighlight | null;
-}) {
-  const Colors = useTheme();
-  const expandable = row.items.length > 0;
-  const [turn] = useState(() => new Animated.Value(expanded ? 1 : 0));
-  useEffect(() => {
-    Animated.timing(turn, { toValue: expanded ? 1 : 0, duration: 150, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
-  }, [expanded, turn]);
-  const rotate = useMemo(
-    () => turn.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '90deg'] }),
-    [turn],
-  );
-  const count = row.items.length;
-  const countLabel = count === 0 ? 'Nothing' : `${count} item${count === 1 ? '' : 's'}`;
-  const booked = row.booked > 0 ? hoursLabel(row.booked) : '—';
-
-  const header = (
-    <>
-      <View style={{ width: 54 }}>
-        <Text style={{ color: Colors.textBright, fontSize: 12.5, fontWeight: '700' }}>{dayName(row.key)}</Text>
-        <Text style={{ color: Colors.subtext, fontSize: 10 }}>{booked}</Text>
-      </View>
-      <View style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: Colors.inactive, overflow: 'hidden' }}>
-        <View style={{ width: `${row.barFraction * 100}%`, height: '100%', backgroundColor: Colors.primary }} />
-      </View>
-      <Text style={{ color: Colors.subtext, fontSize: 11, minWidth: 52, textAlign: 'right' }}>{countLabel}</Text>
-      <Animated.View style={{ width: 14, alignItems: 'center', transform: [{ rotate }], opacity: expandable ? 1 : 0 }}>
-        <Ionicons name="chevron-forward" size={13} color={Colors.subtext} />
-      </Animated.View>
-    </>
-  );
-
-  return (
-    <View>
-      {expandable ? (
-        <TouchableOpacity
-          onPress={onToggle}
-          accessibilityRole="button"
-          accessibilityState={{ expanded }}
-          accessibilityLabel={`${dayName(row.key, 'long')}, ${row.booked > 0 ? `${hoursLabel(row.booked)} booked` : 'nothing booked'}, ${countLabel}, ${expanded ? 'expanded' : 'collapsed'}`}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 }}
-        >
-          {header}
-        </TouchableOpacity>
-      ) : (
-        <View
-          accessible
-          accessibilityLabel={`${dayName(row.key, 'long')}, nothing on this day`}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, opacity: 0.6 }}
-        >
-          {header}
-        </View>
-      )}
-      {expanded && expandable && (
-        <View style={{ paddingLeft: 64, paddingBottom: 6 }}>
-          {row.items.map((item) => (
-            <ItemRow
-              key={calendarItemKey(item)}
-              item={item}
-              onPress={onItemPress}
-              highlighted={!!highlight && highlight.date === row.key && (item.data as { id?: string }).id === highlight.taskId}
-            />
-          ))}
-          <TouchableOpacity
-            onPress={() => onOpenDay(row.key)}
-            accessibilityRole="link"
-            accessibilityLabel={`Open ${dayName(row.key, 'long')} in Day view`}
-            style={{ minHeight: 44, justifyContent: 'center' }}
-          >
-            <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '700' }}>Open day ›</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
-  );
-}
 
 /**
  * Keyed by the week in its parent, so expansion state starts fresh (all
- * collapsed, DR9) on every week. A save highlight opens its own day (DR3).
+ * collapsed, DR9) on every week. The rows themselves are DayRowList, shared
+ * with Week view; this supplies Plan's strip: day, hours, load bar, count.
  */
-function WeekRowsSection({ rows, title, highlight, onItemPress, onOpenDay }: {
+function WeekRowsSection({ rows, title, highlight, onItemPress, onToggleNote, onOpenDay }: {
   rows: WeekRow[];
   title: string;
   highlight: PlanHighlight | null;
   onItemPress: (item: CalendarItem) => void;
+  onToggleNote: (note: Note) => void;
   onOpenDay: (date: string) => void;
 }) {
   const Colors = useTheme();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  // Adjusted during render rather than in an effect: a new highlight opens its
-  // day once, and the user can still collapse it afterwards.
-  const [seenHighlight, setSeenHighlight] = useState<PlanHighlight | null>(null);
-  if (highlight && highlight !== seenHighlight) {
-    setSeenHighlight(highlight);
-    if (rows.some((r) => r.key === highlight.date)) {
-      setExpanded((prev) => new Set(prev).add(highlight.date));
-    }
-  }
-  const toggle = (key: string) => setExpanded((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
   const total = rows.reduce((sum, r) => sum + r.booked, 0);
 
   if (rows.length === 0) {
@@ -438,22 +245,35 @@ function WeekRowsSection({ rows, title, highlight, onItemPress, onOpenDay }: {
       </>
     );
   }
+  const countLabel = (row: WeekRow) => {
+    const count = row.items.length;
+    return count === 0 ? 'Nothing' : `${count} item${count === 1 ? '' : 's'}`;
+  };
   return (
     <>
       <SectionHeader label={title} trailing={total > 0 ? `${hoursLabel(total)} booked` : undefined} />
       <Card Colors={Colors}>
-        {rows.map((row, i) => (
-          <View key={row.key} style={i > 0 ? { borderTopWidth: 1, borderTopColor: Colors.border } : null}>
-            <DayRow
-              row={row}
-              expanded={expanded.has(row.key)}
-              onToggle={() => toggle(row.key)}
-              onItemPress={onItemPress}
-              onOpenDay={onOpenDay}
-              highlight={highlight}
-            />
-          </View>
-        ))}
+        <DayRowList
+          rows={rows}
+          highlight={highlight}
+          onItemPress={onItemPress}
+          onToggleNote={onToggleNote}
+          onOpenDay={onOpenDay}
+          expandedIndent={64}
+          a11ySummary={(row) => `${dayName(row.key, 'long')}, ${row.booked > 0 ? `${hoursLabel(row.booked)} booked` : 'nothing booked'}, ${countLabel(row)}`}
+          renderSummary={(row) => (
+            <>
+              <View style={{ width: 54 }}>
+                <Text style={{ color: Colors.textBright, fontSize: 12.5, fontWeight: '700' }}>{dayName(row.key)}</Text>
+                <Text style={{ color: Colors.subtext, fontSize: 10 }}>{row.booked > 0 ? hoursLabel(row.booked) : '—'}</Text>
+              </View>
+              <View style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: Colors.inactive, overflow: 'hidden' }}>
+                <View style={{ width: `${row.barFraction * 100}%`, height: '100%', backgroundColor: Colors.primary }} />
+              </View>
+              <Text style={{ color: Colors.subtext, fontSize: 11, minWidth: 52, textAlign: 'right' }}>{countLabel(row)}</Text>
+            </>
+          )}
+        />
       </Card>
     </>
   );
@@ -468,6 +288,7 @@ export default function PlanningView({
   onAdd,
   onOpenDay,
   onItemPress,
+  onToggleNote,
   onOpenTask,
   onStartFocus,
   onFindSlot,
@@ -481,6 +302,8 @@ export default function PlanningView({
   onOpenDay: (date: string) => void;
   /** An item in a day row or Also today: opens its event, note or task sheet. */
   onItemPress: (item: CalendarItem) => void;
+  /** Ticks a to-do note from its checkbox (D10). */
+  onToggleNote: (note: Note) => void;
   /** An unscheduled task: opens its task details sheet. */
   onOpenTask: (task: Task) => void;
   onStartFocus: (taskId: string) => void;
@@ -583,6 +406,7 @@ export default function PlanningView({
           title={position === 'current' ? 'REST OF THE WEEK' : 'THIS WEEK'}
           highlight={highlight}
           onItemPress={onItemPress}
+          onToggleNote={onToggleNote}
           onOpenDay={onOpenDay}
         />
 

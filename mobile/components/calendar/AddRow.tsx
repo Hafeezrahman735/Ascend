@@ -13,14 +13,16 @@ const BUTTONS: { kind: AddKind; label: string; a11y: string }[] = [
 ];
 
 /**
- * + Task / + Event / + Note, shared by the Plan screen and Month view so both
- * look and behave the same. Built from the calendar's `addChip` style, at a
- * 44pt touch height.
+ * + Task / + Event / + Note, shared by Plan, Day and Month so all three look
+ * and behave the same. Built from the calendar's `addChip` style, at a 44pt
+ * touch height.
  */
-export default function AddRow({ onAdd, dayLabel }: {
+export default function AddRow({ onAdd, dayLabel, taskTakesDay = false }: {
   onAdd: (kind: AddKind) => void;
   /** Read out with event/note, e.g. "Friday 18 October", when a day is implied. */
   dayLabel?: string;
+  /** Day view's + Task lands on the day too, so it is read out with it. */
+  taskTakesDay?: boolean;
 }) {
   const Colors = useTheme();
   const styles = useMemo(() => getCalendarStyles(Colors), [Colors]);
@@ -31,7 +33,7 @@ export default function AddRow({ onAdd, dayLabel }: {
           key={b.kind}
           onPress={() => onAdd(b.kind)}
           accessibilityRole="button"
-          accessibilityLabel={dayLabel && b.kind !== 'task' ? `${b.a11y} on ${dayLabel}` : b.a11y}
+          accessibilityLabel={dayLabel && (b.kind !== 'task' || taskTakesDay) ? `${b.a11y} on ${dayLabel}` : b.a11y}
           style={[styles.addChip, { flex: 1, justifyContent: 'center', minHeight: 44 }]}
         >
           <Ionicons name="add" size={14} color={Colors.primarySoft} />

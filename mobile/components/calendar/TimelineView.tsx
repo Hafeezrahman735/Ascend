@@ -30,8 +30,8 @@ const GUTTER_WIDTH = 46;
  * Enough vertical room that a short block still shows its title AND stays
  * tappable. Events skew short, and hitSlop cannot rescue a 26px row here: on a
  * stacked grid, slop creates overlapping hit zones and the wrong block opens.
- * Still under the 44pt guideline, which is why the Planning EVENTS list exists
- * as the guaranteed-reachable path to the same rows.
+ * Still under the 44pt guideline, which is why every timed item is also a full
+ * 44pt row in Week's expanded lane and on Plan.
  */
 const MIN_BLOCK_HEIGHT = 32;
 /** A grid tighter than this is cramped, so short days get breathing room. */

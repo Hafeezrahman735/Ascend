@@ -131,6 +131,13 @@ describe('weekPosition and weekRows', () => {
     expect(rows).toHaveLength(7);
     expect(rows.every((r) => r.barFraction === 0)).toBe(true);
   });
+
+  it('allDays keeps today and the days before it on the current week (Week view)', () => {
+    const byDate = groupItemsByDate([timedTask('2026-10-26', 'm', 540, 600), timedTask(TODAY, 't', 600, 720)]);
+    const rows = weekRows(WEEK, byDate, TODAY, { allDays: true });
+    expect(rows.map((r) => r.key)).toEqual(WEEK);
+    expect(rows.find((r) => r.key === TODAY)).toMatchObject({ booked: 120, barFraction: 1 });
+  });
 });
 
 describe('findSlot', () => {

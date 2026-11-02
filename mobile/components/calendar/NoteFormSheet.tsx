@@ -9,10 +9,9 @@ import type { Note } from '../../types';
 /**
  * Create or edit a note or to-do on a chosen day.
  *
- * Day view already has a one-line inline composer, which is the right shape
- * there — you are looking at the day, so the day is implied. This sheet exists
- * for Plan and Month, where you have not chosen a day yet, and so the day has to
- * be part of the form. Any day can be picked (DateField).
+ * The one way to add or edit a note: + Note on Plan, Day and Month, and a tap
+ * on any note row. It opens on the day it came from (Day's day, Month's
+ * selected day), and any other day can be picked (DateField).
  */
 
 export interface NoteDraft {

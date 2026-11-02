@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../hooks/useTheme';
-import type { CalendarItem, Note } from '../../types';
+import type { CalendarItem, Note, Task } from '../../types';
+import { useTaskStore } from '../../stores/taskStore';
+import { useGoalStore } from '../../stores/goalStore';
+import { importantDeadlines, overdueDeadlineItems, type Deadline } from '../../lib/calendarViews';
 import AddRow, { type AddKind } from './AddRow';
 import { eachDayOfRange, getLocalDateString, parseLocalDate, startOfMonth, endOfMonth } from '../../utils/date';
 import {
@@ -131,6 +134,39 @@ function StatTile({ value, label, accent }: { value: string; label: string; acce
   );
 }
 
+/** Deadlines listed under the grid before "+N more", so the day panel stays close. */
+const MAX_DEADLINES = 5;
+
+/**
+ * One Important deadline: when, what, and why it is here — LATE when it is
+ * overdue, otherwise its priority (a goal says "goal"). Tapping selects its day.
+ */
+function DeadlineRow({ deadline, first, onPress }: { deadline: Deadline; first: boolean; onPress: () => void }) {
+  const Colors = useTheme();
+  const { item, isLate } = deadline;
+  const isGoal = item.type === 'goal_deadline';
+  const priority = isGoal ? null : (item.data as Task).priority;
+  const tag = isLate ? 'LATE' : isGoal ? 'GOAL' : priority === 'urgent' ? 'URGENT' : 'HIGH';
+  const tagColor = isLate ? Colors.ROSE : isGoal ? Colors.subtext : Colors.AMBER;
+  const date = parseLocalDate(item.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${isGoal ? 'Goal deadline' : `${priority} priority task`}: ${itemTitle(item)}, due ${parseLocalDate(item.date).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}${isLate ? ', late' : ''}. Show this day`}
+      style={{
+        flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 44,
+        borderTopWidth: first ? 0 : 1, borderTopColor: Colors.border,
+      }}
+    >
+      <Text style={{ width: 44, fontSize: 11, color: isLate ? Colors.ROSE : Colors.subtext, fontVariant: ['tabular-nums'] }}>{date}</Text>
+      <View style={{ width: 3, alignSelf: 'stretch', marginVertical: 10, borderRadius: 2, backgroundColor: typeColor(item.type, Colors) }} />
+      <Text numberOfLines={1} style={{ flex: 1, fontSize: 13, color: Colors.textBright }}>{itemTitle(item)}</Text>
+      <Text style={{ fontSize: 9.5, fontWeight: '800', letterSpacing: 0.6, color: tagColor }}>{tag}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function MonthView({
   anchorDate,
   itemsByDate,
@@ -142,7 +178,7 @@ export default function MonthView({
   itemsByDate: Map<string, CalendarItem[]>;
   onDayPress: (date: string) => void;
   onToggleNote: (note: Note) => void;
-  /** + Task / + Event / + Note under the grid; `date` is the selected day. */
+  /** + Task / + Event / + Note above the grid; `date` is the selected day. */
   onAdd: (kind: AddKind, date: string) => void;
 }) {
   const Colors = useTheme();
@@ -176,8 +212,40 @@ export default function MonthView({
     (i) => i.type === 'event' || i.type === 'external_google' || i.type === 'external_apple',
   ).length;
 
+  // ── Important deadlines (under the grid) ──
+  // Month loads one month only, so on the current month the overdue ones come
+  // from the task and goal stores, which hold every open item (eng review D8).
+  const tasks = useTaskStore((s) => s.tasks);
+  const goals = useGoalStore((s) => s.goals);
+  const monthKey = days[0];
+  const isCurrentMonth = days.includes(todayKey);
+  // Linear over one month of items; the React Compiler memoises it.
+  const deadlines = importantDeadlines(
+    days.flatMap((k) => itemsByDate.get(k) ?? []),
+    todayKey,
+    isCurrentMonth ? overdueDeadlineItems(tasks, goals, monthKey) : [],
+  );
+  // Which month "+N more" was opened on. Derived like pickedKey: paging to
+  // another month makes it stale, so every month starts at the first five.
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const showAllDeadlines = expandedMonth === monthKey;
+  const visibleDeadlines = showAllDeadlines ? deadlines : deadlines.slice(0, MAX_DEADLINES);
+  const selectDeadline = (d: Deadline) => {
+    // An overdue one from last month has no cell here; its day stays unselected.
+    if (days.includes(d.item.date)) setPickedKey(d.item.date);
+    setExpandedMonth(null);
+  };
+
   return (
     <View>
+      {/* Adds land on the selected day (task: no date, as on Plan — D8). */}
+      <View style={{ paddingHorizontal: 16, marginBottom: 14 }}>
+        <AddRow
+          onAdd={(kind) => onAdd(kind, selectedKey)}
+          dayLabel={parseLocalDate(selectedKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+        />
+      </View>
+
       {/* ── Legend ────────────────────────────────────────────────────────
           All five steps, because a scale that names two of its five levels is
           asking the reader to guess the rest. ──────────────────────────────── */}
@@ -263,13 +331,33 @@ export default function MonthView({
         </View>
       </View>
 
-      {/* Adds land on the selected day (task: no date, as everywhere). */}
-      <View style={{ paddingHorizontal: 16, marginTop: 14 }}>
-        <AddRow
-          onAdd={(kind) => onAdd(kind, selectedKey)}
-          dayLabel={parseLocalDate(selectedKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-        />
-      </View>
+      {deadlines.length > 0 && (
+        <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+          <Text style={[styles.sectionLabel, { marginBottom: 6 }]}>
+            IMPORTANT DEADLINES · {deadlines.length}
+          </Text>
+          <View style={{
+            backgroundColor: Colors.surface, borderRadius: 14, borderWidth: 1, borderColor: Colors.border,
+            paddingHorizontal: 12,
+          }}>
+            {visibleDeadlines.map((d, i) => (
+              <DeadlineRow key={calendarItemKey(d.item)} deadline={d} first={i === 0} onPress={() => selectDeadline(d)} />
+            ))}
+            {deadlines.length > MAX_DEADLINES && (
+              <TouchableOpacity
+                onPress={() => setExpandedMonth(showAllDeadlines ? null : monthKey)}
+                accessibilityRole="button"
+                accessibilityLabel={showAllDeadlines ? 'Show fewer deadlines' : `Show ${deadlines.length - MAX_DEADLINES} more deadlines`}
+                style={{ minHeight: 44, justifyContent: 'center', borderTopWidth: 1, borderTopColor: Colors.border }}
+              >
+                <Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '700' }}>
+                  {showAllDeadlines ? 'Show fewer' : `+${deadlines.length - MAX_DEADLINES} more`}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
 
       {/* ── Live panel for the selected day ───────────────────────────── */}
       <View style={{

@@ -114,15 +114,17 @@ export function weekPosition(dayKeys: string[], todayKey: string): 'past' | 'cur
 
 /**
  * The day rows under the Today card. On this week, the days after today (the
- * Today card covers today); on any other week, all seven.
+ * Today card covers today); on any other week, all seven. Week view has no
+ * Today card, so it passes `allDays` and gets every day of every week.
  */
 export function weekRows(
   dayKeys: string[],
   itemsByDate: Map<string, CalendarItem[]>,
   todayKey: string,
+  { allDays = false }: { allDays?: boolean } = {},
 ): WeekRow[] {
-  const isCurrent = weekPosition(dayKeys, todayKey) === 'current';
-  const keys = isCurrent ? dayKeys.filter((k) => k > todayKey) : dayKeys;
+  const afterTodayOnly = !allDays && weekPosition(dayKeys, todayKey) === 'current';
+  const keys = afterTodayOnly ? dayKeys.filter((k) => k > todayKey) : dayKeys;
   const rows = keys.map((key) => {
     const items = itemsByDate.get(key) ?? [];
     return {

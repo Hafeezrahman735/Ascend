@@ -44,10 +44,9 @@ export const TYPE_META: Record<
  * Events lead because an all-day event ("Public holiday", "On leave") is the
  * context everything else sits inside, not another line item competing with it.
  *
- * This array is load-bearing in a way that is easy to miss: DayView iterates it
- * and looks each type up, so a CalendarItemType absent from it renders NOWHERE —
- * fetched, stored, counted, and invisible. calendarTaxonomyIsComplete() below
- * exists to make that failure loud instead of silent.
+ * DayView sorts its Anytime list by this order, so a CalendarItemType missing
+ * from it would sort unpredictably. calendarTaxonomyIsComplete() below keeps
+ * the array and the type union in step, and fails loudly when they drift.
  */
 export const DAY_GROUP_ORDER: CalendarItemType[] = [
   'event', 'habit_instance', 'task', 'goal_deadline',
