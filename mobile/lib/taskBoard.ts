@@ -1,5 +1,5 @@
-import type { Task } from '../types';
-import { daysUntilDue } from '../utils/date';
+import type { Task, WorkBlock } from '../types';
+import { daysUntilDue, getLocalDateString } from '../utils/date';
 import { PRIORITY_RANK } from './planningTasks';
 import { daysUntil, templatesWithoutTodayRow, type RecurringTemplate } from './recurringDisplay';
 
@@ -63,11 +63,37 @@ export function compareByUrgency(a: Task, b: Task, now: Date): number {
 }
 
 /** The open tasks the main tab leads with. */
+/**
+ * A one-off task's work block today: its earliest timed one, else its any-time
+ * one. Null when nothing is planned for it today.
+ */
+export function workBlockToday(task: Pick<Task, 'blocks' | 'isRecurring'>, todayKey: string): WorkBlock | null {
+  if (task.isRecurring) return null;
+  const today = (task.blocks ?? []).filter((b) => b.date === todayKey);
+  return today.find((b) => b.startMinutes != null)
+    ? today.reduce((a, b) => ((b.startMinutes ?? Infinity) < (a.startMinutes ?? Infinity) ? b : a))
+    : today[0] ?? null;
+}
+
+/**
+ * The open tasks the main tab leads with. What you planned for today comes
+ * first, in the order its work blocks start (any-time ones after), then the
+ * most pressing of the rest (task-due-and-work-blocks D6): planning a task for
+ * today is the user saying it matters today, whatever its deadline.
+ */
 export function topTasks(tasks: Task[], now: Date, limit: number): Task[] {
-  return tasks
-    .filter((t) => !t.isArchived && !t.isCompleted)
-    .sort((a, b) => compareByUrgency(a, b, now))
-    .slice(0, limit);
+  const todayKey = getLocalDateString(now);
+  const open = tasks.filter((t) => !t.isArchived && !t.isCompleted);
+  const planned: { task: Task; start: number }[] = [];
+  const rest: Task[] = [];
+  for (const task of open) {
+    const block = workBlockToday(task, todayKey);
+    if (block) planned.push({ task, start: block.startMinutes ?? Number.MAX_SAFE_INTEGER });
+    else rest.push(task);
+  }
+  planned.sort((a, b) => a.start - b.start || compareByUrgency(a.task, b.task, now));
+  rest.sort((a, b) => compareByUrgency(a, b, now));
+  return [...planned.map((p) => p.task), ...rest].slice(0, limit);
 }
 
 /** Templates standing in for a habit: soonest next occurrence first. */

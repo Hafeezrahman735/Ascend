@@ -1,7 +1,8 @@
 import type { CalendarItem, Task } from '../types';
 
 /**
- * The full task behind a calendar block, for the task details sheet.
+ * The full task behind a calendar item, for the task details sheet: a work
+ * block or a due date opens its one-off task, a recurring day its habit.
  *
  * GET /calendar sends a recurring task's days with deliberately narrow data (no
  * tags, no time on task), which the sheet cannot render, so the task store is
@@ -15,10 +16,10 @@ export function taskForCalendarItem(
   tasks: Task[],
   templates: Task[],
 ): Task | null {
-  if (item.type !== 'task' && item.type !== 'habit_instance') return null;
+  if (item.type !== 'work_block' && item.type !== 'task_due' && item.type !== 'habit_instance') return null;
   const id = (item.data as { id?: string } | null)?.id;
   if (!id) return null;
-  if (item.type === 'task') return tasks.find((t) => t.id === id) ?? null;
+  if (item.type !== 'habit_instance') return tasks.find((t) => t.id === id) ?? null;
 
   const template = templates.find((t) => t.id === id) ?? tasks.find((t) => t.id === id);
   if (!template) return null;

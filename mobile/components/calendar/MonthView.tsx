@@ -204,7 +204,7 @@ export default function MonthView({
   const selectedNotes = selectedItems.filter(isNote).map((i) => i.data as Note);
   const { booked: selectedBooked } = dayLoad(selectedItems);
   const taskCount = selectedScheduled.filter(
-    (i) => i.type === 'task' || i.type === 'habit_instance',
+    (i) => i.type === 'work_block' || i.type === 'habit_instance',
   ).length;
   // Events, from here or from a linked calendar. Goal deadlines are neither, and
   // land in neither tile on purpose — a deadline is a date, not an appointment.

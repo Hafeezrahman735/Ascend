@@ -20,7 +20,12 @@ function task(over: Partial<Task> = {}): Task {
 }
 
 function taskItem(date: string, id: string, over: Partial<Task> = {}): CalendarItem {
-  return { type: 'task', date, data: task({ id, title: id, ...over }) };
+  return { type: 'work_block', date, data: task({ id, title: id, ...over }) };
+}
+
+/** A one-off task's deadline, as GET /calendar sends it. */
+function dueItem(date: string, id: string, over: Partial<Task> = {}): CalendarItem {
+  return { type: 'task_due', date, data: task({ id, title: id, ...over }) };
 }
 
 function habitItem(date: string, id: string, over: Partial<Task> = {}): CalendarItem {
@@ -108,7 +113,7 @@ describe('laneSummary', () => {
       noteItem(TODAY, 'n'),
     ], axis);
     expect(summary.segments).toEqual([
-      { key: 'task:2026-11-12:a', type: 'task', left: 120 / 840, width: 90 / 840 },
+      { key: 'work_block:2026-11-12:a:600', type: 'work_block', left: 120 / 840, width: 90 / 840 },
       { key: 'event:2026-11-12:b', type: 'event', left: 420 / 840, width: 60 / 840 },
     ]);
     expect(summary).toMatchObject({ bookedMinutes: 150, anytimeCount: 2, noteCount: 1 });
@@ -149,10 +154,10 @@ describe('importantDeadlines', () => {
   it('keeps goal deadlines and high or urgent one-off tasks, nothing else', () => {
     const list = importantDeadlines([
       goalItem('2026-11-20', 'portfolio'),
-      taskItem('2026-11-14', 'urgent', { priority: 'urgent' }),
-      taskItem('2026-11-15', 'high', { priority: 'high' }),
-      taskItem('2026-11-15', 'medium', { priority: 'medium' }),
-      taskItem('2026-11-15', 'low', { priority: 'low' }),
+      dueItem('2026-11-14', 'urgent', { priority: 'urgent' }),
+      dueItem('2026-11-15', 'high', { priority: 'high' }),
+      dueItem('2026-11-15', 'medium', { priority: 'medium' }),
+      dueItem('2026-11-15', 'low', { priority: 'low' }),
       habitItem('2026-11-16', 'weekly', { priority: 'urgent' }),
       eventItem('2026-11-16', 'event', 600, 660),
       noteItem('2026-11-16', 'note'),
@@ -163,31 +168,31 @@ describe('importantDeadlines', () => {
   it('drops completed items', () => {
     const list = importantDeadlines([
       goalItem('2026-11-20', 'done', { isCompleted: true }),
-      taskItem('2026-11-14', 'done-task', { priority: 'urgent', isCompleted: true }),
+      dueItem('2026-11-14', 'done-task', { priority: 'urgent', isCompleted: true }),
     ], TODAY);
     expect(list).toEqual([]);
   });
 
   it('marks open items before today as late, and today is not late', () => {
     const list = importantDeadlines([
-      taskItem('2026-11-02', 'old', { priority: 'high' }),
-      taskItem(TODAY, 'today', { priority: 'high' }),
+      dueItem('2026-11-02', 'old', { priority: 'high' }),
+      dueItem(TODAY, 'today', { priority: 'high' }),
     ], TODAY);
     expect(list.map((d) => d.isLate)).toEqual([true, false]);
   });
 
   it('orders by date, then priority, then title', () => {
     const list = importantDeadlines([
-      taskItem('2026-11-20', 'b-high', { priority: 'high' }),
-      taskItem('2026-11-20', 'a-high', { priority: 'high' }),
-      taskItem('2026-11-20', 'z-urgent', { priority: 'urgent' }),
-      taskItem('2026-11-18', 'earliest', { priority: 'high' }),
+      dueItem('2026-11-20', 'b-high', { priority: 'high' }),
+      dueItem('2026-11-20', 'a-high', { priority: 'high' }),
+      dueItem('2026-11-20', 'z-urgent', { priority: 'urgent' }),
+      dueItem('2026-11-18', 'earliest', { priority: 'high' }),
     ], TODAY);
     expect(list.map((d) => (d.item.data as { id: string }).id)).toEqual(['earliest', 'z-urgent', 'a-high', 'b-high']);
   });
 
   it('puts overdue items from before the month first, late, and lists a duplicate once', () => {
-    const overdue = [taskItem('2026-10-30', 'missed', { priority: 'urgent' })];
+    const overdue = [dueItem('2026-10-30', 'missed', { priority: 'urgent' })];
     const list = importantDeadlines([...overdue, goalItem('2026-11-20', 'g')], TODAY, overdue);
     expect(list.map((d) => [(d.item.data as { id: string }).id, d.isLate])).toEqual([['missed', true], ['g', false]]);
   });
@@ -212,7 +217,7 @@ describe('overdueDeadlineItems', () => {
       '2026-11-01',
     );
     expect(items.map((i) => [i.type, i.date, (i.data as { id: string }).id])).toEqual([
-      ['task', '2026-10-30', 'missed'],
+      ['task_due', '2026-10-30', 'missed'],
       ['goal_deadline', '2026-10-25', 'late-goal'],
     ]);
   });

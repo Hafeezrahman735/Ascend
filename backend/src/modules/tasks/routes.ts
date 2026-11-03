@@ -11,6 +11,9 @@ import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
 import { eventBus, EventTypes } from '../../middleware/eventBus';
+import {
+  BLOCK_ORDER, firstTimedBlock, normalizeBlocks, validateTimePair, workBlockList, type NormalizedBlock,
+} from '../../lib/workBlocks';
 
 const PRIORITY_VALUES = ['low', 'medium', 'high', 'urgent'] as const;
 
@@ -19,32 +22,30 @@ const DAY_VALUES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 /** Minutes from local midnight. 0 = 00:00, 1439 = 23:59. */
 const timeOfDay = z.number().int().min(0).max(1439);
 
-/**
- * Validates a task’s scheduled time-of-day pair. Returns an error message, or
- * null when the pair is valid.
+/*
+ * When a task happens (docs/designs/task-due-and-work-blocks.md):
  *
- * Three rules, each for a reason:
- *  - a time needs a day   — 09:00 with no dueDate cannot be placed anywhere
- *  - both ends or neither — the timeline draws blocks, and a block needs a height
- *  - end after start      — a zero or negative interval has nothing to draw
+ *   one-off task ──► dueDate = deadline only; planned time = its WorkBlocks
+ *                    (0..N, one day each). Times on the task itself are refused.
+ *   recurring task ─► dueDate = last day it repeats; startMinutes/endMinutes =
+ *                    the slot each day's occurrence takes. No blocks.
  *
- * Recurring tasks are exempt from the first rule: their dueDate is the last day
- * they repeat, not the day they happen. Each day's occurrence row takes the
- * time slot on its own day (lib/recurringStats.ts).
+ * Blocks are written as one whole list with the task, replaced inside the same
+ * transaction, so a save is all or nothing.
  */
-function validateSchedule(
-  startMinutes: number | null | undefined,
-  endMinutes: number | null | undefined,
-  dueDate: Date | null,
-  isRecurringTemplate = false,
-): string | null {
-  const start = startMinutes ?? null;
-  const end = endMinutes ?? null;
-  if (start === null && end === null) return null;
-  if (!dueDate && !isRecurringTemplate) return 'A scheduled time needs a due date';
-  if (start === null || end === null) return 'A scheduled task needs both a start and an end time';
-  if (end <= start) return 'End time must be after start time';
-  return null;
+const TIMES_ON_ONE_OFF = 'Times live on work blocks';
+const BLOCKS_ON_HABIT = 'Work blocks are for one-off tasks';
+
+/** Every task response carries its blocks, so the app never merges a row without them. */
+const WITH_BLOCKS = { blocks: { orderBy: BLOCK_ORDER } };
+
+function blockRows(userId: string, blocks: NormalizedBlock[]) {
+  return blocks.map((b) => ({ userId, ...b }));
+}
+
+/** A non-null time sent for a task that will be one-off. Nulls (clearing) are fine. */
+function sendsTime(data: { startMinutes?: number | null; endMinutes?: number | null }): boolean {
+  return data.startMinutes != null || data.endMinutes != null;
 }
 
 const createTaskSchema = z.object({
@@ -62,6 +63,7 @@ const createTaskSchema = z.object({
   // Was missing entirely, so a goal picked in the create form was silently
   // dropped by zod and the user had to create-then-edit to attach it.
   taskGoalId: z.string().nullable().optional(),
+  blocks: workBlockList.optional(),
 });
 
 /**
@@ -90,6 +92,8 @@ const updateTaskSchema = z.object({
   order: z.number().int().optional().nullable(),
   isRecurring: z.boolean().optional(),
   recurringDays: z.array(z.enum(DAY_VALUES)).max(7).optional(),
+  /** Present = replace all of the task's blocks with this list; absent = leave them. */
+  blocks: workBlockList.optional(),
 });
 
 export function setupTaskRoutes(router: Router): void {
@@ -106,14 +110,22 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
-      const scheduleError = validateSchedule(
-        data.startMinutes,
-        data.endMinutes,
-        data.dueDate ? new Date(data.dueDate) : null,
-        data.isRecurring,
-      );
+      if (!data.isRecurring && sendsTime(data)) {
+        res.status(400).json({ success: false, error: TIMES_ON_ONE_OFF });
+        return;
+      }
+      if (data.isRecurring && data.blocks?.length) {
+        res.status(400).json({ success: false, error: BLOCKS_ON_HABIT });
+        return;
+      }
+      const scheduleError = data.isRecurring ? validateTimePair(data.startMinutes, data.endMinutes) : null;
       if (scheduleError) {
         res.status(400).json({ success: false, error: scheduleError });
+        return;
+      }
+      const normalized = normalizeBlocks(data.blocks ?? []);
+      if ('error' in normalized) {
+        res.status(400).json({ success: false, error: normalized.error });
         return;
       }
 
@@ -131,7 +143,9 @@ export function setupTaskRoutes(router: Router): void {
           isRecurring: data.isRecurring,
           recurringDays: data.recurringDays,
           taskGoalId: data.taskGoalId ?? null,
+          blocks: { create: blockRows(userId, normalized.blocks) },
         },
+        include: WITH_BLOCKS,
       });
 
       res.json({ success: true, data: task });
@@ -156,6 +170,9 @@ export function setupTaskRoutes(router: Router): void {
         prisma.task.findMany({
           where: { userId, isArchived: false, isRecurring: false },
           orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
+          // Every block, not a window: a save replaces the whole list, so the
+          // app must hold all of it or a save would delete what it never saw.
+          include: WITH_BLOCKS,
         }),
         prisma.task.findMany({
           where: { userId, isArchived: false, isRecurring: true },
@@ -215,6 +232,7 @@ export function setupTaskRoutes(router: Router): void {
 
       const task = await prisma.task.findFirst({
         where: { id, userId },
+        include: WITH_BLOCKS,
       });
 
       if (!task) {
@@ -273,7 +291,7 @@ export function setupTaskRoutes(router: Router): void {
       const { id } = req.params;
       const data = updateTaskSchema.parse(req.body);
 
-      const existing = await prisma.task.findFirst({ where: { id, userId } });
+      const existing = await prisma.task.findFirst({ where: { id, userId }, include: WITH_BLOCKS });
       if (!existing) {
         res.status(404).json({ success: false, error: 'Task not found' });
         return;
@@ -300,19 +318,42 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
-      // Validated against the MERGED row rather than the patch alone: a PATCH
-      // that only clears dueDate would otherwise leave a 09:00-10:00 task
-      // floating on no day, and one that clears only startMinutes would leave a
-      // block with an end but no beginning.
-      const scheduleError = validateSchedule(
-        data.startMinutes !== undefined ? data.startMinutes : existing.startMinutes,
-        data.endMinutes !== undefined ? data.endMinutes : existing.endMinutes,
-        data.dueDate !== undefined ? (data.dueDate ? new Date(data.dueDate) : null) : existing.dueDate,
-        data.isRecurring !== undefined ? data.isRecurring : existing.isRecurring,
-      );
-      if (scheduleError) {
-        res.status(400).json({ success: false, error: scheduleError });
+      // Only a CHANGE of kind converts: the edit form resends isRecurring on
+      // every save, and an unchanged value must not touch times or blocks.
+      const toHabit = isRecurring && !existing.isRecurring;
+      const toOneOff = !isRecurring && existing.isRecurring;
+
+      if (!isRecurring && sendsTime(data)) {
+        res.status(400).json({ success: false, error: TIMES_ON_ONE_OFF });
         return;
+      }
+      if (isRecurring && data.blocks?.length) {
+        res.status(400).json({ success: false, error: BLOCKS_ON_HABIT });
+        return;
+      }
+      const normalized = normalizeBlocks(data.blocks ?? []);
+      if ('error' in normalized) {
+        res.status(400).json({ success: false, error: normalized.error });
+        return;
+      }
+
+      // A habit's own time. Becoming one, a time sent with the request wins,
+      // else the earliest timed block's. Validated against the MERGED row, so a
+      // PATCH clearing only one end cannot leave half a time.
+      let habitStart: number | null = null;
+      let habitEnd: number | null = null;
+      if (isRecurring) {
+        const fromBlock = toHabit ? firstTimedBlock(existing.blocks) : null;
+        const base = toHabit
+          ? { start: fromBlock?.startMinutes ?? null, end: fromBlock?.endMinutes ?? null }
+          : { start: existing.startMinutes, end: existing.endMinutes };
+        habitStart = data.startMinutes !== undefined ? data.startMinutes : base.start;
+        habitEnd = data.endMinutes !== undefined ? data.endMinutes : base.end;
+        const scheduleError = validateTimePair(habitStart, habitEnd);
+        if (scheduleError) {
+          res.status(400).json({ success: false, error: scheduleError });
+          return;
+        }
       }
 
       const updateData: Record<string, unknown> = {};
@@ -321,8 +362,14 @@ export function setupTaskRoutes(router: Router): void {
       if (data.dueDate !== undefined) updateData.dueDate = data.dueDate ? new Date(data.dueDate) : null;
       if (data.tags !== undefined) updateData.tags = data.tags;
       if (data.estimatedMinutes !== undefined) updateData.estimatedMinutes = data.estimatedMinutes;
-      if (data.startMinutes !== undefined) updateData.startMinutes = data.startMinutes ?? null;
-      if (data.endMinutes   !== undefined) updateData.endMinutes   = data.endMinutes ?? null;
+      if (isRecurring) {
+        updateData.startMinutes = habitStart;
+        updateData.endMinutes = habitEnd;
+      } else if (toOneOff) {
+        // The habit's slot does not carry over; the form sends a block for it.
+        updateData.startMinutes = null;
+        updateData.endMinutes = null;
+      }
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.isCompleted !== undefined) updateData.isCompleted = data.isCompleted;
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
@@ -331,9 +378,17 @@ export function setupTaskRoutes(router: Router): void {
       if (data.isRecurring   !== undefined) updateData.isRecurring   = data.isRecurring;
       if (data.recurringDays !== undefined) updateData.recurringDays = data.recurringDays;
 
-      const task = await prisma.task.update({
-        where: { id },
-        data: updateData,
+      // Becoming a habit drops every block (design D14); otherwise a sent list
+      // replaces the old one. Same transaction as the task, so all or nothing.
+      const replaceBlocks = toHabit || (!isRecurring && data.blocks !== undefined);
+      const task = await prisma.$transaction(async (tx) => {
+        if (replaceBlocks) {
+          await tx.workBlock.deleteMany({ where: { taskId: id } });
+          if (!toHabit && normalized.blocks.length) {
+            await tx.workBlock.createMany({ data: blockRows(userId, normalized.blocks).map((b) => ({ ...b, taskId: id })) });
+          }
+        }
+        return tx.task.update({ where: { id }, data: updateData, include: WITH_BLOCKS });
       });
 
       // ── Gamification on completion ──

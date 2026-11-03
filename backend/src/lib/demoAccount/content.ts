@@ -80,7 +80,7 @@ export interface TaskSpec {
   completedDaysAgo?: number;
   /** The task's Description box. */
   description?: string;
-  /** A time slot on the due day, so the task sits on the calendar timeline. */
+  /** A work block on the due day, so the task sits on the calendar timeline. Needs dueInDays. */
   slot?: { startHour: number; minutes: number };
 }
 

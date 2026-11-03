@@ -136,7 +136,10 @@ export default function TimelineView({ dateKey, items, plan, onItemPress, onSess
 
   const fills = useMemo(() => {
     const map = new Map<string, BlockFill>();
-    for (const fill of plan?.fills ?? []) map.set(fillKey(fill.block.taskId, fill.block.startMinutes), fill);
+    // Only timed blocks are on the grid; an any-time block has nothing to fill here.
+    for (const fill of plan?.fills ?? []) {
+      if (fill.block.startMinutes !== null) map.set(fillKey(fill.block.taskId, fill.block.startMinutes), fill);
+    }
     return map;
   }, [plan]);
 
@@ -278,7 +281,7 @@ export default function TimelineView({ dateKey, items, plan, onItemPress, onSess
             // statement: it did not fail, it is simply behind you.
             const past = isPastEvent(entry.item, now);
             const handled = !!onItemPress;
-            const taskId = entry.item.type === 'task' || entry.item.type === 'habit_instance'
+            const taskId = entry.item.type === 'work_block' || entry.item.type === 'habit_instance'
               ? (entry.item.data as { id?: string }).id
               : undefined;
             const fill = taskId ? fills.get(fillKey(taskId, entry.range.start)) : undefined;

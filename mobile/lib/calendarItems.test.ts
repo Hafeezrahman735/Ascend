@@ -66,13 +66,13 @@ describe('isRenderableCalendarItem', () => {
   });
 
   it('rejects an item with no data to render', () => {
-    expect(isRenderableCalendarItem({ type: 'task', date: '2026-08-25', data: null })).toBe(false);
-    expect(isRenderableCalendarItem({ type: 'task', date: '2026-08-25' })).toBe(false);
+    expect(isRenderableCalendarItem({ type: 'work_block', date: '2026-08-25', data: null })).toBe(false);
+    expect(isRenderableCalendarItem({ type: 'work_block', date: '2026-08-25' })).toBe(false);
   });
 
   it('rejects a date that is not a day key, since every view buckets by it', () => {
     for (const date of ['2026-8-25', '25/08/2026', '2026-08-25T00:00:00Z', '', 20260825]) {
-      expect(isRenderableCalendarItem({ type: 'task', date, data: { id: 'x' } })).toBe(false);
+      expect(isRenderableCalendarItem({ type: 'work_block', date, data: { id: 'x' } })).toBe(false);
     }
   });
 
@@ -90,7 +90,7 @@ describe('isRenderableCalendarItem', () => {
   it('filters a mixed list down to what the views can draw', () => {
     const mixed: unknown[] = [
       eventItem(),
-      { type: 'task', date: '2026-08-25', data: { id: 't1' } },
+      { type: 'work_block', date: '2026-08-25', data: { id: 't1' } },
       { type: 'gremlin', date: '2026-08-25', data: {} },
       { type: 'note', date: 'tomorrow', data: {} },
       null,
@@ -118,7 +118,7 @@ describe('calendarItemKey', () => {
   });
 
   it('does not throw on data with no id', () => {
-    const orphan: CalendarItem = { type: 'task', date: '2026-08-25', data: null };
+    const orphan: CalendarItem = { type: 'work_block', date: '2026-08-25', data: null };
     expect(() => calendarItemKey(orphan)).not.toThrow();
   });
 });
@@ -179,7 +179,7 @@ describe('isPastEvent', () => {
 
   it('is false for anything that is not an event', () => {
     const task: CalendarItem = {
-      type: 'task',
+      type: 'work_block',
       date: '2020-01-01',
       data: { id: 't', title: 'Old', isCompleted: false },
     };
@@ -190,7 +190,7 @@ describe('isPastEvent', () => {
 describe('bookedMinutes', () => {
   it('counts an event alongside a task — an hour is gone whatever the reason', () => {
     const task: CalendarItem = {
-      type: 'task',
+      type: 'work_block',
       date: '2026-08-25',
       data: { id: 't', title: 'Write', isCompleted: false, startMinutes: 540, endMinutes: 600 },
     };
@@ -268,6 +268,22 @@ describe('every type is handled by the shared helpers', () => {
 });
 
 
+describe('work blocks and due dates', () => {
+  it("keys two of a task's blocks on one day apart, by start", () => {
+    const at = (start: number | null): CalendarItem => ({
+      type: 'work_block', date: '2026-11-02', data: { id: 't', title: 'T', startMinutes: start, endMinutes: start === null ? null : start + 60 },
+    });
+    expect(calendarItemKey(at(540))).toBe('work_block:2026-11-02:t:540');
+    expect(calendarItemKey(at(null))).toBe('work_block:2026-11-02:t:any');
+  });
+
+  it('weighs a due date like a goal deadline and never puts it on the timeline', () => {
+    const due: CalendarItem = { type: 'task_due', date: '2026-11-02', data: { id: 't', title: 'T', startMinutes: 540, endMinutes: 600 } };
+    expect(itemWeight(due)).toBe(DEADLINE_WEIGHT);
+    expect(itemTimeRange(due)).toBeNull();
+  });
+});
+
 describe('itemWeight', () => {
   /**
    * Weight is what the month heat map shades by. It used to shade by booked
@@ -286,13 +302,13 @@ describe('itemWeight', () => {
   });
 
   it('weighs a timed task by its real duration', () => {
-    const item: CalendarItem = { type: 'task', date: '2026-08-25', data: at(540, 630) };
+    const item: CalendarItem = { type: 'work_block', date: '2026-08-25', data: at(540, 630) };
     expect(itemWeight(item)).toBe(90);
   });
 
   it('gives an untimed task a default rather than nothing', () => {
     const item: CalendarItem = {
-      type: 'task',
+      type: 'work_block',
       date: '2026-08-25',
       data: { id: 't', title: 'Write', isCompleted: false },
     };
@@ -347,7 +363,7 @@ describe('itemWeight', () => {
   it('treats a zero-length block as its untimed self, not as nothing', () => {
     // Guards the invariant below against bad data: a start equal to its end
     // would otherwise sum to zero and shade the day free.
-    const task: CalendarItem = { type: 'task', date: '2026-08-25', data: at(540, 540) };
+    const task: CalendarItem = { type: 'work_block', date: '2026-08-25', data: at(540, 540) };
     expect(itemWeight(task)).toBe(UNTIMED_TASK_WEIGHT);
     expect(itemWeight(eventItem({ startMinutes: 540, endMinutes: 540 })))
       .toBe(ALL_DAY_EVENT_WEIGHT);
@@ -387,7 +403,7 @@ describe('itemWeight', () => {
     // booked minutes; if weight leaked into that tile, a day with one untimed
     // task would report "30m booked" having booked nothing.
     const untimed: CalendarItem = {
-      type: 'task',
+      type: 'work_block',
       date: '2026-08-25',
       data: { id: 't', title: 'Write', isCompleted: false },
     };

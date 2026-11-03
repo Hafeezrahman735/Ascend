@@ -12,9 +12,12 @@ import { formatDuration } from './taskMetrics';
  * from the task store) and its own sessions into TimelineSessions, then calls
  * planVsActual. See docs/designs/plan-vs-actual-calendar.md.
  *
- * "Planned" means a task or a recurring task's day with a time range, never an
- * event: a meeting is not planned work, so it is neither a block here nor
- * counted in the planned total (unlike `countsTowardLoad`, which counts it).
+ * "Planned" means a one-off task's work block (timed or "any time") or a
+ * recurring task's day with a time range, never an event: a meeting is not
+ * planned work, so it is neither a block here nor counted in the planned total
+ * (unlike `countsTowardLoad`, which counts it). An any-time block claims that
+ * day's sessions on its task, so they are not "unplanned", but adds no
+ * planned minutes (docs/designs/task-due-and-work-blocks.md, D12).
  */
 
 export interface PlannedBlock {
@@ -22,8 +25,9 @@ export interface PlannedBlock {
   /** 'YYYY-MM-DD' */
   date: string;
   title: string;
-  startMinutes: number;
-  endMinutes: number;
+  /** Both null for an any-time work block: planned for the day, no clock. */
+  startMinutes: number | null;
+  endMinutes: number | null;
   kind: 'task' | 'habit';
 }
 
@@ -41,29 +45,47 @@ export interface DayPlanVsActual {
   fills: BlockFill[];
   /** Sessions with no planned block that day, each drawn at its real time. */
   unplanned: TimelineSession[];
-  totals: { plannedMinutes: number; focusedSeconds: number; unplannedSeconds: number };
+  totals: {
+    plannedMinutes: number;
+    /** Any-time work blocks that day: planned, but with no minutes to count. */
+    anyTimeBlocks: number;
+    focusedSeconds: number;
+    unplannedSeconds: number;
+  };
 }
 
 const SECONDS_PER_MINUTE = 60;
 
-function blockMinutes(block: PlannedBlock): number {
+/** A block's planned minutes, or null for an any-time block (no clock). */
+export function plannedBlockMinutes(block: PlannedBlock): number | null {
+  if (block.startMinutes == null || block.endMinutes == null) return null;
   return Math.max(0, block.endMinutes - block.startMinutes);
 }
 
-/** The calendar's plan: timed tasks and recurring days from GET /calendar. */
+function blockMinutes(block: PlannedBlock): number {
+  return plannedBlockMinutes(block) ?? 0;
+}
+
+/** Timed blocks by start, then any-time ones: the order a task's fill is chosen in. */
+function compareBlocks(a: PlannedBlock, b: PlannedBlock): number {
+  return (a.startMinutes ?? Number.MAX_SAFE_INTEGER) - (b.startMinutes ?? Number.MAX_SAFE_INTEGER);
+}
+
+/** The calendar's plan: work blocks and timed recurring days from GET /calendar. */
 export function plannedBlocksFromCalendar(items: CalendarItem[]): PlannedBlock[] {
   const blocks: PlannedBlock[] = [];
   for (const item of items) {
-    if (item.type !== 'task' && item.type !== 'habit_instance') continue;
+    if (item.type !== 'work_block' && item.type !== 'habit_instance') continue;
     const range = itemTimeRange(item);
-    if (!range) continue;
+    // A habit day counts only with a time (unchanged); a work block always does.
+    if (!range && item.type === 'habit_instance') continue;
     const task = item.data as Pick<Task, 'id' | 'title'>;
     blocks.push({
       taskId: task.id,
       date: item.date,
       title: task.title,
-      startMinutes: range.start,
-      endMinutes: range.end,
+      startMinutes: range?.start ?? null,
+      endMinutes: range?.end ?? null,
       kind: item.type === 'habit_instance' ? 'habit' : 'task',
     });
   }
@@ -71,26 +93,32 @@ export function plannedBlocksFromCalendar(items: CalendarItem[]): PlannedBlock[]
 }
 
 /**
- * Today's plan from the task store. A one-off task counts on its due day, the
- * same rule GET /calendar uses; a recurring task is taken as due on `date`, so
- * the caller passes only the recurring tasks that are on today.
+ * Today's plan from the task store: a one-off task's work blocks on `date`,
+ * and a recurring task's time slot. A recurring task is taken as on `date`, so
+ * the caller passes only the recurring tasks that are on today. A one-off
+ * task's own times are ignored: an older build's cache may still carry them.
  */
 export function plannedBlocksFromTasks(
-  tasks: Pick<Task, 'id' | 'title' | 'dueDate' | 'startMinutes' | 'endMinutes' | 'isRecurring'>[],
+  tasks: Pick<Task, 'id' | 'title' | 'startMinutes' | 'endMinutes' | 'isRecurring' | 'blocks'>[],
   date: string,
 ): PlannedBlock[] {
   const blocks: PlannedBlock[] = [];
   for (const task of tasks) {
-    if (task.startMinutes == null || task.endMinutes == null) continue;
-    if (!task.isRecurring && task.dueDate?.slice(0, 10) !== date) continue;
-    blocks.push({
-      taskId: task.id,
-      date,
-      title: task.title,
-      startMinutes: task.startMinutes,
-      endMinutes: task.endMinutes,
-      kind: task.isRecurring ? 'habit' : 'task',
-    });
+    if (task.isRecurring) {
+      if (task.startMinutes == null || task.endMinutes == null) continue;
+      blocks.push({
+        taskId: task.id, date, title: task.title,
+        startMinutes: task.startMinutes, endMinutes: task.endMinutes, kind: 'habit',
+      });
+      continue;
+    }
+    for (const block of task.blocks ?? []) {
+      if (block.date !== date) continue;
+      blocks.push({
+        taskId: task.id, date, title: task.title,
+        startMinutes: block.startMinutes, endMinutes: block.endMinutes, kind: 'task',
+      });
+    }
   }
   return blocks;
 }
@@ -168,26 +196,30 @@ export function timelineFromHistory(
  * the Day view. Null when there is neither a plan nor any focus that day.
  */
 export function summaryLine(totals: DayPlanVsActual['totals']): string | null {
-  const { plannedMinutes, focusedSeconds, unplannedSeconds } = totals;
-  if (plannedMinutes === 0 && focusedSeconds === 0) return null;
+  const { plannedMinutes, anyTimeBlocks, focusedSeconds, unplannedSeconds } = totals;
+  const planned = plannedMinutes > 0 || anyTimeBlocks > 0;
+  if (!planned && focusedSeconds === 0) return null;
   const focused = formatDuration(focusedSeconds);
-  const head = plannedMinutes > 0
-    ? `${focused} of ${formatDuration(plannedMinutes * SECONDS_PER_MINUTE)} planned`
-    : `${focused} focused, nothing planned`;
-  return unplannedSeconds > 0 && plannedMinutes > 0
-    ? `${head} · ${formatDuration(unplannedSeconds)} unplanned`
-    : head;
+  if (!planned) return `${focused} focused, nothing planned`;
+  const parts = [
+    plannedMinutes > 0
+      ? `${focused} of ${formatDuration(plannedMinutes * SECONDS_PER_MINUTE)} planned`
+      : `${focused} focused`,
+  ];
+  if (anyTimeBlocks > 0) parts.push(`${anyTimeBlocks} planned any time`);
+  if (unplannedSeconds > 0) parts.push(`${formatDuration(unplannedSeconds)} unplanned`);
+  return parts.join(' · ');
 }
 
 /**
  * One day's comparison. A session fills the planned block of the same task on
  * the same day, whatever time it ran; a task with two blocks that day fills the
- * first. Everything else that day is unplanned.
+ * first timed one, else its any-time block. Everything else that day is unplanned.
  */
 export function planVsActual(date: string, blocks: PlannedBlock[], sessions: TimelineSession[]): DayPlanVsActual {
   const dayBlocks = blocks
     .filter((b) => b.date === date)
-    .sort((a, b) => a.startMinutes - b.startMinutes);
+    .sort(compareBlocks);
   const fillByTask = new Map<string, BlockFill>();
   const fills = dayBlocks.map((block) => {
     const fill: BlockFill = { block, focusedSeconds: 0, sessions: [], share: 0, overSeconds: 0 };
@@ -220,6 +252,7 @@ export function planVsActual(date: string, blocks: PlannedBlock[], sessions: Tim
     unplanned,
     totals: {
       plannedMinutes: dayBlocks.reduce((sum, b) => sum + blockMinutes(b), 0),
+      anyTimeBlocks: dayBlocks.filter((b) => plannedBlockMinutes(b) === null).length,
       focusedSeconds,
       unplannedSeconds: unplanned.reduce((sum, s) => sum + s.durationSeconds, 0),
     },

@@ -19,7 +19,7 @@ function task(over: Partial<Task> = {}): Task {
 }
 
 function timedTask(date: string, id: string, start: number | null, end: number | null, over: Partial<Task> = {}): CalendarItem {
-  return { type: 'task', date, data: task({ id, title: id, startMinutes: start, endMinutes: end, ...over }) };
+  return { type: 'work_block', date, data: task({ id, title: id, startMinutes: start, endMinutes: end, ...over }) };
 }
 
 function habitDay(date: string, id: string, start: number, end: number): CalendarItem {
@@ -86,12 +86,15 @@ describe('nextUp', () => {
 
 describe('alsoToday', () => {
   const items = [
-    timedTask('2026-10-27', 'invoice', null, null),
+    // A work block that has passed is dropped, not late (D13).
+    timedTask('2026-10-27', 'missed-block', null, null),
     timedTask(TODAY, 'prep', 840, 900),
     timedTask(TODAY, 'reply', null, null),
     timedTask('2026-10-30', 'friday', null, null),
   ];
-  const week = weekTasksToWorkOn(items, TODAY);
+  // Late comes from the due date only, read from the task store (D4).
+  const late = [task({ id: 'invoice', title: 'invoice', dueDate: '2026-10-27T00:00:00.000Z' })];
+  const week = weekTasksToWorkOn(items, TODAY, late);
 
   it('lists late one-off tasks first, then today’s others, never the Next up task', () => {
     const next = nextUp(items.filter((i) => i.date === TODAY), 600, null);

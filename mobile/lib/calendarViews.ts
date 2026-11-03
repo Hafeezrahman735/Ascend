@@ -4,7 +4,7 @@ import {
   itemTitle, type TimeRange,
 } from './calendarItems';
 import { PRIORITY_RANK } from './planningTasks';
-import type { DayPlanVsActual } from './planVsActual';
+import { plannedBlockMinutes, type DayPlanVsActual } from './planVsActual';
 
 /**
  * Pure logic behind the calendar's Week lanes and Month deadlines.
@@ -117,17 +117,19 @@ export interface TaskFocus {
 /**
  * One task's focus on one day, from that day's plan-vs-actual. The single
  * source for the task sheet's "Focused" row and the Week lane's "52m/1h30", so
- * the two can never disagree. A task has at most one planned block a day (one
- * start/end per task, one occurrence per recurring day), and focus on a task
+ * the two can never disagree. A task's focus fills its first block that day
+ * (planVsActual), so the planned figure is the sum of all its timed blocks
+ * that day: null when it had none, or only an any-time one. Focus on a task
  * with no block is the unplanned sessions for it.
  */
 export function taskFocusOnDay(plan: DayPlanVsActual, taskId: string): TaskFocus | null {
-  const fill = plan.fills.find((f) => f.block.taskId === taskId);
-  if (fill) {
+  const fills = plan.fills.filter((f) => f.block.taskId === taskId);
+  if (fills.length > 0) {
+    const timed = fills.map((f) => plannedBlockMinutes(f.block)).filter((m): m is number => m !== null);
     return {
-      seconds: fill.focusedSeconds,
-      sessions: fill.sessions.length,
-      plannedMinutes: fill.block.endMinutes - fill.block.startMinutes,
+      seconds: fills.reduce((sum, f) => sum + f.focusedSeconds, 0),
+      sessions: fills.reduce((sum, f) => sum + f.sessions.length, 0),
+      plannedMinutes: timed.length > 0 ? timed.reduce((sum, m) => sum + m, 0) : null,
     };
   }
   const sessions = plan.unplanned.filter((s) => s.taskId === taskId);
@@ -151,7 +153,7 @@ const IMPORTANT_PRIORITIES: ReadonlySet<Task['priority']> = new Set(['high', 'ur
 export function isImportantDeadline(item: CalendarItem): boolean {
   if (itemIsDone(item)) return false;
   if (item.type === 'goal_deadline') return true;
-  if (item.type !== 'task') return false;
+  if (item.type !== 'task_due') return false;
   const task = item.data as Task;
   return !task.isRecurring && !task.isOccurrence && IMPORTANT_PRIORITIES.has(task.priority);
 }
@@ -164,7 +166,7 @@ export interface Deadline {
 
 function priorityRank(item: CalendarItem): number {
   // Goals rank with urgent work: a goal deadline is the commitment the tasks serve.
-  if (item.type !== 'task') return PRIORITY_RANK.urgent;
+  if (item.type !== 'task_due') return PRIORITY_RANK.urgent;
   return PRIORITY_RANK[(item.data as Task).priority];
 }
 
@@ -219,7 +221,7 @@ export function overdueDeadlineItems(tasks: Task[], goals: TaskGoal[], beforeKey
     if (task.isArchived || !task.dueDate) continue;
     const date = dateKeyOf(task.dueDate);
     if (date >= beforeKey) continue;
-    const item: CalendarItem = { type: 'task', date, data: task };
+    const item: CalendarItem = { type: 'task_due', date, data: task };
     if (isImportantDeadline(item)) out.push(item);
   }
   for (const goal of goals) {

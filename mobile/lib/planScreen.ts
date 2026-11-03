@@ -1,5 +1,5 @@
 import type { CalendarItem, Task } from '../types';
-import { bookedMinutes, calendarItemKey, countsTowardLoad, itemIsDone, itemTimeRange, type TimeRange } from './calendarItems';
+import { bookedMinutes, countsTowardLoad, isPlannedWorkItem, itemIsDone, itemTimeRange, type TimeRange } from './calendarItems';
 import type { WeekTask } from './planningTasks';
 
 /**
@@ -31,7 +31,7 @@ export function weekBreakdown(items: CalendarItem[]): WeekBreakdown {
     if (!range) continue;
     const minutes = range.end - range.start;
     out.total += minutes;
-    if (item.type === 'task') out.tasks += minutes;
+    if (item.type === 'work_block') out.tasks += minutes;
     else if (item.type === 'habit_instance') out.recurring += minutes;
     else out.events += minutes;
   }
@@ -40,15 +40,11 @@ export function weekBreakdown(items: CalendarItem[]): WeekBreakdown {
 
 // ── Today card ───────────────────────────────────────────────
 
-function isTaskItem(item: CalendarItem): boolean {
-  return item.type === 'task' || item.type === 'habit_instance';
-}
-
 /** Open timed task or recurring-day items on one day, ordered by start. */
 function openTimedWork(dayItems: CalendarItem[]): { item: CalendarItem; range: TimeRange }[] {
   const out: { item: CalendarItem; range: TimeRange }[] = [];
   for (const item of dayItems) {
-    if (!isTaskItem(item) || itemIsDone(item)) continue;
+    if (!isPlannedWorkItem(item) || itemIsDone(item)) continue;
     const range = itemTimeRange(item);
     if (range) out.push({ item, range });
   }
@@ -80,12 +76,12 @@ export function nextUp(todayItems: CalendarItem[], nowMinutes: number, fallback:
 /**
  * The "Also today" list: this week's late one-off tasks first, then today's
  * other open tasks in the order weekTasksToWorkOn gives them (timed by start,
- * then untimed). Never repeats the Next up task.
+ * then untimed). Never repeats the Next up task, including its other work
+ * blocks today: a task is matched by id, not by row.
  */
 export function alsoToday(weekTasks: WeekTask[], next: NextUp): WeekTask[] {
-  const skipKey = next?.kind === 'timed' ? calendarItemKey(next.item) : null;
-  const skipId = next?.kind === 'fallback' ? next.task.id : null;
-  const keep = (t: WeekTask) => t.key !== skipKey && t.task.id !== skipId;
+  const skipId = next?.kind === 'timed' ? next.taskId : next?.kind === 'fallback' ? next.task.id : null;
+  const keep = (t: WeekTask) => t.task.id !== skipId;
   const late = weekTasks.filter((t) => t.isOverdue && keep(t));
   const today = weekTasks.filter((t) => t.isToday && keep(t));
   return [...late, ...today];

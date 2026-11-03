@@ -44,7 +44,7 @@ describe('planVsActual', () => {
     expect(result.fills[0].share).toBeCloseTo(52 / 120);
     expect(result.fills[1]).toMatchObject({ focusedSeconds: 0, share: 0, sessions: [] });
     expect(result.unplanned.map((s) => s.id)).toEqual(['c']);
-    expect(result.totals).toEqual({ plannedMinutes: 180, focusedSeconds: 90 * MIN, unplannedSeconds: 38 * MIN });
+    expect(result.totals).toEqual({ plannedMinutes: 180, anyTimeBlocks: 0, focusedSeconds: 90 * MIN, unplannedSeconds: 38 * MIN });
   });
 
   it('caps the fill at the block and reports the overrun', () => {
@@ -67,7 +67,7 @@ describe('planVsActual', () => {
     const result = planVsActual(DAY, [], [session()]);
     expect(result.fills).toEqual([]);
     expect(result.unplanned).toHaveLength(1);
-    expect(result.totals).toEqual({ plannedMinutes: 0, focusedSeconds: 25 * MIN, unplannedSeconds: 25 * MIN });
+    expect(result.totals).toEqual({ plannedMinutes: 0, anyTimeBlocks: 0, focusedSeconds: 25 * MIN, unplannedSeconds: 25 * MIN });
   });
 
   it('fills only the first block when a task is planned twice in a day', () => {
@@ -79,27 +79,34 @@ describe('planVsActual', () => {
 
   it('shows nothing for an empty day', () => {
     expect(planVsActual(DAY, [], [])).toEqual({
-      fills: [], unplanned: [], totals: { plannedMinutes: 0, focusedSeconds: 0, unplannedSeconds: 0 },
+      fills: [], unplanned: [], totals: { plannedMinutes: 0, anyTimeBlocks: 0, focusedSeconds: 0, unplannedSeconds: 0 },
     });
   });
 });
 
 describe('planned blocks', () => {
+  /** A one-off task's work block as the calendar draws it: the task, with the block's times. */
   const task = {
-    id: 'case-study', title: 'Write case study', dueDate: `${DAY}T00:00:00.000Z`,
+    id: 'case-study', title: 'Write case study',
     startMinutes: 540, endMinutes: 660, isRecurring: false, isCompleted: false,
+  };
+  /** The same task in the store: no times of its own, its plan on `blocks`. */
+  const stored = {
+    ...task, startMinutes: null, endMinutes: null,
+    blocks: [{ date: DAY, startMinutes: 540, endMinutes: 660 }],
   };
   const habit = {
     id: 'inbox', title: 'Inbox zero', startMinutes: 480, endMinutes: 510, isRecurring: true, isCompleted: false,
   };
 
-  it('never counts events, notes or untimed tasks as planned', () => {
+  it('never counts events, notes, deadlines or untimed habit days as planned', () => {
     const items: CalendarItem[] = [
-      { type: 'task', date: DAY, data: task },
-      { type: 'task', date: DAY, data: { ...task, id: 'untimed', startMinutes: null, endMinutes: null } },
+      { type: 'work_block', date: DAY, data: task },
+      { type: 'task_due', date: DAY, data: { ...task, id: 'due', startMinutes: null, endMinutes: null } },
       { type: 'event', date: DAY, data: { id: 'call', title: 'Client call', startMinutes: 660, endMinutes: 690 } },
       { type: 'note', date: DAY, data: { id: 'n', content: 'Remember' } },
       { type: 'habit_instance', date: DAY, data: habit },
+      { type: 'habit_instance', date: DAY, data: { ...habit, id: 'untimed-habit', startMinutes: null, endMinutes: null } },
     ];
     expect(plannedBlocksFromCalendar(items).map((b) => [b.taskId, b.kind])).toEqual([
       ['case-study', 'task'],
@@ -107,17 +114,40 @@ describe('planned blocks', () => {
     ]);
   });
 
+  it('counts an any-time work block as planned, with no minutes (D12)', () => {
+    const anyTime = { ...task, id: 'any', startMinutes: null, endMinutes: null };
+    const blocks = plannedBlocksFromCalendar([{ type: 'work_block', date: DAY, data: anyTime }]);
+    expect(blocks).toEqual([
+      { taskId: 'any', date: DAY, title: 'Write case study', startMinutes: null, endMinutes: null, kind: 'task' },
+    ]);
+    const plan = planVsActual(DAY, blocks, [session({ taskId: 'any' })]);
+    expect(plan.unplanned).toEqual([]);
+    expect(plan.fills[0].focusedSeconds).toBe(25 * MIN);
+    expect(plan.totals).toMatchObject({ plannedMinutes: 0, anyTimeBlocks: 1, unplannedSeconds: 0 });
+  });
+
+  it("fills a task's timed block before its any-time one on the same day", () => {
+    const blocks = plannedBlocksFromCalendar([
+      { type: 'work_block', date: DAY, data: { ...task, startMinutes: null, endMinutes: null } },
+      { type: 'work_block', date: DAY, data: task },
+    ]);
+    const plan = planVsActual(DAY, blocks, [session({ taskId: 'case-study' })]);
+    expect(plan.fills.map((f) => [f.block.startMinutes, f.focusedSeconds])).toEqual([[540, 25 * MIN], [null, 0]]);
+  });
+
   it('gives the same blocks from the calendar and from the task store for the same tasks', () => {
     const fromCalendar = plannedBlocksFromCalendar([
-      { type: 'task', date: DAY, data: task },
+      { type: 'work_block', date: DAY, data: task },
       { type: 'habit_instance', date: DAY, data: habit },
     ]);
-    const fromTasks = plannedBlocksFromTasks([task, habit], DAY);
+    const fromTasks = plannedBlocksFromTasks([stored, habit], DAY);
     expect(fromTasks).toEqual(fromCalendar);
   });
 
-  it('drops one-off tasks due on another day from Today', () => {
-    expect(plannedBlocksFromTasks([{ ...task, dueDate: '2026-11-01T00:00:00.000Z' }], DAY)).toEqual([]);
+  it("takes a one-off task's blocks on the day, never its due date or stale own times", () => {
+    expect(plannedBlocksFromTasks([{ ...stored, blocks: [{ date: '2026-11-01', startMinutes: 540, endMinutes: 660 }] }], DAY)).toEqual([]);
+    // An older build's cache may still carry times on the task itself.
+    expect(plannedBlocksFromTasks([{ ...task, blocks: [] }], DAY)).toEqual([]);
   });
 });
 
@@ -176,20 +206,27 @@ describe('timelineFromHistory', () => {
 
 describe('summaryLine', () => {
   it('reads focused of planned, then unplanned', () => {
-    expect(summaryLine({ plannedMinutes: 180, focusedSeconds: 90 * MIN, unplannedSeconds: 38 * MIN }))
+    expect(summaryLine({ plannedMinutes: 180, anyTimeBlocks: 0, focusedSeconds: 90 * MIN, unplannedSeconds: 38 * MIN }))
       .toBe('1h 30m of 3h planned · 38m unplanned');
   });
 
   it('drops the unplanned part when there is none', () => {
-    expect(summaryLine({ plannedMinutes: 60, focusedSeconds: 25 * MIN, unplannedSeconds: 0 })).toBe('25m of 1h planned');
+    expect(summaryLine({ plannedMinutes: 60, anyTimeBlocks: 0, focusedSeconds: 25 * MIN, unplannedSeconds: 0 })).toBe('25m of 1h planned');
   });
 
   it('says nothing was planned rather than "0m planned"', () => {
-    expect(summaryLine({ plannedMinutes: 0, focusedSeconds: 25 * MIN, unplannedSeconds: 25 * MIN }))
+    expect(summaryLine({ plannedMinutes: 0, anyTimeBlocks: 0, focusedSeconds: 25 * MIN, unplannedSeconds: 25 * MIN }))
       .toBe('25m focused, nothing planned');
   });
 
+  it('counts any-time work blocks as planned, never as "nothing planned"', () => {
+    expect(summaryLine({ plannedMinutes: 0, anyTimeBlocks: 2, focusedSeconds: 70 * MIN, unplannedSeconds: 0 }))
+      .toBe('1h 10m focused · 2 planned any time');
+    expect(summaryLine({ plannedMinutes: 120, anyTimeBlocks: 1, focusedSeconds: 75 * MIN, unplannedSeconds: 20 * MIN }))
+      .toBe('1h 15m of 2h planned · 1 planned any time · 20m unplanned');
+  });
+
   it('is silent on an empty day', () => {
-    expect(summaryLine({ plannedMinutes: 0, focusedSeconds: 0, unplannedSeconds: 0 })).toBeNull();
+    expect(summaryLine({ plannedMinutes: 0, anyTimeBlocks: 0, focusedSeconds: 0, unplannedSeconds: 0 })).toBeNull();
   });
 });

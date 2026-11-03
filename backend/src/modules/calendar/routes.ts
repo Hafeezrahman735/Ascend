@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { projectRecurring } from './recurringProjection';
+import { BLOCK_ORDER } from '../../lib/workBlocks';
 import { config } from '../../config';
 import { authenticate } from '../../middleware/auth';
 import { handleAuthError, handleZodError } from '../../lib/errors';
@@ -146,8 +147,10 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
     const { start, end } = parseRange(req);
     const bounds = rangeBounds(start, end);
 
-    const [tasks, completions, goals, notes, events, connection] = await Promise.all([
-      // One-off tasks. Recurring tasks are projected below.
+    const [dueTasks, blocks, completions, goals, notes, events, connection] = await Promise.all([
+      // One-off tasks due in range: their deadline marker (task_due). Done ones
+      // too, so a finished task keeps its place in history. Recurring tasks
+      // are projected below.
       prisma.task.findMany({
         where: {
           userId,
@@ -155,6 +158,13 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
           isRecurring: false,
           dueDate: bounds,
         },
+      }),
+      // When one-off tasks are planned: their work blocks in range. A deleted
+      // task is archived, not removed, so its blocks are filtered out here.
+      prisma.workBlock.findMany({
+        where: { userId, date: { gte: start, lte: end }, task: { isArchived: false, isRecurring: false } },
+        include: { task: true },
+        orderBy: BLOCK_ORDER,
       }),
       // Done days of recurring tasks in range.
       prisma.recurringCompletion.findMany({
@@ -200,7 +210,19 @@ calendarRouter.get('/calendar', async (req: Request, res: Response) => {
     }
 
     const items: { type: string; date: string; data: unknown }[] = [
-      ...tasks.map((t) => ({ type: 'task', date: toDateKey(t.dueDate!), data: t })),
+      // A work block is drawn as its task on the block's day and times.
+      // data.id stays the TASK id: every reader treats it as one.
+      ...blocks.map(({ task, date, startMinutes, endMinutes }) => ({
+        type: 'work_block',
+        date,
+        data: { ...task, startMinutes, endMinutes },
+      })),
+      // A deadline, never work: no times, so it never lands on the timeline.
+      ...dueTasks.map((t) => ({
+        type: 'task_due',
+        date: toDateKey(t.dueDate!),
+        data: { ...t, startMinutes: null, endMinutes: null },
+      })),
       // One row per day each recurring task is on. The id is the recurring
       // task's own, so ticking a day off from the calendar targets
       // PUT /tasks/:id/completions/:date like the task list does.

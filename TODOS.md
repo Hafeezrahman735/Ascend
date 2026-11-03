@@ -2,6 +2,16 @@
 
 Deferred work, with the context that produced it. Written by gstack plan reviews.
 
+## From /plan-design-review — task due + work blocks (2026-11-03)
+
+- [ ] **P3: Write a DESIGN.md via /design-consultation.** No written design system exists;
+      colours (`Colors.primary`, `AMBER`, `ROSE`), `CalendarItemRow`, chips, mono labels and
+      the wording rule (Due = deadline, Work blocks = when you'll work, "session" = focus only)
+      live only in code, so every review re-derives them. Cons: a review session, nothing
+      user-visible. Context: `docs/designs/task-due-and-work-blocks.md` "Design" section lists
+      the current tokens. Depends on: best after the calendar redesign (`531bd89`) and the
+      work-blocks build land.
+
 ## From /autoplan CEO review — achievements & rank (2026-08-18)
 
 - [ ] **Backend scheduler + streak-at-risk push.** No scheduled job of any kind exists in

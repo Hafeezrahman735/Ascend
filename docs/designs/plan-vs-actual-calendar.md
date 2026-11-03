@@ -6,6 +6,7 @@ Repo: Hafeezrahman735/pomodoro-app
 Status: APPROVED (founder, 2026-10-31)
 Mode: Startup
 Supersedes: hafee-staging-design-20261027-030621.md (recurring tasks; a different topic, kept as the branch's previous design). Builds on hafee-staging-design-20261022-191215.md (time analytics, goal pace).
+Update 2026-11-03: a one-off task's planned blocks are now its WORK BLOCKS, not its due day with a time (docs/designs/task-due-and-work-blocks.md). An any-time work block counts as planned with 0 minutes; the matching rule below is unchanged.
 
 ## Problem Statement
 

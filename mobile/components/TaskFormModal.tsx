@@ -4,16 +4,17 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Task, TaskGoal, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS } from '../types';
+import { Task, TaskGoal, DayOfWeek, DAY_LABELS as DOW_LABELS, DAY_FULL_LABELS, type WorkBlock } from '../types';
 import { useTheme, useIsDark } from '../hooks/useTheme';
 import { getSessionPlan } from '../lib/sessionPlan';
 import {
-  buildSaveData, initialFields, type FormSaveData, type Priority, type TaskFormPrefill,
+  addWorkBlock, buildSaveData, initialFields, workBlockError, type FormSaveData, type Priority, type TaskFormPrefill,
 } from '../lib/taskForm';
 import FormSheet from './FormSheet';
+import WorkBlocksEditor from './WorkBlocksEditor';
 import { MONO } from './SheetPrimitives';
 import { priorityColor } from '../utils/priority';
-import { parseLocalDate, pickerAcceptsValue, pickerMinimumDate } from '../utils/date';
+import { getLocalDateString, parseLocalDate, pickerAcceptsValue, pickerMinimumDate } from '../utils/date';
 
 /**
  * The task create/edit sheet, shared by Today and the calendar.
@@ -74,7 +75,7 @@ export default function TaskFormModal({
   visible, task, prefill, note, existingTags, sessionLengthMinutes, goals, onSave, onClose, onDelete,
 }: {
   visible: boolean; task: Task | null;
-  /** Starting values for empty fields (Find a slot). */
+  /** A work block to add on open (Find a slot, + Task on a calendar day). */
   prefill?: TaskFormPrefill;
   /** One quiet line under the title, e.g. why a day was suggested. */
   note?: string;
@@ -102,6 +103,7 @@ export default function TaskFormModal({
   const [showGoalPicker, setShowGoalPicker] = useState(false);
   const [startMinutes, setStartMinutes] = useState<number | null>(null);
   const [endMinutes, setEndMinutes] = useState<number | null>(null);
+  const [blocks, setBlocks] = useState<WorkBlock[]>([]);
   const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
   const [titleError, setTitleError] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
@@ -122,6 +124,7 @@ export default function TaskFormModal({
       setRecurringDays(f.recurringDays);
       setStartMinutes(f.startMinutes);
       setEndMinutes(f.endMinutes);
+      setBlocks(f.blocks);
       setShowTimePicker(null);
       // Closed alongside the time picker, and for a stronger reason than tidiness:
       // re-seeding moves dueDate underneath a picker that may still be mounted,
@@ -138,9 +141,9 @@ export default function TaskFormModal({
     if (!title.trim()) { setTitleError(true); return; }
     // The backend rejects these too; catching it here keeps the sheet open
     // with the offending field in view instead of failing after it closes.
-    if (timeError) return;
+    if (isRecurring ? timeError : blockError) return;
     onSave(buildSaveData(task, {
-      title, description, dueDate, tags, estimatedMinutes, startMinutes, endMinutes,
+      title, description, dueDate, tags, estimatedMinutes, startMinutes, endMinutes, blocks,
       priority, taskGoalId, isRecurring, recurringDays,
     }));
   };
@@ -172,11 +175,29 @@ export default function TaskFormModal({
     setDueDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`);
   };
 
-  // Both ends or neither, and the block must move forwards — the same rules the
+  // A habit's time: both ends or neither, and forwards — the same rules the
   // server enforces, mirrored here so the sheet can explain itself.
   const timeError = startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes
     ? 'End time must be after the start time'
     : null;
+  // A one-off task's work blocks; WorkBlocksEditor shows the message itself.
+  const blockError = workBlockError(blocks);
+  const saveBlocked = isRecurring ? !!timeError : !!blockError;
+
+  /**
+   * Switching kind. Off: a habit's time becomes a work block today, so the
+   * slot is not silently lost (D5); the server clears the habit time. On: the
+   * due date becomes "repeat until", so it starts empty.
+   */
+  const toggleRecurring = (val: boolean) => {
+    setIsRecurring(val);
+    setDatePickerFloor(null);
+    if (val) { setDueDate(''); return; }
+    setRecurringDays([]);
+    if (startMinutes !== null && endMinutes !== null) {
+      setBlocks((prev) => addWorkBlock(prev, { date: getLocalDateString(), startMinutes, endMinutes }));
+    }
+  };
 
   /** A fixed calendar date carrying the time, which is all the picker reads. */
   const minutesToDate = (minutes: number | null) => {
@@ -265,18 +286,17 @@ export default function TaskFormModal({
       <View style={{ flexDirection: 'row', gap: 20, marginBottom: 18 }}>
         <View style={{ flex: 1 }}>
           {/* The same field means two things, so it says which. On a one-off task
-              it is the day the task is due. On a repeating one it is the last
-              day the habit fires — which the app now actually honours. It was
-              always collectable here and read by nothing at all. */}
-          <Text style={monoLabel}>{isRecurring ? 'REPEAT UNTIL' : 'DUE DATE'}</Text>
+              it is the deadline only; when you plan to work on it is WORK
+              BLOCKS below (task-due-and-work-blocks). On a repeating one it is
+              the last day the habit fires. */}
+          <Text style={monoLabel}>{isRecurring ? 'REPEAT UNTIL' : 'DUE'}</Text>
           {dueDate ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryDim, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
                 <Ionicons name="calendar-outline" size={14} color={Colors.primarySoft} />
                 <Text style={{ color: Colors.primarySoft, fontSize: 12.5, fontWeight: '600' }}>{parseLocalDate(dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
               </TouchableOpacity>
-              {/* A time cannot outlive its day — the server rejects that pair. */}
-              <TouchableOpacity onPress={() => { setDueDate(''); clearSchedule(); setDatePickerFloor(null); }}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
+              <TouchableOpacity onPress={() => { setDueDate(''); setDatePickerFloor(null); }} accessibilityRole="button" accessibilityLabel={isRecurring ? 'Clear end date' : 'Clear due date'}><Ionicons name="close-circle" size={16} color={Colors.subtext} /></TouchableOpacity>
             </View>
           ) : (
             <TouchableOpacity onPress={openDatePicker} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: Colors.raised, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}>
@@ -344,6 +364,11 @@ export default function TaskFormModal({
         </View>
       )}
 
+      {/* when you plan to work on a one-off task (D21) */}
+      {!isRecurring && (
+        <WorkBlocksEditor blocks={blocks} onChange={setBlocks} estimatedMinutes={estimatedMinutes} />
+      )}
+
       {/* estimated focus time */}
       <Text style={monoLabel}>ESTIMATED FOCUS TIME</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 }}>
@@ -364,14 +389,12 @@ export default function TaskFormModal({
         )}
       </View>
 
-      {/* scheduled time — drives the Day timeline in the calendar */}
+      {/* a recurring task's time slot — each day it repeats sits here on the
+          calendar timeline. A one-off task plans with work blocks instead. */}
+      {isRecurring && (
       <View style={{ marginBottom: 18 }}>
         <Text style={monoLabel}>TIME</Text>
-        {!dueDate ? (
-          <Text style={{ color: Colors.subtext, fontSize: 12 }}>
-            Pick a due date first — a time needs a day to sit on.
-          </Text>
-        ) : (
+        {(
           <>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TouchableOpacity
@@ -445,6 +468,7 @@ export default function TaskFormModal({
           </>
         )}
       </View>
+      )}
 
       {/* link to goal — no slot in the design; kept here when goals exist */}
       {goals.length > 0 && (
@@ -472,7 +496,7 @@ export default function TaskFormModal({
         </View>
         <Switch
           value={isRecurring}
-          onValueChange={(val) => { setIsRecurring(val); setDatePickerFloor(null); if (val) setDueDate(''); else setRecurringDays([]); }}
+          onValueChange={toggleRecurring}
           trackColor={{ false: Colors.inactive, true: Colors.primary }}
           thumbColor="#FFFFFF"
         />
@@ -518,7 +542,7 @@ export default function TaskFormModal({
       <TextInput style={{ backgroundColor: Colors.raised, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 13, minHeight: 56, color: Colors.textBright, fontSize: 13, textAlignVertical: 'top', marginBottom: 20 }} placeholder="What is this task about?" placeholderTextColor={Colors.subtext} value={description} onChangeText={setDescription} multiline />
 
       {/* create / save */}
-      <TouchableOpacity onPress={handleSave} disabled={!!timeError} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: timeError ? 0.5 : 1 }}>
+      <TouchableOpacity onPress={handleSave} disabled={saveBlocked} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 15, opacity: saveBlocked ? 0.5 : 1 }}>
         <Ionicons name={task ? 'checkmark' : 'add'} size={16} color="#fff" />
         <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{task ? 'Save changes' : 'Create task'}</Text>
       </TouchableOpacity>

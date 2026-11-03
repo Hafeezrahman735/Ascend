@@ -8,7 +8,9 @@ import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H } from './SheetPrimitiv
 import AppPressable from './AppPressable';
 import { api } from '../services/api';
 import { priorityColor, priorityLabel } from '../utils/priority';
-import { parseLocalDate } from '../utils/date';
+import { getLocalDateString, parseLocalDate } from '../utils/date';
+import { workBlocksSummary } from '../lib/taskForm';
+import { formatMinutes } from '../lib/calendarItems';
 import { Space, Radius } from '../constants/spacing';
 import {
   formatSeconds, formatDuration, getDueChip, formatEstimateDelta, formatLastWorked, formatConsistency,
@@ -82,6 +84,9 @@ export default function TaskStatsModal({
         .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
     : null;
   const isOverdue = !task.isCompleted && !!dueChip?.a11yLabel.includes('overdue');
+  // Every upcoming work block in one line, under the deadline (D24): what is
+  // planned before it is due. Read-only; blocks are edited in the task form.
+  const plan = task.isRecurring ? null : workBlocksSummary(task.blocks ?? [], getLocalDateString(), formatMinutes);
 
   return (
     <BottomSheet visible onClose={onClose} sheetHeight={SCREEN_H * 0.66}>
@@ -203,6 +208,22 @@ export default function TaskStatsModal({
             />
           )}
         </View>
+        {plan && (
+          <View
+            accessible
+            accessibilityLabel={`Work blocks: ${plan.text}${plan.minutes > 0 ? `, ${formatDuration(plan.minutes * 60)} planned` : ''}`}
+            style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: Colors.raised, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 12, marginBottom: Space.md }}
+          >
+            <Ionicons name="checkbox-outline" size={14} color={Colors.primarySoft} style={{ marginTop: 1 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: Colors.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>WORK BLOCKS</Text>
+              <Text style={{ color: Colors.textBright, fontSize: 13, marginTop: 4 }}>{plan.text}</Text>
+              {plan.minutes > 0 && (
+                <Text style={{ color: Colors.subtext, fontSize: 11.5, marginTop: 2 }}>{formatDuration(plan.minutes * 60)} planned</Text>
+              )}
+            </View>
+          </View>
+        )}
         {!ready && !analyticsError && <ActivityIndicator color={Colors.primary} style={{ marginBottom: Space.md }} />}
         {analyticsError && <Text style={{ color: Colors.text, fontSize: 12, marginBottom: Space.md }}>Analytics unavailable — try again later.</Text>}
 

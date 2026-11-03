@@ -6,8 +6,9 @@ import { useTaskStore } from '../../stores/taskStore';
 import type { CalendarItem, Note, Task } from '../../types';
 import { addDays, getLocalDateString, parseLocalDate } from '../../utils/date';
 import { getCalendarStyles, formatMinutes, itemTimeRange, calendarItemKey, typeColor } from './shared';
-import { weekTasksToWorkOn } from '../../lib/planningTasks';
+import { unscheduledTasks, weekTasksToWorkOn } from '../../lib/planningTasks';
 import { topTasks } from '../../lib/taskBoard';
+import { getDueChip } from '../../lib/taskMetrics';
 import {
   alsoToday, findSlot, nextUp, weekBreakdown, weekPosition, weekRows, type Slot, type WeekRow,
 } from '../../lib/planScreen';
@@ -333,15 +334,14 @@ export default function PlanningView({
 
   const fallback = topTasks(tasks, now, 1)[0] ?? null;
   const next = nextUp(todayItems, nowMinutes, fallback);
-  const also = position === 'current' ? alsoToday(weekTasksToWorkOn(weekItems, todayKey), next) : [];
+  const also = position === 'current' ? alsoToday(weekTasksToWorkOn(weekItems, todayKey, tasks), next) : [];
   const rows = weekRows(dayKeys, itemsByDate, todayKey);
 
-  // Work with no day yet. A task with no due date appears on no day in the
-  // calendar at all, so this list is its only home here.
-  const unscheduled = useMemo(
-    () => tasks.filter((t) => !t.isCompleted && !t.isArchived && !t.dueDate && !t.isRecurring),
-    [tasks],
-  );
+  // Work with nothing planned ahead: no work block from today to the end of
+  // this week (D4, D13). A due date is not a plan, so a dated task with no
+  // block is here too, showing when it is due; so is one whose only block
+  // this week has passed.
+  const unscheduled = unscheduledTasks(tasks, todayKey, dayKeys[dayKeys.length - 1]);
 
   return (
     <View>
@@ -427,17 +427,24 @@ export default function PlanningView({
                   ? null
                   : findSlot(dayKeys, itemsByDate, task.estimatedMinutes, todayKey, nowMinutes);
                 const estimate = task.estimatedMinutes ? `${task.estimatedMinutes}m` : null;
+                const due = getDueChip(task, Colors, now);
                 return (
                   <View key={task.id} style={[styles.itemRow, { minHeight: 44 }]}>
                     <TouchableOpacity
                       onPress={() => onOpenTask(task)}
                       accessibilityRole="button"
-                      accessibilityLabel={`Unscheduled task: ${task.title}${estimate ? `, ${estimate} estimated` : ''}`}
+                      accessibilityLabel={`Unscheduled task: ${task.title}${due ? `, ${due.a11yLabel}` : ''}${estimate ? `, ${estimate} estimated` : ''}`}
                       style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 }}
                     >
                       <Stripe color={Colors.primarySoft} />
                       <Text style={{ flex: 1, color: Colors.text, fontSize: 13 }} numberOfLines={1}>{task.title}</Text>
-                      <Text style={{ color: Colors.subtext, fontSize: 11 }}>{estimate ?? '—'}</Text>
+                      {due ? (
+                        <View style={{ backgroundColor: due.bg, borderRadius: 7, paddingHorizontal: 7, paddingVertical: 2 }}>
+                          <Text style={{ color: due.fg, fontSize: 10.5, fontWeight: '600' }}>{due.label}</Text>
+                        </View>
+                      ) : (
+                        <Text style={{ color: Colors.subtext, fontSize: 11 }}>{estimate ?? '—'}</Text>
+                      )}
                     </TouchableOpacity>
                     {slot && (
                       <TouchableOpacity

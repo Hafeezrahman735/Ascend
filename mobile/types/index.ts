@@ -166,15 +166,24 @@ export interface Task {
   // These are nullable columns on the backend, so the API sends `null` (not
   // undefined) when they are unset, and PATCH accepts `null` to clear them.
   description?: string | null;
+  /** A one-off task's deadline only; on a recurring task, the last day it repeats. */
   dueDate?: string | null;
   tags: string[];
   estimatedMinutes?: number | null;
-  // Scheduled time of day, as minutes from LOCAL midnight (0-1439). Both set or
-  // both null — the backend rejects a half-open pair. Not an instant on purpose:
-  // 09:00 must stay 09:00 across a timezone change, matching dueDate’s
-  // “a day is a day” contract. Untimed tasks are the common case.
+  // A RECURRING task's time of day, as minutes from LOCAL midnight (0-1439).
+  // Both set or both null. Not an instant on purpose: 09:00 must stay 09:00
+  // across a timezone change. A one-off task has none of its own — its planned
+  // time is `blocks` — except on a calendar item, where a work block's times
+  // are copied onto the task it draws.
   startMinutes?: number | null;
   endMinutes?: number | null;
+  /**
+   * When the user plans to work on a one-off task (docs/designs/
+   * task-due-and-work-blocks.md), sorted by day then start. Every block the
+   * task has: a save sends the whole list back and the server replaces it.
+   * Missing on rows cached by an older build and on recurring tasks.
+   */
+  blocks?: WorkBlock[];
   priority: 'low' | 'medium' | 'high' | 'urgent';
   isArchived: boolean;
   isCompleted: boolean;
@@ -206,6 +215,15 @@ export interface Task {
   longestStreak: number;
   totalCompletions: number;
   totalFocusSeconds: number;
+}
+
+/** One planned stretch of work on a one-off task: a local day, optionally timed. */
+export interface WorkBlock {
+  /** 'YYYY-MM-DD' */
+  date: string;
+  /** Minutes from local midnight, both set or both null ("any time"). */
+  startMinutes: number | null;
+  endMinutes: number | null;
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
@@ -251,8 +269,14 @@ export interface CalendarEvent {
   updatedAt: string;
 }
 
+/**
+ * `work_block` draws a one-off task on a day it is planned (its data is the
+ * task, with the block's times); `task_due` marks a one-off task's deadline
+ * (the task, untimed). Both carry the TASK's id in data.id.
+ */
 export type CalendarItemType =
-  | 'task'
+  | 'work_block'
+  | 'task_due'
   | 'habit_instance'
   | 'goal_deadline'
   | 'event'

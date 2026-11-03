@@ -1,5 +1,5 @@
 import type { CalendarItem, Task } from '../types';
-import { calendarItemKey, itemIsDone, itemTitle } from './calendarItems';
+import { calendarItemKey, isPlannedWorkItem, itemIsDone, itemTitle } from './calendarItems';
 
 /**
  * The week's actual workload, for the Planning tab.
@@ -38,8 +38,13 @@ import { calendarItemKey, itemIsDone, itemTitle } from './calendarItems';
  * do yesterday's reading today.
  *
  * So a habit collapses to ONE row at its next occurrence, and past occurrences
- * are dropped. One-off tasks keep the opposite rule — overdue means still owed,
- * and they stay Late until done.
+ * are dropped.
+ *
+ * One-off tasks (docs/designs/task-due-and-work-blocks.md): a row per work
+ * block today or later; a block that has passed is gone, like a missed habit
+ * day (the task goes back to Unscheduled, D13). Lateness comes from the due
+ * date ONLY: an open task due before today is Late until done, never because a
+ * block was missed (D4). The due day itself is a deadline, not a work row.
  */
 
 export const PRIORITY_RANK: Record<Task['priority'], number> = {
@@ -52,9 +57,9 @@ export const PRIORITY_RANK: Record<Task['priority'], number> = {
 export interface WeekTask {
   key: string;
   title: string;
-  /** 'YYYY-MM-DD' the task is due on. */
+  /** 'YYYY-MM-DD' of the row: its work block's day, or the due day of a late task. */
   dateKey: string;
-  /** Due before today and still open — this week, but already late. */
+  /** Due before today and still open: late, from the due date alone. */
   isOverdue: boolean;
   isToday: boolean;
   /** Minutes from local midnight when the task is scheduled, if it is. */
@@ -65,10 +70,6 @@ export interface WeekTask {
   task: Task;
   /** The calendar item the row came from, so a tap can open its sheet. */
   item: CalendarItem;
-}
-
-function isTaskItem(item: CalendarItem): boolean {
-  return item.type === 'task' || item.type === 'habit_instance';
 }
 
 /**
@@ -91,7 +92,7 @@ function toWeekTask(item: CalendarItem, todayKey: string): WeekTask {
     key: calendarItemKey(item),
     title: itemTitle(item),
     dateKey: item.date,
-    isOverdue: item.date < todayKey,
+    isOverdue: item.type === 'task_due' && item.date < todayKey,
     isToday: item.date === todayKey,
     startMinutes: task.startMinutes ?? null,
     estimatedMinutes: task.estimatedMinutes ?? null,
@@ -122,14 +123,24 @@ function templateIdOf(item: CalendarItem): string | null {
  * before today are dropped, and a habit with none left this week does not
  * appear at all.
  */
-export function weekTasksToWorkOn(items: CalendarItem[], todayKey: string): WeekTask[] {
+export function weekTasksToWorkOn(items: CalendarItem[], todayKey: string, lateTasks: Task[] = []): WeekTask[] {
   const out: WeekTask[] = [];
   // Earliest not-yet-past occurrence per recurring template.
   const nextByTemplate = new Map<string, WeekTask>();
 
+  // Late one-off tasks come from the task store, which holds every open task,
+  // not only the loaded week, shaped as the deadline item the calendar sends.
+  for (const task of lateTasks) {
+    const due = task.dueDate?.slice(0, 10);
+    if (!due || due >= todayKey || task.isRecurring || task.isCompleted || task.isArchived) continue;
+    out.push(toWeekTask({ type: 'task_due', date: due, data: task }, todayKey));
+  }
+
   for (const item of items) {
-    if (!isTaskItem(item)) continue;
+    if (!isPlannedWorkItem(item)) continue;
     if (itemIsDone(item)) continue;
+    // A work block that has passed is not owed; its task is Unscheduled again.
+    if (item.type === 'work_block' && item.date < todayKey) continue;
 
     if (item.type === 'habit_instance') {
       // A missed recurrence is gone, not owed. Dropping it here is what stops
@@ -178,7 +189,34 @@ function compareWeekTasks(a: WeekTask, b: WeekTask): number {
   return a.title.localeCompare(b.title);
 }
 
-/** Total estimated minutes across the week's remaining tasks. 0 when none carry an estimate. */
+/**
+ * Total estimated minutes across the week's remaining tasks. 0 when none carry
+ * an estimate. A task with several work blocks is one task: counted once.
+ */
 export function estimatedMinutesRemaining(weekTasks: WeekTask[]): number {
-  return weekTasks.reduce((sum, t) => sum + (t.estimatedMinutes ?? 0), 0);
+  const seen = new Set<string>();
+  let total = 0;
+  for (const t of weekTasks) {
+    const id = t.isRecurring ? t.key : t.task.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    total += t.estimatedMinutes ?? 0;
+  }
+  return total;
+}
+
+/** True when a one-off task has a work block on a day in [fromKey, toKey]. */
+export function hasBlockBetween(task: Pick<Task, 'blocks'>, fromKey: string, toKey: string): boolean {
+  return (task.blocks ?? []).some((b) => b.date >= fromKey && b.date <= toKey);
+}
+
+/**
+ * Open one-off tasks with no work block from today to the end of the shown
+ * week (D4, D13): nothing planned ahead, so they need a plan. A task whose
+ * only block this week has already passed is back here. On a past week the
+ * range starts today and runs on, so "planned for later" still counts.
+ */
+export function unscheduledTasks(tasks: Task[], todayKey: string, weekEndKey: string): Task[] {
+  const toKey = weekEndKey < todayKey ? '9999-12-31' : weekEndKey;
+  return tasks.filter((t) => !t.isCompleted && !t.isArchived && !t.isRecurring && !hasBlockBetween(t, todayKey, toKey));
 }

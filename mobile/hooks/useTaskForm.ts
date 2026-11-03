@@ -4,15 +4,19 @@ import type { Task } from '../types';
 import { useTaskStore } from '../stores/taskStore';
 import { useGoalStore } from '../stores/goalStore';
 import { useSettings } from '../store/hooks';
-import { formDate, type FormSaveData, type TaskFormPrefill } from '../lib/taskForm';
+import { followDate, formDate, type FormSaveData, type TaskFormPrefill } from '../lib/taskForm';
+import { getLocalDateString } from '../utils/date';
 import type TaskFormModal from '../components/TaskFormModal';
 
 /** What changed, so a screen can follow the task (the calendar re-anchors on it). */
 export interface TaskFormChange {
   kind: 'created' | 'updated' | 'deleted';
   taskId: string | null;
-  /** The task's day after the change, 'YYYY-MM-DD', or null if it has none. */
-  dueDate: string | null;
+  /**
+   * The day to show after the change, 'YYYY-MM-DD', or null: the block a
+   * prefill added, else the task's next work block, else its due date.
+   */
+  date: string | null;
 }
 
 type FormProps = ComponentProps<typeof TaskFormModal>;
@@ -63,23 +67,25 @@ export function useTaskForm(options?: { onChanged?: (change: TaskFormChange) => 
   const close = useCallback(() => setOpen(null), []);
 
   // A failed create is said out loud, with the same task one tap from a retry.
-  const createWithRetry = useCallback(async function attempt(data: FormSaveData): Promise<void> {
+  const createWithRetry = useCallback(async function attempt(data: FormSaveData, date: string | null): Promise<void> {
     const { task, error } = await createTask(data);
     if (!error) {
-      onChangedRef.current?.({
-        kind: 'created', taskId: task?.id ?? null, dueDate: data.dueDate ?? null,
-      });
+      onChangedRef.current?.({ kind: 'created', taskId: task?.id ?? null, date });
       return;
     }
     Alert.alert('Task not saved', error, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Try again', onPress: () => { void attempt(data); } },
+      { text: 'Try again', onPress: () => { void attempt(data, date); } },
     ]);
   }, [createTask]);
 
   const save = useCallback(async (data: FormSaveData) => {
     const editing = open?.task ?? null;
+    const prefillDate = open?.prefill?.block.date ?? null;
     setOpen(null);
+    const dueAfter = 'dueDate' in data ? data.dueDate ?? null : formDate(editing);
+    const date = prefillDate
+      ?? followDate(data.blocks ?? editing?.blocks ?? [], dueAfter, getLocalDateString());
     // Any edit that touches a recurring task can change what represents it
     // today: its day row, its entry in the recurring list, or neither.
     const touchesRecurring = !!editing && (!!data.isRecurring || editing.isRecurring);
@@ -87,13 +93,9 @@ export function useTaskForm(options?: { onChanged?: (change: TaskFormChange) => 
       // A recurring task's day row carries the task's own id, so the edit goes
       // to the task itself, schedule and all.
       await updateTask(editing.id, data);
-      onChangedRef.current?.({
-        kind: 'updated',
-        taskId: editing.id,
-        dueDate: 'dueDate' in data ? data.dueDate ?? null : formDate(editing),
-      });
+      onChangedRef.current?.({ kind: 'updated', taskId: editing.id, date });
     } else {
-      await createWithRetry(data);
+      await createWithRetry(data, date);
     }
     if (touchesRecurring) await refreshRecurring();
   }, [open, updateTask, createWithRetry, refreshRecurring]);
@@ -110,7 +112,7 @@ export function useTaskForm(options?: { onChanged?: (change: TaskFormChange) => 
           // Focus time is kept either way, so there are no totals to refresh.
           await deleteTask(task.id);
           setOpen(null);
-          onChangedRef.current?.({ kind: 'deleted', taskId: task.id, dueDate: null });
+          onChangedRef.current?.({ kind: 'deleted', taskId: task.id, date: null });
         },
       },
     ]);

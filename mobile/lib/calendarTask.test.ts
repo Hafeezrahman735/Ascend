@@ -15,7 +15,7 @@ function task(over: Partial<Task> = {}): Task {
 describe('taskForCalendarItem', () => {
   it('finds a one-off task in the task list', () => {
     const t = task();
-    const item: CalendarItem = { type: 'task', date: DAY, data: { id: t.id, title: t.title } };
+    const item: CalendarItem = { type: 'work_block', date: DAY, data: { id: t.id, title: t.title } };
     expect(taskForCalendarItem(item, [t], [])).toBe(t);
   });
 
@@ -29,7 +29,7 @@ describe('taskForCalendarItem', () => {
   });
 
   it('opens nothing for a task the store does not have, or for other item types', () => {
-    expect(taskForCalendarItem({ type: 'task', date: DAY, data: { id: 'gone' } }, [task()], [])).toBeNull();
+    expect(taskForCalendarItem({ type: 'work_block', date: DAY, data: { id: 'gone' } }, [task()], [])).toBeNull();
     expect(taskForCalendarItem({ type: 'event', date: DAY, data: { id: 'case-study' } }, [task()], [])).toBeNull();
   });
 });

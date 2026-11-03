@@ -228,10 +228,17 @@ export async function seedDemoAccount(prisma: PrismaClient, options: SeedOptions
           tags: [t.tag],
           priority: t.priority,
           estimatedMinutes: t.estSessions * SESSION_MINUTES,
-          startMinutes: t.slot ? t.slot.startHour * 60 : null,
-          endMinutes: t.slot ? t.slot.startHour * 60 + t.slot.minutes : null,
           taskGoalId: goal?.id ?? null,
           dueDate: t.dueInDays === undefined ? null : calendarDay(dayKey(t.dueInDays)),
+          // A one-off task's time lives on a work block (task-due-and-work-blocks).
+          blocks: t.slot && t.dueInDays !== undefined
+            ? { create: [{
+              userId: user.id,
+              date: dayKey(t.dueInDays),
+              startMinutes: t.slot.startHour * 60,
+              endMinutes: t.slot.startHour * 60 + t.slot.minutes,
+            }] }
+            : undefined,
           isCompleted: completedAt !== null,
           completedAt,
           sessionsOnTask: stats.count,

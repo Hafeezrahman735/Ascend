@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarItem, Note, TaskGoal } from '../../types';
-import { formatDeadlineLabel, parseLocalDate } from '../../utils/date';
+import { formatDeadlineLabel, getLocalDateString, parseLocalDate } from '../../utils/date';
 import {
   getCalendarStyles, formatMinutes, formatSeconds, itemTimeRange, itemTitle, itemIsDone,
   isPastEvent, calendarItemKey, typeColor,
@@ -17,7 +17,7 @@ import {
  * both are built from DayRowList; Day's Anytime and notes lists use the same
  * CalendarItemRow. One row, one rule for taps (eng review D1, D5, D10):
  *
- *   event / task / recurring task  → tap opens its sheet
+ *   event / work block / due date / recurring task → tap opens its sheet
  *   to-do note                     → checkbox ticks it, the text opens the sheet
  *   plain note                     → tap opens the sheet
  *   goal deadline / Google / Apple → not tappable (no sheet to open here)
@@ -47,14 +47,16 @@ export function hoursLabel(minutes: number): string {
 
 /** Whether a tap on this item opens a sheet (events, notes and tasks do). */
 function opensSheet(item: CalendarItem): boolean {
-  return item.type === 'event' || item.type === 'note' || item.type === 'task' || item.type === 'habit_instance';
+  return item.type === 'event' || item.type === 'note' || item.type === 'work_block'
+    || item.type === 'task_due' || item.type === 'habit_instance';
 }
 
 function itemKindLabel(item: CalendarItem): string {
   switch (item.type) {
     case 'note': return (item.data as Note).isTodo ? 'To-do' : 'Note';
     case 'habit_instance': return 'Recurring task';
-    case 'task': return 'Task';
+    case 'work_block': return 'Work block';
+    case 'task_due': return 'Due';
     case 'goal_deadline': return 'Goal deadline';
     default: return 'Event';
   }
@@ -65,11 +67,34 @@ function itemKindLabel(item: CalendarItem): string {
  * worth saying — all-day for an event, how long is left for a goal deadline.
  */
 function itemMeta(item: CalendarItem): string | null {
+  if (item.type === 'task_due') return isLateDue(item) ? 'Late' : 'Due';
   const range = itemTimeRange(item);
   if (range) return formatMinutes(range.start);
   if (item.type === 'event' || item.type === 'external_google' || item.type === 'external_apple') return 'All day';
   if (item.type === 'goal_deadline') return formatDeadlineLabel((item.data as TaskGoal).deadline);
   return null;
+}
+
+/** An open task's due date that has passed: shown as Late, in rose. */
+function isLateDue(item: CalendarItem): boolean {
+  return item.type === 'task_due' && !itemIsDone(item) && item.date < getLocalDateString();
+}
+
+/**
+ * What a screen reader says for a row (design D23): the kind and title, then
+ * the day and time for a work block, or the deadline day for a due date, so
+ * planned work and a deadline never sound the same.
+ */
+function rowLabel(item: CalendarItem, meta: string | null): string {
+  const title = itemTitle(item);
+  const day = parseLocalDate(item.date).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  if (item.type === 'work_block') {
+    const range = itemTimeRange(item);
+    const when = range ? `${formatMinutes(range.start)} to ${formatMinutes(range.end)}` : 'any time';
+    return `Work block: ${title}, ${day}, ${when}`;
+  }
+  if (item.type === 'task_due') return isLateDue(item) ? `Late: ${title}, due ${day}` : `Due: ${title}, ${day}`;
+  return `${itemKindLabel(item)}: ${title}${meta ? `, ${meta}` : ''}`;
 }
 
 /** A row tinted for a moment after its task was just saved here (DR3). */
@@ -115,11 +140,15 @@ export function CalendarItemRow({ item, onPress, onToggleNote, highlighted = fal
   const past = isPastEvent(item, new Date());
   const meta = itemMeta(item);
   const note = item.type === 'note' ? (item.data as Note) : null;
-  const label = `${itemKindLabel(item)}: ${itemTitle(item)}${meta ? `, ${meta}` : ''}${trailing ? `, ${trailing} focused` : ''}${done ? ', done' : ''}${past ? ', past' : ''}`;
+  const label = `${rowLabel(item, meta)}${trailing ? `, ${trailing} focused` : ''}${done ? ', done' : ''}${past ? ', past' : ''}`;
+  const late = isLateDue(item);
+  const due = item.type === 'task_due';
+  const stripeColor = late ? Colors.ROSE : typeColor(item.type, Colors);
 
   const text = (
     <>
-      {!note?.isTodo && <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: typeColor(item.type, Colors), minHeight: 16 }} />}
+      {!note?.isTodo && <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: stripeColor, minHeight: 16 }} />}
+      {due && <Ionicons name="flag-outline" size={13} color={stripeColor} />}
       <Text
         style={{ flex: 1, fontSize: 13, color: done ? Colors.subtext : Colors.text, textDecorationLine: done ? 'line-through' : 'none' }}
         numberOfLines={2}
@@ -128,7 +157,9 @@ export function CalendarItemRow({ item, onPress, onToggleNote, highlighted = fal
       </Text>
       {item.type === 'habit_instance' && <Ionicons name="repeat" size={12} color={Colors.subtext} />}
       {trailing ? <Text style={{ fontSize: 11, color: Colors.primarySoft, fontVariant: ['tabular-nums'] }}>{trailing}</Text> : null}
-      {meta ? <Text style={{ fontSize: 11, color: Colors.subtext }}>{meta}</Text> : null}
+      {meta ? (
+        <Text style={{ fontSize: 11, color: due ? stripeColor : Colors.subtext, fontWeight: due ? '700' : '400' }}>{meta}</Text>
+      ) : null}
     </>
   );
   const rowStyle = [styles.itemRow, { minHeight: 44 }, past && { opacity: 0.55 }];

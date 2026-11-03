@@ -49,6 +49,7 @@ model User {
   refreshTokens        RefreshToken[]
   passwordResets       PasswordResetToken[]
   recurringCompletions RecurringCompletion[]
+  workBlocks           WorkBlock[]
   sessions             Session[]
   socialPosts          SocialPost[]                 @relation("PostAuthor")
   groupMemberships     StudyGroupMember[]
@@ -227,6 +228,8 @@ model Task {
   // an hour across DST and by a whole working day across a timezone change.
   // 09:00 means 09:00 on the phone in the user’s hand.
   // Both null = untimed, which is the default and stays the common case.
+  // Recurring tasks only: a one-off task's planned time lives on its
+  // WorkBlocks, and the server rejects times on one (task-due-and-work-blocks).
   startMinutes    Int?      @map("start_minutes")
   endMinutes      Int?      @map("end_minutes")
   priority        String    @default("medium") @db.VarChar(10)
@@ -266,6 +269,7 @@ model Task {
 
   sessions    Session[]             @relation("TaskSessions")
   completions RecurringCompletion[]
+  blocks      WorkBlock[]
   taskGoal    TaskGoal?             @relation(fields: [taskGoalId], references: [id])
   user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -294,6 +298,31 @@ model RecurringCompletion {
   /// Streaks are calculated from all of a user's completions in one query.
   @@index([userId, date])
   @@map("recurring_completions")
+}
+
+/// When the user plans to work on a one-off task: zero or more per task, one
+/// local day each, optionally timed. The task's dueDate is only its deadline
+/// (docs/designs/task-due-and-work-blocks.md). A task's blocks are written as a
+/// whole list with the task (POST/PATCH /tasks), never one at a time.
+model WorkBlock {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id") @db.Uuid
+  taskId       String   @map("task_id")
+  /// 'YYYY-MM-DD', the user's local day — the same convention as Event.date.
+  date         String   @db.VarChar(10)
+  /// Minutes from local midnight, both set or both null. Null = "that day, any time".
+  startMinutes Int?     @map("start_minutes")
+  endMinutes   Int?     @map("end_minutes")
+  createdAt    DateTime @default(now()) @map("created_at")
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Makes the backfill idempotent. Untimed blocks (NULL start) are not
+  /// distinct here; validation allows one per task per day.
+  @@unique([taskId, date, startMinutes])
+  /// The calendar reads a user's blocks by date range.
+  @@index([userId, date])
+  @@map("work_blocks")
 }
 
 model TaskGoal {

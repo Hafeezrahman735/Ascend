@@ -47,12 +47,15 @@ import {
 import { useTagStyle, useTagOverrideStore } from '../../utils/tagStyle';
 import {
   getMonday, isToday, formatSeconds,
-  formatDuration, getDueChip, isYesterdayLocal,
+  formatDuration, getDueChip, isYesterdayLocal, calcDaysUntilDue,
   startOfThisWeekMs, startOfWeekNMs, getLastWeekCompletionRate,
   getPeakHour, formatPeakWindow, getCompletionRate, formatOverdue,
   compactDuration,
 } from '../../lib/taskMetrics';
 import { stepGoalMinutes, GOAL_MIN_MINUTES, GOAL_MAX_MINUTES } from '../../lib/dailyTarget';
+import { workBlockToday } from '../../lib/taskBoard';
+import { formatMinutes } from '../../lib/calendarItems';
+import { taskFocusOnDay } from '../../lib/calendarViews';
 import { getStyles } from '../../components/formStyles';
 import GoalEditor from '../../components/goals/GoalEditor';
 import TagOverrideSheet from '../../components/timeReport/TagOverrideSheet';
@@ -112,7 +115,23 @@ const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, on
   const barColor = dormant ? Colors.border : isActive ? Colors.primary : isCompleted ? Colors.accent : Colors.border;
   // A template has no due date and no sessions, so these stay inert rather than
   // rendering something untrue.
-  const chip = dormant ? null : getDueChip(task, Colors);
+  // A task planned for today leads Today's list (D6), so its row says when:
+  // the block's time, or "Today" for an any-time one (D19). Its due chip then
+  // shows only when the deadline is within the week.
+  const block = dormant || isCompleted ? null : workBlockToday(task, getLocalDateString());
+  const dueChip = dormant ? null : getDueChip(task, Colors);
+  const daysLeft = block ? calcDaysUntilDue(task) : null;
+  const chip = block && (daysLeft === null || daysLeft > 6) ? null : dueChip;
+  const blockLabel = block
+    ? block.startMinutes != null && block.endMinutes != null
+      ? `${formatMinutes(block.startMinutes)}–${formatMinutes(block.endMinutes)}`
+      : 'Today'
+    : null;
+  const blockA11y = block
+    ? block.startMinutes != null && block.endMinutes != null
+      ? `work block today, ${formatMinutes(block.startMinutes)} to ${formatMinutes(block.endMinutes)}`
+      : 'work block today, any time'
+    : null;
   const prioColor = priorityColor(task.priority);
   const categoryTag = task.tags.length > 0 ? task.tags[0] : null;
   const tagStyle = useTagStyle(categoryTag ?? '');
@@ -170,8 +189,9 @@ const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, on
             <Text style={{ color: Colors.primarySoft, fontSize: 11 }} numberOfLines={1}>Goal: {linkedGoal.title}</Text>
           </View>
         )}
-        {(task.sessionsOnTask > 0 || chip) && (
+        {(task.sessionsOnTask > 0 || chip || blockLabel) && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
+            {blockLabel && <View accessible accessibilityLabel={blockA11y ?? undefined} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: Colors.primaryDim }}><Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primarySoft }}>{blockLabel}</Text></View>}
             {task.sessionsOnTask > 0 && <Text style={{ color: isActive ? Colors.primarySoft : Colors.subtext, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
             {chip && <View accessible accessibilityLabel={chip.a11yLabel} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
           </View>
@@ -1096,8 +1116,8 @@ export default function TasksScreen() {
 
   // ── Plan vs actual for today ──
   // Focus comes from the same local history as the Focus today pill, so the
-  // two never disagree (design D7); the plan is today's timed tasks and
-  // today's recurring rows. lib/planVsActual holds the rules the calendar shares.
+  // two never disagree (design D7); the plan is today's work blocks and
+  // today's timed recurring rows. lib/planVsActual holds the rules the calendar shares.
   const todayKey = getLocalDateString(now);
   const todayTimeline = useMemo(() => timelineFromHistory(todaySessions, todayKey), [todaySessions, todayKey]);
   const todayBlocks = useMemo(
@@ -1111,16 +1131,16 @@ export default function TasksScreen() {
   const [sessionsTarget, setSessionsTarget] = useState<SessionsTarget | null>(null);
   const statsFocused = useMemo((): FocusedOnDay | undefined => {
     if (!statsTask) return undefined;
-    const mine = todayTimeline.filter((s) => s.taskId === statsTask.id);
-    const block = todayBlocks.find((b) => b.taskId === statsTask.id);
-    if (mine.length === 0 && !block) return undefined;
+    // The same helper as the calendar sheet and the Week lane, so they agree.
+    const focus = taskFocusOnDay(todayPlan, statsTask.id);
+    if (!focus && !todayBlocks.some((b) => b.taskId === statsTask.id)) return undefined;
     return {
       dayLabel: 'today',
-      seconds: mine.reduce((sum, s) => sum + s.durationSeconds, 0),
-      sessions: mine.length,
-      plannedMinutes: block ? block.endMinutes - block.startMinutes : null,
+      seconds: focus?.seconds ?? 0,
+      sessions: focus?.sessions ?? 0,
+      plannedMinutes: focus?.plannedMinutes ?? null,
     };
-  }, [statsTask, todayTimeline, todayBlocks]);
+  }, [statsTask, todayPlan, todayBlocks]);
   // One sheet at a time: the task sheet closes before the session list opens.
   const showTaskSessions = useCallback(() => {
     if (!statsTask) return;

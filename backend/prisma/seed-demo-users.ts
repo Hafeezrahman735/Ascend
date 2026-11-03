@@ -761,8 +761,10 @@ async function seedDemoUsers() {
           estimatedMinutes: t.estimatedMinutes ?? null,
           taskGoalId: goal?.id ?? null,
           dueDate,
-          startMinutes,
-          endMinutes,
+          // A one-off task's time lives on a work block on its day.
+          blocks: startMinutes !== null && dueDate
+            ? { create: [{ userId: user.id, date: dueDate.toISOString().slice(0, 10), startMinutes, endMinutes }] }
+            : undefined,
           isCompleted: t.isCompleted,
           completedAt: t.isCompleted ? day(Math.max(0, t.daysAgo - 1)) : null,
           createdAt: day(t.daysAgo),

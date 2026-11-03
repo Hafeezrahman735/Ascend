@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { weekTasksToWorkOn, estimatedMinutesRemaining } from './planningTasks';
+import { weekTasksToWorkOn, estimatedMinutesRemaining, unscheduledTasks } from './planningTasks';
 import type { CalendarItem, Task } from '../types';
 
 const TODAY = '2026-09-03';
@@ -15,8 +15,14 @@ function task(over: Partial<Task> = {}): Task {
   } as unknown as Task;
 }
 
-function item(date: string, over: Partial<Task> = {}, type: 'task' | 'habit_instance' = 'task'): CalendarItem {
+/** A one-off task's work block on `date` (or a recurring day), as GET /calendar sends it. */
+function item(date: string, over: Partial<Task> = {}, type: 'work_block' | 'habit_instance' = 'work_block'): CalendarItem {
   return { type, date, data: task({ id: `${date}-${over.title ?? 'x'}`, ...over }) };
+}
+
+/** An open one-off task in the store, due on `date` (late when before TODAY). */
+function dueTask(date: string, title: string, over: Partial<Task> = {}): Task {
+  return task({ id: title, title, dueDate: `${date}T00:00:00.000Z`, ...over });
 }
 
 
@@ -57,7 +63,7 @@ describe('weekTasksToWorkOn', () => {
     expect(weekTasksToWorkOn([], TODAY)).toEqual([]);
   });
 
-  it('includes tasks due across the week', () => {
+  it('includes work blocks across the week', () => {
     const out = weekTasksToWorkOn([
       item('2026-09-03', { title: 'Today thing' }),
       item('2026-09-05', { title: 'Friday thing' }),
@@ -87,15 +93,31 @@ describe('weekTasksToWorkOn', () => {
       { type: 'event', date: TODAY, data: { id: 'e1', title: 'Lab meeting' } },
       { type: 'note', date: TODAY, data: { id: 'n1', content: 'Remember' } },
       { type: 'goal_deadline', date: TODAY, data: { id: 'g1', title: 'Thesis' } },
+      { type: 'task_due', date: '2026-09-05', data: task({ id: 'd1', title: 'Due Friday' }) },
       item(TODAY, { title: 'Real task' }),
     ];
+    // A due date is a deadline, not a work row; it is Late only once passed.
     expect(weekTasksToWorkOn(items, TODAY).map((t) => t.title)).toEqual(['Real task']);
   });
 
-  it('flags a task due earlier in the week as overdue', () => {
-    const out = weekTasksToWorkOn([item('2026-09-01', { title: 'Late' })], TODAY);
+  it('flags a task due before today as overdue, from the store', () => {
+    const out = weekTasksToWorkOn([], TODAY, [dueTask('2026-09-01', 'Late')]);
     expect(out[0].isOverdue).toBe(true);
     expect(out[0].isToday).toBe(false);
+  });
+
+  it('drops a work block that has passed: missing it is not lateness', () => {
+    const out = weekTasksToWorkOn([item('2026-09-01', { title: 'Missed block' })], TODAY);
+    expect(out).toEqual([]);
+  });
+
+  it('never lists a done or undated store task as late', () => {
+    const out = weekTasksToWorkOn([], TODAY, [
+      dueTask('2026-09-01', 'Done', { isCompleted: true }),
+      task({ id: 'undated', title: 'Undated' }),
+      dueTask('2026-09-05', 'Not yet due'),
+    ]);
+    expect(out).toEqual([]);
   });
 
   it('does not flag today or later as overdue', () => {
@@ -110,9 +132,8 @@ describe('weekTasksToWorkOn', () => {
   it('orders overdue first, then by day', () => {
     const out = weekTasksToWorkOn([
       item('2026-09-06', { title: 'Sunday' }),
-      item('2026-09-01', { title: 'Overdue' }),
       item(TODAY, { title: 'Today' }),
-    ], TODAY);
+    ], TODAY, [dueTask('2026-09-01', 'Overdue')]);
     expect(out.map((t) => t.title)).toEqual(['Overdue', 'Today', 'Sunday']);
   });
 
@@ -169,6 +190,15 @@ describe('estimatedMinutesRemaining', () => {
       item('2026-09-04', { title: 'B', estimatedMinutes: 25 }),
     ], TODAY);
     expect(estimatedMinutesRemaining(out)).toBe(75);
+  });
+
+  it('counts a task with several work blocks once', () => {
+    const out = weekTasksToWorkOn([
+      item(TODAY, { id: 'same', title: 'Proposal', estimatedMinutes: 120 }),
+      item('2026-09-05', { id: 'same', title: 'Proposal', estimatedMinutes: 120 }),
+    ], TODAY);
+    expect(out).toHaveLength(2);
+    expect(estimatedMinutesRemaining(out)).toBe(120);
   });
 
   it('treats a task with no estimate as 0 rather than skipping the rest', () => {
@@ -272,8 +302,8 @@ describe('weekTasksToWorkOn — recurring tasks collapse to one row', () => {
 describe('weekTasksToWorkOn — one-off tasks keep the opposite rule', () => {
   it('still marks an overdue one-off task Late', () => {
     // The whole point of treating the two kinds differently: a one-off task
-    // from Monday is still owed on Thursday. Only recurrences are forgiven.
-    const out = weekTasksToWorkOn([item('2026-09-01', { title: 'Stats reading' })], TODAY);
+    // due Monday is still owed on Thursday. Only recurrences are forgiven.
+    const out = weekTasksToWorkOn([], TODAY, [dueTask('2026-09-01', 'Stats reading')]);
 
     expect(out).toHaveLength(1);
     expect(out[0].isOverdue).toBe(true);
@@ -281,10 +311,9 @@ describe('weekTasksToWorkOn — one-off tasks keep the opposite rule', () => {
 
   it('keeps an overdue one-off alongside a collapsed habit', () => {
     const out = weekTasksToWorkOn([
-      item('2026-09-01', { title: 'Stats reading' }),
       projected('2026-09-01', 'tpl-reading'),
       projected(TODAY, 'tpl-reading'),
-    ], TODAY);
+    ], TODAY, [dueTask('2026-09-01', 'Stats reading')]);
 
     expect(out).toHaveLength(2);
     expect(out.find((t) => t.title === 'Stats reading')!.isOverdue).toBe(true);
@@ -319,5 +348,42 @@ describe('weekTasksToWorkOn — projected days are well-formed rows', () => {
     // With a NaN comparator the order is undefined; urgent must lead.
     expect(out).toHaveLength(2);
     expect(out[0].title).toBe('Aaa task');
+  });
+});
+
+describe('unscheduledTasks — open one-off tasks with no work block ahead (D4, D13)', () => {
+  const WEEK_END = '2026-09-06';
+  const block = (date: string) => ({ date, startMinutes: null, endMinutes: null });
+
+  it('lists a dated task with no block: a due date is not a plan', () => {
+    const out = unscheduledTasks([dueTask('2026-09-05', 'Due Friday')], TODAY, WEEK_END);
+    expect(out.map((t) => t.title)).toEqual(['Due Friday']);
+  });
+
+  it('leaves out a task with a block today or later this week', () => {
+    const out = unscheduledTasks([
+      task({ id: 'a', title: 'Today', blocks: [block(TODAY)] }),
+      task({ id: 'b', title: 'Sunday', blocks: [block(WEEK_END)] }),
+    ], TODAY, WEEK_END);
+    expect(out).toEqual([]);
+  });
+
+  it('brings back a task whose only block this week has passed', () => {
+    const out = unscheduledTasks([task({ id: 'a', title: 'Missed', blocks: [block('2026-09-01')] })], TODAY, WEEK_END);
+    expect(out.map((t) => t.title)).toEqual(['Missed']);
+  });
+
+  it('counts only this week: a block next week leaves it unscheduled now', () => {
+    const out = unscheduledTasks([task({ id: 'a', title: 'Later', blocks: [block('2026-09-08')] })], TODAY, WEEK_END);
+    expect(out).toHaveLength(1);
+  });
+
+  it('skips done, archived and recurring tasks', () => {
+    const out = unscheduledTasks([
+      task({ id: 'a', isCompleted: true }),
+      task({ id: 'b', isArchived: true }),
+      task({ id: 'c', isRecurring: true }),
+    ], TODAY, WEEK_END);
+    expect(out).toEqual([]);
   });
 });

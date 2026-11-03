@@ -250,7 +250,7 @@ export default function WeekView({
           ) : null;
         }}
         itemTrailing={(item, row) => {
-          if (focusUnavailable || (item.type !== 'task' && item.type !== 'habit_instance')) return null;
+          if (focusUnavailable || (item.type !== 'work_block' && item.type !== 'habit_instance')) return null;
           const focus = taskFocusOnDay(row.plan, (item.data as Task).id);
           if (!focus || focus.plannedMinutes === null || focus.seconds === 0) return null;
           return `${formatSeconds(focus.seconds)}/${formatSeconds(focus.plannedMinutes * 60)}`;

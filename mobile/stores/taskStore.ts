@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../services/api';
-import { Task, DayOfWeek } from '../types';
+import { Task, DayOfWeek, WorkBlock } from '../types';
 import { useAuthStore } from './authStore';
 import { getLocalDateString } from '../utils/date';
 import { canSelectTask, isSessionLocked } from './sessionLock';
@@ -43,6 +43,7 @@ function normalizeTask(t: Task): Task {
     // Tasks cached by an older build predate these, so undefined is expected.
     startMinutes: t.startMinutes ?? null,
     endMinutes: t.endMinutes ?? null,
+    blocks: Array.isArray(t.blocks) ? t.blocks : [],
     isOccurrence: t.isOccurrence ?? false,
     occurrenceDate: t.occurrenceDate ?? null,
     repeatsUntil: t.repeatsUntil ?? null,
@@ -89,14 +90,16 @@ export interface TaskCreateInput {
   dueDate?: string | null;
   tags?: string[];
   estimatedMinutes?: number | null;
-  // Minutes from local midnight. Send both or neither — the backend rejects a
-  // half-open pair, and null on either clears the slot.
+  // A recurring task's time, minutes from local midnight. Send both or neither;
+  // the backend refuses times on a one-off task (they live on work blocks).
   startMinutes?: number | null;
   endMinutes?: number | null;
   priority?: 'low' | 'medium' | 'high' | 'urgent';
   isRecurring?: boolean;
   recurringDays?: DayOfWeek[];
   taskGoalId?: string | null;
+  /** A one-off task's work blocks. */
+  blocks?: WorkBlock[];
 }
 
 export interface TaskUpdateInput {
@@ -105,8 +108,8 @@ export interface TaskUpdateInput {
   dueDate?: string | null;
   tags?: string[];
   estimatedMinutes?: number | null;
-  // Minutes from local midnight. Send both or neither — the backend rejects a
-  // half-open pair, and null on either clears the slot.
+  // A recurring task's time, minutes from local midnight. Send both or neither;
+  // null clears it. Refused on a one-off task (its time is on work blocks).
   startMinutes?: number | null;
   endMinutes?: number | null;
   priority?: 'low' | 'medium' | 'high' | 'urgent';
@@ -116,6 +119,8 @@ export interface TaskUpdateInput {
   order?: number | null;
   isRecurring?: boolean;
   recurringDays?: DayOfWeek[];
+  /** Present = replace all of the task's work blocks with this list. */
+  blocks?: WorkBlock[];
 }
 
 /**
@@ -358,7 +363,11 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         if (isRecurringTask(saved)) {
           await get().refreshRecurring();
         } else {
-          const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...saved } : t));
+          // The server returns the task's blocks; if a response ever lacks
+          // them, keep the stored list rather than wiping it, or the next form
+          // save would send an empty list and delete them.
+          const blocks = Array.isArray(res.data.blocks) ? saved.blocks : undefined;
+          const tasks = get().tasks.map((t) => (t.id === id ? { ...t, ...saved, blocks: blocks ?? t.blocks } : t));
           set({ tasks });
           persistTasks(tasks, userId);
         }

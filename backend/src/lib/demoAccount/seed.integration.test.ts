@@ -223,12 +223,13 @@ describe('seedDemoAccount — time analytics and the calendar', () => {
 
     const items = res.body.data.items as { type: string; date: string; data: { title?: string; startMinutes?: number | null } }[];
     const types = new Set(items.map((i) => i.type));
-    for (const type of ['task', 'habit_instance', 'event', 'note', 'goal_deadline']) expect(types).toContain(type);
+    for (const type of ['work_block', 'task_due', 'habit_instance', 'event', 'note', 'goal_deadline']) expect(types).toContain(type);
 
     const events = items.filter((i) => i.type === 'event');
     expect(events.length).toBe(calendarEvents(today).filter((e) => e.dayOffset >= -14 && e.dayOffset <= 21).length);
     expect(events.some((e) => e.data.startMinutes === null)).toBe(true);
-    expect(items.some((i) => i.type === 'task' && typeof i.data.startMinutes === 'number')).toBe(true);
+    // A slotted demo task sits on the timeline through its work block.
+    expect(items.some((i) => i.type === 'work_block' && typeof i.data.startMinutes === 'number')).toBe(true);
     expect(items.some((i) => i.type === 'note' && i.date > today)).toBe(true);
   });
 });

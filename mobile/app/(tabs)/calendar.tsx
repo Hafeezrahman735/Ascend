@@ -229,8 +229,8 @@ export default function CalendarScreen() {
   const handleItemPress = useCallback((item: CalendarItem) => {
     if (item.type === 'event') setEventSheet({ event: item.data as CalendarEvent });
     else if (item.type === 'note') setNoteSheet({ note: item.data as Note });
-    else if (item.type === 'task' || item.type === 'habit_instance') {
-      // The block's data is narrow; the sheet needs the full task from the store.
+    else if (item.type === 'work_block' || item.type === 'task_due' || item.type === 'habit_instance') {
+      // The item's data is narrow; the sheet needs the full task from the store.
       const { tasks, recurringTemplates } = useTaskStore.getState();
       const task = taskForCalendarItem(item, tasks, recurringTemplates);
       if (task) setTaskSheet({ task, date: item.date });
@@ -319,12 +319,14 @@ export default function CalendarScreen() {
    * Without this, Find a slot would offer the same gap twice.
    */
   const handleTaskChanged = useCallback(async (change: TaskFormChange) => {
-    const { dueDate, taskId, kind } = change;
-    if (dueDate && (dueDate < start || dueDate > end)) setAnchorDate(parseLocalDate(dueDate));
+    // `date` is the work block a save added or the task's next one (else its
+    // due date), so Find a slot lands on the slot's day, not the deadline.
+    const { date, taskId, kind } = change;
+    if (date && (date < start || date > end)) setAnchorDate(parseLocalDate(date));
     else await loadVisibleRange();
-    if (kind === 'deleted' || !dueDate || !taskId) return;
+    if (kind === 'deleted' || !date || !taskId) return;
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
-    setHighlight({ date: dueDate, taskId });
+    setHighlight({ date, taskId });
     highlightTimer.current = setTimeout(() => setHighlight(null), 1600);
   }, [start, end, loadVisibleRange]);
 
@@ -333,21 +335,26 @@ export default function CalendarScreen() {
 
   /**
    * + Task / + Event / + Note. Events and notes open on `date` when given. A
-   * task starts with no date (D8, as on Today and Plan) unless the caller asks
-   * for it: only Day view does, because there the day is already chosen. An
-   * explicit flag, not "a date was passed" — Month passes its selected day for
-   * events and notes and must keep tasks dateless.
+   * task starts with nothing planned (D8, as on Today and Plan) unless the
+   * caller asks: only Day view does, and there the new task gets an any-time
+   * work block on that day, never a due date (task-due-and-work-blocks D10).
+   * An explicit flag, not "a date was passed": Month passes its selected day
+   * for events and notes and must keep tasks unplanned.
    */
   const handleAdd = useCallback((kind: AddKind, date?: string, opts?: { taskOnDate?: boolean }) => {
-    if (kind === 'task') openTaskCreate(opts?.taskOnDate && date ? { dueDate: date } : undefined);
+    if (kind === 'task') {
+      openTaskCreate(opts?.taskOnDate && date
+        ? { block: { date, startMinutes: null, endMinutes: null } }
+        : undefined);
+    }
     else if (kind === 'event') setEventSheet({ event: null, date });
     else setNoteSheet({ note: null, date });
   }, [openTaskCreate]);
 
-  // Find a slot opens the task's own form with the gap filled in; nothing is
-  // written until Save (design D5).
+  // Find a slot opens the task's own form with the gap added as a work block;
+  // its due date is untouched, and nothing is written until Save (design D5).
   const handleFindSlot = useCallback((task: Task, slot: Slot) => {
-    openTaskEdit(task, { dueDate: slot.date, startMinutes: slot.startMinutes, endMinutes: slot.endMinutes });
+    openTaskEdit(task, { block: { date: slot.date, startMinutes: slot.startMinutes, endMinutes: slot.endMinutes } });
   }, [openTaskEdit]);
 
   const openUnscheduledTask = useCallback((task: Task) => {

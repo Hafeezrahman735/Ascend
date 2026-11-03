@@ -53,7 +53,9 @@ export const VIEW_MODES: { key: CalendarViewMode; label: string }[] = [
 export function typeColor(type: CalendarItemType, Colors: ThemeColors): string {
   switch (type) {
     case 'habit_instance': return Colors.accent;
-    case 'task':           return Colors.primary;
+    case 'work_block':     return Colors.primary;
+    // A task's deadline: amber with a flag icon on its row, rose once late (D20).
+    case 'task_due':       return Colors.AMBER;
     case 'goal_deadline':  return Colors.ROSE;
     // Google, Apple and events authored here share a colour on purpose — a
     // dentist appointment is the same category of thing wherever it is stored,

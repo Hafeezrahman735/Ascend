@@ -30,7 +30,8 @@ export const TYPE_META: Record<
   // user-facing label changes. These are recurring tasks, not a separate
   // "habits" feature — nothing in the app creates a "habit".
   habit_instance:  { icon: 'repeat',           label: 'Recurring tasks' },
-  task:            { icon: 'checkbox-outline', label: 'Tasks' },
+  work_block:      { icon: 'checkbox-outline', label: 'Work blocks' },
+  task_due:        { icon: 'flag-outline',     label: 'Due dates' },
   goal_deadline:   { icon: 'flag',             label: 'Goal deadlines' },
   external_google: { icon: 'logo-google',      label: 'Google Calendar' },
   external_apple:  { icon: 'calendar',         label: 'Device Calendar' },
@@ -49,7 +50,7 @@ export const TYPE_META: Record<
  * the array and the type union in step, and fails loudly when they drift.
  */
 export const DAY_GROUP_ORDER: CalendarItemType[] = [
-  'event', 'habit_instance', 'task', 'goal_deadline',
+  'event', 'habit_instance', 'work_block', 'task_due', 'goal_deadline',
   'external_google', 'external_apple', 'note',
 ];
 
@@ -106,7 +107,21 @@ export function isRenderableCalendarItem(value: unknown): value is CalendarItem 
  */
 export function calendarItemKey(item: CalendarItem): string {
   const id = (item.data as { id?: string } | null)?.id;
-  return `${item.type}:${item.date}:${id ?? 'anon'}`;
+  const base = `${item.type}:${item.date}:${id ?? 'anon'}`;
+  // One task can have several work blocks on a day (a timed one and an
+  // any-time one); data.id is the task's, so the start tells them apart.
+  if (item.type !== 'work_block') return base;
+  return `${base}:${(item.data as Task | null)?.startMinutes ?? 'any'}`;
+}
+
+/** A one-off task drawn on a day: planned (work block) or due (deadline). */
+export function isOneOffTaskItem(item: CalendarItem): boolean {
+  return item.type === 'work_block' || item.type === 'task_due';
+}
+
+/** An item that is work you plan to do that day: a work block or a habit's day. */
+export function isPlannedWorkItem(item: CalendarItem): boolean {
+  return item.type === 'work_block' || item.type === 'habit_instance';
 }
 
 /**
@@ -131,7 +146,8 @@ export function isNote(item: CalendarItem): boolean {
 
 export function itemTitle(item: CalendarItem): string {
   switch (item.type) {
-    case 'task':
+    case 'work_block':
+    case 'task_due':
     case 'habit_instance':
       return (item.data as Task).title;
     case 'goal_deadline':
@@ -157,7 +173,9 @@ export function itemTitle(item: CalendarItem): string {
  * isPastEvent below.
  */
 export function itemIsDone(item: CalendarItem): boolean {
-  if (item.type === 'task' || item.type === 'habit_instance') return (item.data as Task).isCompleted;
+  if (item.type === 'work_block' || item.type === 'task_due' || item.type === 'habit_instance') {
+    return (item.data as Task).isCompleted;
+  }
   if (item.type === 'note') return (item.data as Note).isCompleted;
   if (item.type === 'goal_deadline') return (item.data as TaskGoal).isCompleted;
   return false;
@@ -191,7 +209,8 @@ function isSameLocalDay(a: Date, b: Date): boolean {
  * right for them: a meeting at 14:00 UTC genuinely moves when you fly.
  */
 export function itemTimeRange(item: CalendarItem): TimeRange | null {
-  if (item.type === 'task' || item.type === 'habit_instance') {
+  // A due date never has a time: it is a deadline, not work on the grid.
+  if (item.type === 'work_block' || item.type === 'habit_instance') {
     const task = item.data as Task;
     if (task.startMinutes == null || task.endMinutes == null) return null;
     return { start: task.startMinutes, end: task.endMinutes };
@@ -331,7 +350,7 @@ export function itemWeight(item: CalendarItem): number {
   if (item.type === 'habit_instance') return HABIT_WEIGHT;
 
   // A deadline never has a time. It is a claim on the day regardless.
-  if (item.type === 'goal_deadline') return DEADLINE_WEIGHT;
+  if (item.type === 'goal_deadline' || item.type === 'task_due') return DEADLINE_WEIGHT;
 
   const range = itemTimeRange(item);
   const timed = range ? range.end - range.start : 0;
@@ -340,5 +359,5 @@ export function itemWeight(item: CalendarItem): number {
   // No usable clock. A zero-length block counts as its untimed self rather than
   // as nothing — that is the invariant above. Anything that is not a task and
   // has no time is an all-day event, which is the largest claim a day can hold.
-  return item.type === 'task' ? UNTIMED_TASK_WEIGHT : ALL_DAY_EVENT_WEIGHT;
+  return item.type === 'work_block' ? UNTIMED_TASK_WEIGHT : ALL_DAY_EVENT_WEIGHT;
 }

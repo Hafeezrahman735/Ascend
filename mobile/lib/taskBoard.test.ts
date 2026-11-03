@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTaskBoard, compareByUrgency, taskStatus, topTasks, type BoardItem } from './taskBoard';
+import { buildTaskBoard, compareByUrgency, taskStatus, topTasks, workBlockToday, type BoardItem } from './taskBoard';
 import type { RecurringTemplate } from './recurringDisplay';
 import type { Task } from '../types';
 
@@ -98,6 +98,28 @@ describe('topTasks', () => {
       task({ id: 'habit', isOccurrence: true, isRecurring: true, priority: 'high', dueDate: '2026-08-18' }),
     ];
     expect(topTasks(list, NOW, 3).map((t) => t.id)).toEqual(['habit', 'one-off']);
+  });
+});
+
+describe('topTasks — work blocks today lead (task-due-and-work-blocks D6)', () => {
+  const TODAY = '2026-08-18';
+  const block = (date: string, start: number | null) => ({ date, startMinutes: start, endMinutes: start === null ? null : start + 60 });
+
+  it("puts tasks planned for today first, by block start, before more urgent unplanned work", () => {
+    const tasks = [
+      task({ id: 'urgent-due-today', priority: 'urgent', dueDate: '2026-08-18T00:00:00.000Z' }),
+      task({ id: 'any-time', priority: 'low', blocks: [block(TODAY, null)] }),
+      task({ id: 'at-nine', priority: 'low', dueDate: '2026-08-28T00:00:00.000Z', blocks: [block(TODAY, 540)] }),
+      task({ id: 'tomorrow', priority: 'low', blocks: [block('2026-08-19', 480)] }),
+    ];
+    expect(topTasks(tasks, NOW, 4).map((t) => t.id)).toEqual(['at-nine', 'any-time', 'urgent-due-today', 'tomorrow']);
+  });
+
+  it("finds a task's earliest timed block today, else its any-time one, else nothing", () => {
+    expect(workBlockToday(task({ id: 'a', blocks: [block(TODAY, null), block(TODAY, 600), block(TODAY, 540)] }), TODAY)?.startMinutes).toBe(540);
+    expect(workBlockToday(task({ id: 'b', blocks: [block(TODAY, null)] }), TODAY)).toEqual(block(TODAY, null));
+    expect(workBlockToday(task({ id: 'c', blocks: [block('2026-08-19', 540)] }), TODAY)).toBeNull();
+    expect(workBlockToday(task({ id: 'd', isRecurring: true, blocks: [block(TODAY, 540)] }), TODAY)).toBeNull();
   });
 });
 

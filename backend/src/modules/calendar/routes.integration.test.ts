@@ -120,10 +120,10 @@ describe('GET /calendar — recurring tasks', () => {
     const items = res.body.data.items;
 
     expect(habitDates(items, 'Recurring one')).toHaveLength(3);
-    // The standalone task appears once, as a task, not as a recurring occurrence.
+    // The standalone task appears once, as its deadline, not as a recurring occurrence.
     const oneOff = items.filter((i: { data: { title?: string } }) => i.data?.title === 'One off');
     expect(oneOff).toHaveLength(1);
-    expect(oneOff[0].type).toBe('task');
+    expect(oneOff[0].type).toBe('task_due');
   });
 
   it('returns no recurring occurrences for a user who has none', async () => {
