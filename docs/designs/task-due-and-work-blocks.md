@@ -1,6 +1,6 @@
 # Task due dates and work blocks
 
-Status: built 2026-11-03 (T1-T6); staging backfill and push pending the founder's OK on the dry-run counts. Concept mockup: https://claude.ai/artifact/RcrGtNQJRATn8uFfcQTHkw · Screen mockups (reviewed design): https://claude.ai/artifact/PdVwBUbVm9ZHmpGKokfpsH
+Status: on staging e003306 (2026-11-04); staging backfill run (19 tasks). Awaiting device check; production needs schema, backfill, then code before any main merge. Concept mockup: https://claude.ai/artifact/RcrGtNQJRATn8uFfcQTHkw · Screen mockups (reviewed design): https://claude.ai/artifact/PdVwBUbVm9ZHmpGKokfpsH
 
 ## Problem
 
