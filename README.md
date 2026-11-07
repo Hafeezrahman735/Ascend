@@ -132,13 +132,11 @@ backend/
 mobile/
   app/              Expo Router screens: (auth)/, (tabs)/, calendar/, group/, user/
   components/ hooks/ lib/ services/ stores/
-docs/               architecture notes, plans, design docs
 ```
 
 ## Status
 
-Live on the App Store (v1.0.2); mobile client at 2.0.0 in development. See `TODOS.md` for what's next (admin moderation panel, adaptive session planning).
-
+Live on the App Store (v1.0.2); mobile client at 2.0.0 in development.
 ## License
 
 MIT — see `LICENSE`.

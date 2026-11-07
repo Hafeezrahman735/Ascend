@@ -31,3 +31,8 @@ expo-env.d.ts
 coverage/
 .DS_Store
 Thumbs.db
+
+# Developer-only notes: kept locally, not published (the repo is public)
+CLAUDE.md
+TODOS.md
+docs/
