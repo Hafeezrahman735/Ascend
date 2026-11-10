@@ -7,6 +7,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { Space } from '../../constants/spacing';
 import { Font } from '../../constants/typography';
 import AppPressable from '../AppPressable';
+import RoundedTabs from '../RoundedTabs';
 import { getLocalDateString } from '../../utils/date';
 import { useTimeHistory, type ReportPeriod } from '../../hooks/useTimeReport';
 import type { TaskGoal } from '../../types';
@@ -116,34 +117,8 @@ export default function TimeAnalyticsView({
 
       {neverFocused ? <NoSessionsYet onStartFocus={onStartFocus} /> : (<>
 
-      {/* Underline tabs: the lens is a view of the same data, not a filter on it. */}
-      <View
-        accessibilityRole="tablist"
-        style={{ flexDirection: 'row', paddingHorizontal: Space.lg, borderBottomWidth: 1, borderBottomColor: Colors.border }}
-      >
-        {LENSES.map(({ key, label }) => {
-          const selected = lens === key;
-          return (
-            <AppPressable
-              key={key}
-              onPress={() => setLens(key)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected }}
-              scaleOnPress={false}
-              style={{
-                flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 44,
-                borderBottomWidth: 2, borderBottomColor: selected ? Colors.primary : 'transparent', marginBottom: -1,
-              }}
-            >
-              <Text numberOfLines={1} style={{
-                color: selected ? Colors.textBright : Colors.text, fontSize: 13, fontWeight: selected ? '700' : '500',
-              }}>
-                {label}
-              </Text>
-            </AppPressable>
-          );
-        })}
-      </View>
+      {/* The lens is the screen's main view, so it uses the rounded tabs (D13). */}
+      <RoundedTabs tabs={LENSES} value={lens} onChange={setLens} style={{ marginHorizontal: Space.lg, marginTop: 0 }} />
 
       <View key={visit} style={{ flex: 1 }}>
         {lens === 'overview' && (

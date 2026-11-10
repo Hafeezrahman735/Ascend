@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
-import { Space, Radius } from '../../constants/spacing';
+import { Space } from '../../constants/spacing';
 import { Font } from '../../constants/typography';
 import AppPressable from '../AppPressable';
+import UnderlineTabs from '../UnderlineTabs';
 import { formatSeconds } from '../../lib/taskMetrics';
 import { topMovers, moverSentence } from '../../lib/timeAnalytics';
 import { useTimeReport, REPORT_PERIODS, type ReportPeriod } from '../../hooks/useTimeReport';
@@ -53,8 +54,8 @@ export default function BreakdownLens({ period, onPeriodChange, onDrill, onLongP
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={loading && !!report} onRefresh={reload} tintColor={Colors.primary} />}
     >
-      <Segmented
-        options={REPORT_PERIODS}
+      <UnderlineTabs
+        tabs={REPORT_PERIODS}
         value={period}
         onChange={onPeriodChange}
         style={{ marginTop: Space.md }}
@@ -129,7 +130,7 @@ function ReportBody({ report, noun, grouping, onGrouping, onDrill, onLongPressTa
         <Text style={{ color: Colors.text, fontSize: 11, marginTop: Space.sm, fontFamily: Font.mono }}>{subtitle}</Text>
       </View>
 
-      <Segmented options={GROUPINGS} value={grouping} onChange={onGrouping} style={{ marginTop: Space.xl }} />
+      <UnderlineTabs tabs={GROUPINGS} value={grouping} onChange={onGrouping} style={{ marginTop: Space.xl }} />
 
       <View style={{ marginTop: Space.md }}>
         {grouping === 'goals' && <GoalRows report={report} drill={drill} />}
@@ -262,35 +263,5 @@ function TagRows({ report, onLongPressTag }: { report: TimeReport; onLongPressTa
         </View>
       ))}
     </>
-  );
-}
-
-export function Segmented<K extends string>({ options, value, onChange, style }: {
-  options: { key: K; label: string }[];
-  value: K;
-  onChange: (k: K) => void;
-  style?: object;
-}) {
-  const Colors = useTheme();
-  return (
-    <View style={[{ flexDirection: 'row', backgroundColor: Colors.raised, borderRadius: Radius.md, padding: Space.xs }, style]}>
-      {options.map(({ key, label }) => (
-        <AppPressable
-          key={key}
-          onPress={() => onChange(key)}
-          accessibilityRole="button"
-          accessibilityState={{ selected: value === key }}
-          scaleOnPress={false}
-          style={{
-            flex: 1, minHeight: 36, justifyContent: 'center', borderRadius: Radius.sm, alignItems: 'center',
-            backgroundColor: value === key ? Colors.primary : 'transparent',
-          }}
-        >
-          <Text numberOfLines={1} style={{ color: value === key ? '#fff' : Colors.text, fontSize: 12.5, fontWeight: '700' }}>
-            {label}
-          </Text>
-        </AppPressable>
-      ))}
-    </View>
   );
 }

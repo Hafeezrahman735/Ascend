@@ -16,7 +16,8 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useHeroCard, CARD_ORDER, type HeroCardType } from '../../hooks/useHeroCard';
 import { urgentTasks } from '../../lib/heroCard';
 import { nextOccurrenceLabel, type RecurringTemplate } from '../../lib/recurringDisplay';
-import { buildTaskBoard, topTasks, type BoardItem } from '../../lib/taskBoard';
+import { buildTaskBoard, topTasks, type BoardItem, type BoardTab, type TaskStatus } from '../../lib/taskBoard';
+import RoundedTabs, { type RoundedTab } from '../../components/RoundedTabs';
 import { useTaskStore } from '../../stores/taskStore';
 import { useGoalStore } from '../../stores/goalStore';
 import { useSocialStore } from '../../stores/socialStore';
@@ -139,9 +140,19 @@ const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, on
   const linkedGoal = task.taskGoalId ? goals.find((g) => g.id === task.taskGoalId) : null;
   // A day row and a dormant recurring task both carry isRecurring.
   const isRecurringRow = task.isRecurring;
+  // A finished row is solid green, never faded: a faded row let the swipe
+  // panels behind it show through (D12). On the green, muted text fails
+  // contrast, so every line uses body text (D15, D16: 6.1:1 dark, 12.9:1 light).
+  const rowBg = isCompleted ? Colors.accentDim : isActive ? Colors.raised : Colors.surface;
+  const rowBorder = isCompleted ? Colors.accent + '40' : isActive ? Colors.primary + '50' : Colors.border;
+  const goalColor = isCompleted ? Colors.text : Colors.primarySoft;
+  const sessionsColor = isCompleted ? Colors.text : isActive ? Colors.primarySoft : Colors.subtext;
+  const completedA11y = isCompleted
+    ? `Completed: ${task.title}${linkedGoal ? `, goal ${linkedGoal.title}` : ''}`
+    : undefined;
 
   return (
-    <TouchableOpacity activeOpacity={0.75} onPress={() => onTap(task)} style={{ flexDirection: 'row', backgroundColor: isActive ? Colors.raised : Colors.surface, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: isActive ? Colors.primary + '50' : Colors.border, opacity: isCompleted ? 0.5 : 1 }}>
+    <TouchableOpacity activeOpacity={0.75} onPress={() => onTap(task)} accessibilityLabel={completedA11y} style={{ flexDirection: 'row', backgroundColor: rowBg, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 0.5, borderStyle: dormant ? 'dashed' : 'solid', borderColor: rowBorder }}>
       <View style={{ width: 3, backgroundColor: barColor }} />
       <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: progressFrac !== null ? 10 : 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -154,7 +165,7 @@ const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, on
               {isCompleted && <Ionicons name="checkmark" size={12} color={Colors.bg} />}
             </View>
           )}
-          <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.subtext : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
+          <Text numberOfLines={1} style={{ flex: 1, color: isCompleted ? Colors.text : Colors.textBright, fontSize: 14, fontWeight: '600', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>{task.title}</Text>
           <View style={{ marginLeft: 6, alignItems: 'flex-end', gap: 4 }}>
             {(isRecurringRow || categoryTag) && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -185,14 +196,14 @@ const TaskRowBody = memo(function TaskRowBody({ task, isActive, goals, onTap, on
         )}
         {linkedGoal && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5 }}>
-            <Ionicons name="flag-outline" size={10} color={Colors.primarySoft} style={{ marginRight: 4 }} />
-            <Text style={{ color: Colors.primarySoft, fontSize: 11 }} numberOfLines={1}>Goal: {linkedGoal.title}</Text>
+            <Ionicons name="flag-outline" size={10} color={goalColor} style={{ marginRight: 4 }} />
+            <Text style={{ color: goalColor, fontSize: 11 }} numberOfLines={1}>Goal: {linkedGoal.title}</Text>
           </View>
         )}
         {(task.sessionsOnTask > 0 || chip || blockLabel) && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
             {blockLabel && <View accessible accessibilityLabel={blockA11y ?? undefined} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: Colors.primaryDim }}><Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primarySoft }}>{blockLabel}</Text></View>}
-            {task.sessionsOnTask > 0 && <Text style={{ color: isActive ? Colors.primarySoft : Colors.subtext, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
+            {task.sessionsOnTask > 0 && <Text style={{ color: sessionsColor, fontSize: 11, fontWeight: '500' }}>{task.sessionsOnTask} session{task.sessionsOnTask !== 1 ? 's' : ''}</Text>}
             {chip && <View accessible accessibilityLabel={chip.a11yLabel} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}><Text style={{ fontSize: 10, fontWeight: '700', color: chip.fg }}>{chip.label}</Text></View>}
           </View>
         )}
@@ -964,6 +975,10 @@ export default function TasksScreen() {
 
   const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>(null);
+  // See more always opens on All (D3). This screen stays mounted as a tab, so
+  // the reset has to happen on every open rather than on mount.
+  const [boardTab, setBoardTab] = useState<BoardTab>('all');
+  const openTaskList = useCallback(() => { setBoardTab('all'); setActiveView('task-list'); }, []);
   // One period for both the summary card and the full report, so "See more"
   // always opens the period you were already looking at.
   const [statsTask, setStatsTask] = useState<Task | null>(null);
@@ -1147,7 +1162,6 @@ export default function TasksScreen() {
     setSessionsTarget({ by: 'task', key: statsTask.id, from: todayKey, to: todayKey, title: statsTask.title, subtitle: 'Today' });
     setStatsTask(null);
   }, [statsTask, todayKey]);
-  const doneTasks = useMemo(() => nonArchived.filter((t) => t.isCompleted), [nonArchived]);
 
   // ── Pill strip data ──
   const completedToday = useMemo(() => tasks.filter((t) => t.isCompleted && t.completedAt && isToday(new Date(t.completedAt).getTime())).length, [tasks]);
@@ -1206,17 +1220,28 @@ export default function TasksScreen() {
         goToFocus();
     }
   };
-  // All three sections always render so the categories stay put; an empty
-  // section says what would put something there. With nothing at all, no
-  // sections, so the list's own empty state shows instead.
+  // On All, all three sections always render so the categories stay put; an
+  // empty one says what would put something there. Another tab shows its one
+  // section (D4). With nothing at all, no sections, so the list's own empty
+  // state shows instead.
   const boardSections = useMemo(() => {
-    const sections = [
+    const sections: { key: TaskStatus; title: string; dotColor: string; data: BoardItem[]; emptyText: string }[] = [
       { key: 'not_started', title: 'Not started', dotColor: Colors.subtext, data: board.notStarted, emptyText: 'Nothing waiting to be started.' },
       { key: 'in_progress', title: 'In progress', dotColor: Colors.primary, data: board.inProgress, emptyText: 'Run a focus session on a task and it moves here.' },
       { key: 'completed', title: 'Completed', dotColor: Colors.accent, data: board.completed, emptyText: 'Nothing finished yet. The first one counts most.' },
     ];
-    return sections.some((section) => section.data.length > 0) ? sections : [];
-  }, [board, Colors]);
+    if (!sections.some((section) => section.data.length > 0)) return [];
+    return boardTab === 'all' ? sections : sections.filter((section) => section.key === boardTab);
+  }, [board, Colors, boardTab]);
+  const boardTabs = useMemo((): RoundedTab<BoardTab>[] => {
+    const counts = { not_started: board.notStarted.length, in_progress: board.inProgress.length, completed: board.completed.length };
+    return [
+      { key: 'all', label: 'All', count: counts.not_started + counts.in_progress + counts.completed, countNoun: 'tasks' },
+      { key: 'not_started', label: 'Not started', count: counts.not_started, countNoun: 'tasks' },
+      { key: 'in_progress', label: 'In progress', count: counts.in_progress, countNoun: 'tasks' },
+      { key: 'completed', label: 'Completed', count: counts.completed, countNoun: 'tasks' },
+    ];
+  }, [board]);
 
   // ── Handlers ──
   /**
@@ -1410,6 +1435,7 @@ export default function TasksScreen() {
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
         </View>
+        <RoundedTabs tabs={boardTabs} value={boardTab} onChange={setBoardTab} style={{ marginHorizontal: 20, marginTop: 0 }} />
         {/* Grouped by progress, read from session stats: no sessions is Not
             started, sessions without a tick is In progress. Every recurring
             task appears once — through today's instance when it has one, else
@@ -1421,14 +1447,33 @@ export default function TasksScreen() {
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}
           renderItem={renderBoardItem}
           stickySectionHeadersEnabled={false}
-          renderSectionHeader={({ section }) => (
+          renderSectionHeader={({ section }) => (boardTab === 'all' ? (
             <View style={{ marginTop: section.key === 'not_started' ? 0 : 16 }}>
               <GroupHeader dotColor={section.dotColor} label={section.title} count={section.data.length} />
             </View>
-          )}
-          renderSectionFooter={({ section }) => (section.data.length === 0 ? (
-            <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 4 }}>{section.emptyText}</Text>
           ) : null)}
+          renderSectionFooter={({ section }) => {
+            if (section.data.length > 0) return null;
+            if (boardTab === 'all') {
+              return <Text style={{ color: Colors.subtext, fontSize: 12, marginBottom: 4 }}>{section.emptyText}</Text>;
+            }
+            // A tab on its own gets a card and the one action that fills it (D8).
+            const action = section.key === 'not_started'
+              ? { label: '+ New task', onPress: openCreate }
+              : section.key === 'in_progress'
+                ? { label: 'Start focus', onPress: goToFocus }
+                : null;
+            return (
+              <View style={[styles.card, { alignItems: 'center', paddingVertical: 32, marginTop: 8 }]}>
+                <Text style={{ color: Colors.text, fontSize: 13, textAlign: 'center' }}>{section.emptyText}</Text>
+                {action && (
+                  <TouchableOpacity onPress={action.onPress} accessibilityRole="button" style={{ marginTop: 14, minHeight: 44, paddingHorizontal: 18, borderRadius: 12, backgroundColor: Colors.primary, justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{action.label}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          }}
           ListEmptyComponent={
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, marginTop: 8 }]}>
               <Text style={{ color: Colors.subtext, fontSize: 13, textAlign: 'center' }}>
@@ -1436,9 +1481,11 @@ export default function TasksScreen() {
               </Text>
             </View>
           }
-          ListFooterComponent={
+          ListFooterComponent={boardTab === 'all' || boardTab === 'completed' ? (
             <>
-            {/* This Week — the same shape the Goals drill-down uses, counting what
+            {/* Under All and Completed only: it counts finished tasks (D6).
+
+                This Week — the same shape the Goals drill-down uses, counting what
                 this screen is about. Goals plots focus SECONDS per day; here the
                 bars are tasks FINISHED per day, because that is the unit the list
                 above is made of.
@@ -1475,7 +1522,7 @@ export default function TasksScreen() {
               )}
             </View>
             </>
-          }
+          ) : undefined}
         />
         {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
         <TaskFormModal {...taskForm.props} />
@@ -1577,7 +1624,7 @@ export default function TasksScreen() {
 
         {/* Zone 2 — Task List */}
         <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
-          <ZoneHeader title="Tasks" onSeeMore={() => setActiveView('task-list')} />
+          <ZoneHeader title="Tasks" onSeeMore={openTaskList} />
           {nonArchived.length === 0 && recurringTemplates.length === 0 ? (
             <View style={[styles.card, { alignItems: 'center', paddingVertical: 36 }]}>
               <Ionicons name="checkbox-outline" size={32} color={Colors.subtext} />
@@ -1592,13 +1639,20 @@ export default function TasksScreen() {
                 {topOpenTasks.map((task) => (
                   <TaskRow key={task.id} task={task} isActive={task.id === selectedTaskId} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />
                 ))}
-                {hiddenOpenCount > 0 && <TouchableOpacity onPress={() => setActiveView('task-list')} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{hiddenOpenCount} more →</Text></TouchableOpacity>}
+                {hiddenOpenCount > 0 && <TouchableOpacity onPress={openTaskList} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: Colors.primarySoft, fontSize: 12, fontWeight: '600' }}>+{hiddenOpenCount} more →</Text></TouchableOpacity>}
               </View>
             )}
-            {doneTasks.slice(0, 2).length > 0 && <View>
-              <GroupHeader dotColor={Colors.accent} label="Done" count={doneTasks.length} />
-              {doneTasks.slice(0, 2).map((task) => <TaskRow key={task.id} task={task} isActive={false} goals={goals} onTap={setStatsTask} onEdit={openEdit} onComplete={handleComplete} onLongPressTag={setOverrideTag} />)}
-            </View>}
+            {/* Finished work lives in See more → Completed (D10). When nothing
+                open is left, the end of the list says so (D11). */}
+            {topOpenTasks.length === 0 && hiddenOpenCount === 0 && (
+              <View style={[styles.card, { alignItems: 'center', paddingVertical: 32 }]}>
+                <Ionicons name="checkmark-circle" size={32} color={Colors.accent} />
+                <Text style={{ color: Colors.textBright, fontSize: 14, fontWeight: '600', marginTop: 10 }}>All done for now.</Text>
+                <TouchableOpacity onPress={openCreate} accessibilityRole="button" style={{ marginTop: 14, minHeight: 44, paddingHorizontal: 18, borderRadius: 12, backgroundColor: Colors.primary, justifyContent: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>+ Add task</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </>)}
         </View>
 

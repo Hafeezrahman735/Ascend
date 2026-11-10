@@ -14,6 +14,7 @@ import { useDaySessions } from '../../hooks/useTimeReport';
 import type { CalendarEvent, CalendarItem, Note, Task, TimelineSession } from '../../types';
 import TaskStatsModal, { type FocusedOnDay } from '../../components/TaskStatsModal';
 import TaskFormModal from '../../components/TaskFormModal';
+import RoundedTabs from '../../components/RoundedTabs';
 import { useTaskForm, type TaskFormChange } from '../../hooks/useTaskForm';
 import type { Slot } from '../../lib/planScreen';
 import SessionsSheet, { type SessionsTarget } from '../../components/timeReport/SessionsSheet';
@@ -365,21 +366,7 @@ export default function CalendarScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }} edges={['top']}>
-      <View style={styles.segment}>
-        {VIEW_MODES.map((mode) => (
-          <TouchableOpacity
-            key={mode.key}
-            onPress={() => setViewMode(mode.key)}
-            style={[styles.segmentItem, viewMode === mode.key && { backgroundColor: Colors.primary }]}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: viewMode === mode.key }}
-          >
-            <Text style={[styles.segmentText, viewMode === mode.key && { color: '#fff', fontWeight: '700' }]}>
-              {mode.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <RoundedTabs tabs={VIEW_MODES} value={viewMode} onChange={setViewMode} />
 
       <View style={styles.navRow}>
         <TouchableOpacity onPress={() => step(-1)} style={styles.navBtn} hitSlop={8} accessibilityLabel="Previous">

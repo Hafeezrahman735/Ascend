@@ -154,10 +154,23 @@ describe('buildTaskBoard', () => {
     expect(ids(board.notStarted)).toEqual([]);
   });
 
-  it('shows a recurring task with no row today in Not started, after real tasks', () => {
+  it('slots a recurring task with no row today into Not started by its next occurrence (D19)', () => {
     const board = buildTaskBoard({
-      tasks: [task({ id: 'real' })],
+      tasks: [
+        task({ id: 'undated' }),
+        task({ id: 'thu', dueDate: '2026-08-20' }),
+        task({ id: 'today', dueDate: '2026-08-18' }),
+      ],
       templates: [template({ id: 'wed', scheduledToday: false, nextOccurrence: '2026-08-19' })],
+      now: NOW,
+    });
+    expect(ids(board.notStarted)).toEqual(['today', 'recurring:wed', 'thu', 'undated']);
+  });
+
+  it('puts a one-off task before a habit on the same day and priority', () => {
+    const board = buildTaskBoard({
+      tasks: [task({ id: 'real', dueDate: '2026-08-19' })],
+      templates: [template({ id: 'wed', nextOccurrence: '2026-08-19' })],
       now: NOW,
     });
     expect(ids(board.notStarted)).toEqual(['real', 'recurring:wed']);
@@ -184,6 +197,43 @@ describe('buildTaskBoard', () => {
       now: NOW,
     });
     expect(ids(board.notStarted)).toEqual(['recurring:wed', 'recurring:fri', 'recurring:ended']);
+  });
+
+  it('orders open tasks by due date before priority: overdue, soon, later, undated (D7)', () => {
+    const board = buildTaskBoard({
+      tasks: [
+        task({ id: 'urgent-undated', priority: 'urgent' }),
+        task({ id: 'urgent-next-week', priority: 'urgent', dueDate: '2026-08-25' }),
+        task({ id: 'low-today', priority: 'low', dueDate: '2026-08-18' }),
+        task({ id: 'low-overdue', priority: 'low', dueDate: '2026-08-15' }),
+        task({ id: 'high-today', priority: 'high', dueDate: '2026-08-18' }),
+      ],
+      templates: [],
+      now: NOW,
+    });
+    expect(ids(board.notStarted)).toEqual([
+      'low-overdue', 'high-today', 'low-today', 'urgent-next-week', 'urgent-undated',
+    ]);
+  });
+
+  it('orders In progress the same way', () => {
+    const board = buildTaskBoard({
+      tasks: [
+        task({ id: 'later', sessionsOnTask: 2, priority: 'urgent', dueDate: '2026-08-30' }),
+        task({ id: 'soon', sessionsOnTask: 1, priority: 'low', dueDate: '2026-08-19' }),
+      ],
+      templates: [],
+      now: NOW,
+    });
+    expect(ids(board.inProgress)).toEqual(['soon', 'later']);
+  });
+
+  it("leaves Today's top tasks on priority first", () => {
+    const tasks = [
+      task({ id: 'low-today', priority: 'low', dueDate: '2026-08-18' }),
+      task({ id: 'urgent-later', priority: 'urgent', dueDate: '2026-08-25' }),
+    ];
+    expect(topTasks(tasks, NOW, 2).map((t) => t.id)).toEqual(['urgent-later', 'low-today']);
   });
 
   it('shows the most recently completed first', () => {

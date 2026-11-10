@@ -99,12 +99,6 @@ export function blockStyle(type: CalendarItemType, Colors: ThemeColors) {
 
 export function getCalendarStyles(Colors: ThemeColors) {
   return StyleSheet.create({
-    segment: {
-      flexDirection: 'row', margin: 12, padding: 3, borderRadius: 12,
-      backgroundColor: Colors.surface, gap: 3,
-    },
-    segmentItem: { flex: 1, paddingVertical: 7, borderRadius: 9, alignItems: 'center' },
-    segmentText: { color: Colors.subtext, fontSize: 13, fontWeight: '600' },
     navRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 6, gap: 8 },
     navBtn: { padding: 6, borderRadius: 8, backgroundColor: Colors.surface },
     navLabel: { color: Colors.textBright, fontSize: 15, fontWeight: '700', textAlign: 'center' },

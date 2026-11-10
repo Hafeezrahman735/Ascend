@@ -25,6 +25,9 @@ import { daysUntil, templatesWithoutTodayRow, type RecurringTemplate } from './r
 
 export type TaskStatus = 'not_started' | 'in_progress' | 'completed';
 
+/** See more's tabs: every group, or one (all-tasks-status-tabs D3-D5). */
+export type BoardTab = 'all' | TaskStatus;
+
 export type BoardItem =
   | { kind: 'task'; task: Task }
   | { kind: 'recurring'; template: RecurringTemplate };
@@ -96,12 +99,46 @@ export function topTasks(tasks: Task[], now: Date, limit: number): Task[] {
   return [...planned.map((p) => p.task), ...rest].slice(0, limit);
 }
 
-/** Templates standing in for a habit: soonest next occurrence first. */
-function compareTemplates(a: RecurringTemplate, b: RecurringTemplate, now: Date): number {
-  const da = daysUntil(a.nextOccurrence, now) ?? Number.MAX_SAFE_INTEGER;
-  const db = daysUntil(b.nextOccurrence, now) ?? Number.MAX_SAFE_INTEGER;
-  if (da !== db) return da - db;
-  return a.title.localeCompare(b.title);
+/**
+ * The day an open board item is next needed, in days from today: a task's due
+ * date (negative when overdue), or a stand-in habit's next occurrence. Null
+ * when it has none: an undated task, or a habit that has ended.
+ */
+function itemDay(item: BoardItem, now: Date): number | null {
+  return item.kind === 'task'
+    ? daysUntilDue(item.task.dueDate, now)
+    : daysUntil(item.template.nextOccurrence, now);
+}
+
+function itemTask(item: BoardItem): Task {
+  return item.kind === 'task' ? item.task : item.template;
+}
+
+/**
+ * See more's order (all-tasks-status-tabs D7, D19): by when it is needed,
+ * so the list reads as a timeline. Overdue first, then today, then later,
+ * then undated. A stand-in habit slots in on its next occurrence. Ties go
+ * to priority, then a one-off task before a habit, then newest (habits by
+ * title).
+ *
+ * Today's top three keep compareByUrgency: this order is only for the board.
+ */
+export function compareByWhen(a: BoardItem, b: BoardItem, now: Date): number {
+  const da = itemDay(a, now);
+  const db = itemDay(b, now);
+  if (da !== db) {
+    if (da === null) return 1;
+    if (db === null) return -1;
+    return da - db;
+  }
+  const ta = itemTask(a);
+  const tb = itemTask(b);
+  const byPriority = (PRIORITY_RANK[ta.priority] ?? PRIORITY_RANK.medium)
+    - (PRIORITY_RANK[tb.priority] ?? PRIORITY_RANK.medium);
+  if (byPriority !== 0) return byPriority;
+  if (a.kind !== b.kind) return a.kind === 'task' ? -1 : 1;
+  if (a.kind === 'recurring') return ta.title.localeCompare(tb.title);
+  return tb.createdAt.localeCompare(ta.createdAt);
 }
 
 /** Most recently finished first; rows without a completedAt sink. */
@@ -120,16 +157,15 @@ export function buildTaskBoard(params: {
   const byStatus: Record<TaskStatus, Task[]> = { not_started: [], in_progress: [], completed: [] };
   for (const task of live) byStatus[taskStatus(task)].push(task);
 
-  const urgency = (a: Task, b: Task) => compareByUrgency(a, b, now);
+  const when = (a: BoardItem, b: BoardItem) => compareByWhen(a, b, now);
   const asTasks = (list: Task[]): BoardItem[] => list.map((task) => ({ kind: 'task', task }));
 
   const standIns: BoardItem[] = templatesWithoutTodayRow(templates, live)
-    .sort((a, b) => compareTemplates(a, b, now))
     .map((template) => ({ kind: 'recurring', template }));
 
   return {
-    notStarted: [...asTasks(byStatus.not_started.sort(urgency)), ...standIns],
-    inProgress: asTasks(byStatus.in_progress.sort(urgency)),
+    notStarted: [...asTasks(byStatus.not_started), ...standIns].sort(when),
+    inProgress: asTasks(byStatus.in_progress).sort(when),
     completed: asTasks(byStatus.completed.sort(compareCompleted)),
   };
 }
