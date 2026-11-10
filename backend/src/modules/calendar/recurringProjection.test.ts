@@ -6,8 +6,11 @@ import { projectRecurring, eachDateInRange } from './recurringProjection';
 const task = (
   id: string,
   days: string[] = [],
-  { createdAt = new Date('2020-01-01T00:00:00.000Z'), dueDate = null as Date | null, isArchived = false } = {},
-) => ({ id, recurringDays: days, createdAt, dueDate, isArchived });
+  {
+    createdAt = new Date('2020-01-01T00:00:00.000Z'), dueDate = null as Date | null,
+    isArchived = false, isCompleted = false,
+  } = {},
+) => ({ id, recurringDays: days, createdAt, dueDate, isArchived, isCompleted });
 
 /** A task that stops repeating after `date`, inclusive. */
 const endingOn = (id: string, days: string[], date: string) =>
@@ -81,6 +84,12 @@ describe('projectRecurring', () => {
   it('shows only the done days of a deleted task, projecting nothing', () => {
     const deleted = task('a', [], { isArchived: true });
     expect(project([deleted], MON, WED, doneOn({ a: [TUE] }))).toEqual([['a', TUE, true]]);
+  });
+
+  it('shows only the done days of a completed series, dropping its missed days', () => {
+    // Daily; Monday missed, Tuesday done, then the series was completed.
+    const completed = task('a', [], { isCompleted: true });
+    expect(project([completed], MON, WED, doneOn({ a: [TUE] }))).toEqual([['a', TUE, true]]);
   });
 });
 

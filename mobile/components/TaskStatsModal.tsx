@@ -263,8 +263,9 @@ export default function TaskStatsModal({
                 sub={`Total ${task.totalCompletions}`}
               />
             </View>
-            {/* Missed days count only days that can no longer be ticked
-                (before yesterday), judged by the current schedule. */}
+            {/* Missed days are past scheduled days not ticked, judged by the
+                current schedule. An unticked yesterday counts until it is
+                marked done (it can still be, from this sheet). */}
             <BentoCell
               Colors={Colors}
               icon="calendar-clear-outline" label="On schedule"

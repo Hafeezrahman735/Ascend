@@ -58,7 +58,7 @@ export function isSeriesFinished(task: Pick<Task, 'recurringDays' | 'dueDate'>, 
 }
 
 export interface RecurringStats {
-  /** Consecutive due days done, ending today. An unticked today or yesterday is still open. */
+  /** Consecutive due days done, ending today (or yesterday while today is still open). */
   currentStreak: number;
   longestStreak: number;
   totalCompletions: number;
@@ -71,7 +71,7 @@ export interface RecurringStats {
   scheduledDays: number;
   /** Of those, the days ticked off. Never more than scheduledDays. */
   doneOnSchedule: number;
-  /** scheduledDays − doneOnSchedule: scheduled days that can no longer be ticked. */
+  /** scheduledDays − doneOnSchedule: past scheduled days not ticked (yesterday included). */
   missedDays: number;
 }
 
@@ -79,16 +79,15 @@ export interface RecurringStats {
  * Streaks, totals and missed days from the rule and the set of done days, in
  * one pass from the task's first day to `today`.
  *
- * A day is due if the schedule says so or it was done. Today and yesterday are
- * still open (both can be ticked), so an unticked one neither breaks the
- * streak nor counts as missed; a due day before them that was not done does.
- * A completed series can no longer be ticked at all, so yesterday is not open
- * for it.
+ * A day is due if the schedule says so or it was done. A due day not done
+ * breaks the streak and counts as missed, except today, which is still open.
+ * An unticked yesterday counts as missed until it is marked done (it can
+ * still be ticked; the figures follow when it is). The founder chose this
+ * over treating yesterday as open (2026-11-10): a miss is shown as a miss.
  *
  * Missed days count only days the CURRENT rule schedules, from the first day
- * to the day before yesterday (for a completed series, to its last day), and
- * never past the series end. `totalCompletions` stays every log row, so it
- * can exceed doneOnSchedule after a schedule is narrowed.
+ * to yesterday, and never past the series end. `totalCompletions` stays every
+ * log row, so it can exceed doneOnSchedule after a schedule is narrowed.
  *
  * The walk starts at the task's UTC creation day, or an earlier done day: a
  * user west of UTC can tick off a local day before the creation instant's UTC
@@ -99,11 +98,8 @@ export function recurringStats(task: Rule, done: ReadonlySet<string>, today: str
   for (const day of done) if (day < first) first = day;
 
   const lastDay = repeatsUntil(task);
-  const completed = task.isCompleted === true;
   const yesterday = shiftDateKey(today, -1);
-  const openUntil = completed ? today : shiftDateKey(today, -2);
-  const windowEnd = lastDay && lastDay < openUntil ? lastDay : openUntil;
-  const isOpen = (day: string) => day === today || (!completed && day === yesterday);
+  const windowEnd = lastDay && lastDay < yesterday ? lastDay : yesterday;
 
   let run = 0;
   let longest = 0;
@@ -124,7 +120,7 @@ export function recurringStats(task: Rule, done: ReadonlySet<string>, today: str
     if (isDone) {
       run += 1;
       longest = Math.max(longest, run);
-    } else if (!isOpen(day)) {
+    } else if (day !== today) {
       run = 0;
     }
   }

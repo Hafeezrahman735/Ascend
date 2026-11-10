@@ -215,8 +215,8 @@ export interface Task {
   longestStreak: number;
   totalCompletions: number;
   totalFocusSeconds: number;
-  // Scheduled days that can no longer be ticked (before yesterday), by the
-  // current rule; missed = scheduled − done (docs: tasks-recurring-blocks-sessions).
+  // Past scheduled days (up to yesterday) by the current rule; missed =
+  // scheduled − done. An unticked yesterday is missed until marked done.
   scheduledDays: number;
   doneOnSchedule: number;
   missedDays: number;

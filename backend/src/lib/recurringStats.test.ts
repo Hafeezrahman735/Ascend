@@ -26,8 +26,8 @@ describe('recurringStats', () => {
   it('counts consecutive done days through today', () => {
     expect(recurringStats(rule(), done(0, 1, 2), day(2))).toEqual({
       currentStreak: 3, longestStreak: 3, totalCompletions: 3, latestDueDayDone: true,
-      // Only Monday is past the open days (today and yesterday).
-      scheduledDays: 1, doneOnSchedule: 1, missedDays: 0,
+      // Monday and Tuesday are past; today is still open.
+      scheduledDays: 2, doneOnSchedule: 2, missedDays: 0,
     });
   });
 
@@ -43,13 +43,8 @@ describe('recurringStats', () => {
     expect(stats.longestStreak).toBe(3);
   });
 
-  it('keeps the streak while an unticked yesterday is still open', () => {
-    // Done Mon and Tue; Wednesday unticked; today is Thursday.
-    expect(recurringStats(rule(), done(0, 1), day(3)).currentStreak).toBe(2);
-  });
-
-  it('is zero once a missed day falls before yesterday', () => {
-    expect(recurringStats(rule(), done(0, 1), day(4)).currentStreak).toBe(0);
+  it('is zero once yesterday was missed', () => {
+    expect(recurringStats(rule(), done(0, 1), day(3)).currentStreak).toBe(0);
   });
 
   it('skips days the task is not scheduled on', () => {
@@ -93,19 +88,24 @@ describe('recurringStats', () => {
 });
 
 describe('recurringStats: missed days (docs/designs/tasks-recurring-blocks-sessions.md)', () => {
-  it('R1: counts an unticked day as missed only once it is before yesterday', () => {
-    // Daily; Monday done, Tuesday not.
-    const wednesday = recurringStats(rule(), done(0), day(2));
-    expect(wednesday).toMatchObject({ missedDays: 0, currentStreak: 1 });
-    const thursday = recurringStats(rule(), done(0), day(3));
-    expect(thursday).toMatchObject({ scheduledDays: 2, doneOnSchedule: 1, missedDays: 1, currentStreak: 0 });
+  it('R1: counts an unticked yesterday as missed until it is marked done', () => {
+    // Daily; Monday done, Tuesday not; today is Wednesday.
+    const missed = recurringStats(rule(), done(0), day(2));
+    expect(missed).toMatchObject({ scheduledDays: 2, doneOnSchedule: 1, missedDays: 1, currentStreak: 0 });
+    // Tuesday marked done on Wednesday: the miss and the streak recover.
+    const marked = recurringStats(rule(), done(0, 1), day(2));
+    expect(marked).toMatchObject({ scheduledDays: 2, doneOnSchedule: 2, missedDays: 0, currentStreak: 2 });
+  });
+
+  it('never counts today as missed', () => {
+    expect(recurringStats(rule(), done(), day(0))).toMatchObject({ scheduledDays: 0, missedDays: 0 });
   });
 
   it('R8: judges past days by the current rule, keeping the lifetime total', () => {
-    // Two weeks from Mon Oct 5 (window ends Sun Oct 18 when today is Tue Oct 20).
+    // Two weeks from Mon Oct 5 (window ends Sun Oct 18 when today is Mon Oct 19).
     // Ticked: weekends 10, 11, 17, 18 and weekdays 5, 6, 7, 12, 13, 14. Now weekdays only.
     const weekdays = ['mon', 'tue', 'wed', 'thu', 'fri'];
-    const stats = recurringStats(rule(weekdays), done(5, 6, 12, 13, 0, 1, 2, 7, 8, 9), day(15));
+    const stats = recurringStats(rule(weekdays), done(5, 6, 12, 13, 0, 1, 2, 7, 8, 9), day(14));
     expect(stats).toMatchObject({ scheduledDays: 10, doneOnSchedule: 6, missedDays: 4, totalCompletions: 10 });
   });
 
@@ -121,10 +121,10 @@ describe('recurringStats: missed days (docs/designs/tasks-recurring-blocks-sessi
     expect(stats).toMatchObject({ scheduledDays: 4, doneOnSchedule: 3, missedDays: 1 });
   });
 
-  it('counts an unticked last day as missed at once when the series is completed', () => {
-    // Daily until Thursday; today is Friday, so Thursday is still yesterday.
+  it('counts an unticked last day as missed, completed series or not', () => {
+    // Daily until Thursday; today is Friday, Thursday unticked.
     const open = recurringStats(rule([], day(3)), done(0, 1, 2), day(4));
-    expect(open).toMatchObject({ scheduledDays: 3, missedDays: 0 });
+    expect(open).toMatchObject({ scheduledDays: 4, missedDays: 1 });
     const completed = recurringStats({ ...rule([], day(3)), isCompleted: true }, done(0, 1, 2), day(4));
     expect(completed).toMatchObject({ scheduledDays: 4, missedDays: 1 });
   });

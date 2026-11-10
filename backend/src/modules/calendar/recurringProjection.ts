@@ -28,6 +28,11 @@ export interface RecurringLike {
   dueDate: Date | null;
   /** A deleted task shows the days it was done, and is not projected. */
   isArchived: boolean;
+  /**
+   * On a recurring task: the whole series was completed. Like a deleted task
+   * it keeps the days it was done and drops the rest, missed days included.
+   */
+  isCompleted: boolean;
 }
 
 export interface Occurrence<T extends RecurringLike> {
@@ -89,6 +94,7 @@ export function projectRecurring<T extends RecurringLike>(params: {
       const { from, until } = bounds.get(task.id)!;
       const scheduled =
         !task.isArchived &&
+        !task.isCompleted &&
         date >= from &&
         (!until || date <= until) &&
         (task.recurringDays.length === 0 || task.recurringDays.includes(dayName));

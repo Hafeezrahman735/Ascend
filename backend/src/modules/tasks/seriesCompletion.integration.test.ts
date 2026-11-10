@@ -147,9 +147,9 @@ describe('PUT /tasks/:id/completions/:date — a completed or ended series', () 
 });
 
 describe('GET /tasks/recurring — missed days', () => {
-  it('R1/R9: counts from the creation day to the day before yesterday', async () => {
+  it('R1/R9: counts from the creation day to yesterday, which stays tickable', async () => {
     const user = await createUser();
-    // Daily, created five days ago. Done five and three days ago; yesterday is open.
+    // Daily, created five days ago. Done five and three days ago; yesterday unticked.
     const habit = await makeHabit(user, { createdOn: dayOffset(-5) });
     await prisma.recurringCompletion.createMany({
       data: [dayOffset(-5), dayOffset(-3)].map((date) => ({ userId: user.id, taskId: habit.id, date })),
@@ -157,11 +157,11 @@ describe('GET /tasks/recurring — missed days', () => {
 
     const row = await recurringRow(user, habit.id);
 
-    // Window: -5 .. -2 = 4 scheduled days, 2 done.
+    // Window: -5 .. -1 = 5 scheduled days, 2 done; yesterday counts as missed until marked.
     expect(row).toMatchObject({
-      scheduledDays: 4,
+      scheduledDays: 5,
       doneOnSchedule: 2,
-      missedDays: 2,
+      missedDays: 3,
       totalCompletions: 2,
       yesterdayOpen: true,
       seriesFinished: false,
@@ -177,5 +177,29 @@ describe('GET /tasks/recurring — missed days', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.some((t: { id: string }) => t.id === habit.id)).toBe(false);
+  });
+});
+
+describe('GET /calendar — a completed series', () => {
+  it('keeps the days it was done and drops its missed days', async () => {
+    const user = await createUser();
+    // Daily, created six days ago, ended three days ago; done only four days ago.
+    const habit = await makeHabit(user, { createdOn: dayOffset(-6), endsOn: dayOffset(-3) });
+    await prisma.recurringCompletion.create({ data: { userId: user.id, taskId: habit.id, date: dayOffset(-4) } });
+    const days = async () => {
+      const res = await authed(user).get(`/calendar?start=${dayOffset(-6)}&end=${today()}`);
+      expect(res.status).toBe(200);
+      return res.body.data.items
+        .filter((i: { type: string; data: { id?: string } }) => i.type === 'habit_instance' && i.data?.id === habit.id)
+        .map((i: { date: string }) => i.date)
+        .sort();
+    };
+
+    // Before completing: every scheduled day, missed ones included.
+    expect(await days()).toEqual([dayOffset(-6), dayOffset(-5), dayOffset(-4), dayOffset(-3)]);
+
+    await patch(user, habit.id, { isCompleted: true });
+
+    expect(await days()).toEqual([dayOffset(-4)]);
   });
 });
