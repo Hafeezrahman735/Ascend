@@ -1,6 +1,6 @@
 import { isScheduledOn } from './recurrence';
 import { utcDateStr } from './localDate';
-import { repeatsUntil, type Rule } from './recurringStats';
+import { earliestCreationDay, repeatsUntil, type Rule } from './recurringStats';
 import { awardXp, type XpAward } from './gamification';
 import { syncGoalCompletion } from './goalProgress';
 import { taskCompletionXP } from './xp';
@@ -16,12 +16,6 @@ import { runInTransaction } from './transaction';
 const YYYY_MM_DD = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/**
- * The earliest UTC offset on earth. A task created at instant T was created on
- * a local day no earlier than the UTC day of T minus this.
- */
-const EARLIEST_UTC_OFFSET_MS = 12 * 60 * 60 * 1000;
-
 /** A real calendar day as 'YYYY-MM-DD' — rejects shapes like 2026-02-30. */
 export function isCalendarDate(date: string): boolean {
   if (!YYYY_MM_DD.test(date)) return false;
@@ -36,17 +30,6 @@ function daysBetween(from: string, to: string): number {
 }
 
 /**
- * The earliest local day the task could have been created on, in any zone.
- *
- * The row stores an instant, not the creator's zone, so the exact local day
- * is unknown. Bounding by the westernmost zone never turns away a real tick;
- * at worst it allows one day before creation for a user far east of UTC.
- */
-function earliestCreationDay(createdAt: Date): string {
-  return utcDateStr(new Date(createdAt.getTime() - EARLIEST_UTC_OFFSET_MS));
-}
-
-/**
  * Why `date` cannot be ticked off or un-ticked for this task, or null if it can.
  *
  * `today` is the client's local day. A day may be changed only on that day or
@@ -55,6 +38,8 @@ function earliestCreationDay(createdAt: Date): string {
  */
 export function completionDateError(task: Rule, date: string, today: string): string | null {
   if (!isCalendarDate(date)) return 'Date must be a valid YYYY-MM-DD day';
+  // A completed series is closed: reopen it first (PATCH isCompleted: false).
+  if (task.isCompleted) return 'This series is completed';
   if (date > today) return 'Date is in the future';
   if (daysBetween(date, today) > 1) return 'Date is more than one day ago';
   if (date < earliestCreationDay(task.createdAt)) return 'Date is before the task was created';

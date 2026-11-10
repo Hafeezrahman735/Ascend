@@ -51,6 +51,9 @@ function normalizeTask(t: Task): Task {
     longestStreak: t.longestStreak ?? 0,
     totalCompletions: t.totalCompletions ?? 0,
     totalFocusSeconds: t.totalFocusSeconds ?? 0,
+    scheduledDays: t.scheduledDays ?? 0,
+    doneOnSchedule: t.doneOnSchedule ?? 0,
+    missedDays: t.missedDays ?? 0,
   };
 }
 
@@ -200,6 +203,11 @@ interface TaskStoreState {
   toggleComplete: (id: string) => Promise<void>;
   /** Tick or un-tick one day of a recurring task, for any day (the calendar). */
   setOccurrenceCompletion: (id: string, date: string, done: boolean) => Promise<boolean>;
+  /**
+   * Complete a finished recurring series as a whole, or reopen it. The server
+   * refuses it while a scheduled day is left and pays no XP either way.
+   */
+  setSeriesCompleted: (id: string, completed: boolean) => Promise<boolean>;
   clearTasks: (userId?: string) => Promise<void>;
   fetchRecurringTemplates: () => Promise<void>;
   refreshRecurring: () => Promise<void>;
@@ -295,6 +303,9 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       longestStreak: 0,
       totalCompletions: 0,
       totalFocusSeconds: 0,
+      scheduledDays: 0,
+      doneOnSchedule: 0,
+      missedDays: 0,
     };
     const withTemp = [tempTask, ...get().tasks];
     set({ tasks: withTemp });
@@ -457,14 +468,28 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     try {
       const res = await setOccurrenceDone(id, date, done);
       if (!res.success) throw new Error(res.error || 'Completion was not saved');
-      // Today's row and its streak may have moved with the tick.
-      await get().fetchTasks(true);
+      // Today's row, the streak and the missed-day figures may have moved.
+      await get().refreshRecurring();
       const template = get().recurringTemplates.find((t) => t.id === id);
       if (template?.taskGoalId) refreshGoals();
       invalidateCalendar();
       return true;
     } catch (err) {
       console.warn('[tasks] setOccurrenceCompletion failed:', err);
+      return false;
+    }
+  },
+
+  setSeriesCompleted: async (id, completed) => {
+    try {
+      const url = `/tasks/${id}?localDate=${encodeURIComponent(getLocalDateString())}`;
+      const res = await api.patch<Task>(url, { isCompleted: completed });
+      if (!res.success) throw new Error(res.error || 'The series was not updated');
+      await get().refreshRecurring();
+      invalidateCalendar();
+      return true;
+    } catch (err) {
+      console.warn('[tasks] setSeriesCompleted failed:', err);
       return false;
     }
   },

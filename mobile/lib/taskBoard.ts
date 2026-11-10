@@ -160,12 +160,18 @@ export function buildTaskBoard(params: {
   const when = (a: BoardItem, b: BoardItem) => compareByWhen(a, b, now);
   const asTasks = (list: Task[]): BoardItem[] => list.map((task) => ({ kind: 'task', task }));
 
-  const standIns: BoardItem[] = templatesWithoutTodayRow(templates, live)
-    .map((template) => ({ kind: 'recurring', template }));
+  // A recurring task with no row today stands in under Not started, unless
+  // its whole series was completed: then it is finished work, under Completed.
+  const standIns: BoardItem[] = [];
+  const completedSeries: BoardItem[] = [];
+  for (const template of templatesWithoutTodayRow(templates, live)) {
+    (template.isCompleted ? completedSeries : standIns).push({ kind: 'recurring', template });
+  }
+  const byCompletion = (a: BoardItem, b: BoardItem) => compareCompleted(itemTask(a), itemTask(b));
 
   return {
     notStarted: [...asTasks(byStatus.not_started), ...standIns].sort(when),
     inProgress: asTasks(byStatus.in_progress).sort(when),
-    completed: asTasks(byStatus.completed.sort(compareCompleted)),
+    completed: [...asTasks(byStatus.completed), ...completedSeries].sort(byCompletion),
   };
 }

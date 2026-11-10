@@ -215,6 +215,16 @@ export interface Task {
   longestStreak: number;
   totalCompletions: number;
   totalFocusSeconds: number;
+  // Scheduled days that can no longer be ticked (before yesterday), by the
+  // current rule; missed = scheduled − done (docs: tasks-recurring-blocks-sessions).
+  scheduledDays: number;
+  doneOnSchedule: number;
+  missedDays: number;
+  // On a recurring task shown as itself (GET /tasks/recurring), not on a day
+  // row: no scheduled day is left, and yesterday can still be ticked. There,
+  // isCompleted means the whole series was completed.
+  seriesFinished?: boolean;
+  yesterdayOpen?: boolean;
 }
 
 /** One planned stretch of work on a one-off task: a local day, optionally timed. */

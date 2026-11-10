@@ -56,6 +56,11 @@ export function nextOccurrenceLabel(
   template: RecurringTemplate,
   from: Date = new Date(),
 ): string {
+  // The server decides both: a completed series, and one with no scheduled
+  // day left (which can end before its end date). Either way there is no
+  // "next", and a finished one is waiting to be completed from its sheet.
+  if (template.isCompleted) return 'Series completed';
+  if (template.seriesFinished) return 'Finished repeating · tap to complete';
   const endedDays = daysUntil(template.dueDate ? template.dueDate.slice(0, 10) : null, from);
   if (endedDays !== null && endedDays < 0) return 'Finished repeating';
 

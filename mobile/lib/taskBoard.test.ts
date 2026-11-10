@@ -248,6 +248,19 @@ describe('buildTaskBoard', () => {
     expect(ids(board.completed)).toEqual(['evening', 'morning']);
   });
 
+  it('lists a completed recurring series under Completed, not as a stand-in', () => {
+    const board = buildTaskBoard({
+      tasks: [task({ id: 'done', isCompleted: true, completedAt: '2026-08-18T09:00:00.000Z' })],
+      templates: [
+        template({ id: 'series', isCompleted: true, completedAt: '2026-08-18T10:00:00.000Z', seriesFinished: true }),
+        template({ id: 'open', nextOccurrence: '2026-08-19' }),
+      ],
+      now: NOW,
+    });
+    expect(ids(board.completed)).toEqual(['recurring:series', 'done']);
+    expect(ids(board.notStarted)).toEqual(['recurring:open']);
+  });
+
   it('is empty for no tasks and no templates', () => {
     expect(buildTaskBoard({ tasks: [], templates: [], now: NOW }))
       .toEqual({ notStarted: [], inProgress: [], completed: [] });

@@ -6,7 +6,7 @@ import { handleAuthError } from '../../lib/errors';
 import { resolveLocalDate } from '../../lib/localDate';
 import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
 import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
-import { loadRecurringState, occurrenceRow, repeatsUntil, withRecurringStats } from '../../lib/recurringStats';
+import { isSeriesFinished, loadRecurringState, occurrenceRow, repeatsUntil, withRecurringStats } from '../../lib/recurringStats';
 import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
@@ -182,7 +182,8 @@ export function setupTaskRoutes(router: Router): void {
 
       // A recurring task appears as today's row only on a day it is due. On
       // other days GET /tasks/recurring lists it with its next occurrence.
-      const dueToday = recurring.filter((t) => isScheduledOn(t.recurringDays, today, repeatsUntil(t)));
+      // A completed series has no day rows: it is listed, completed, by GET /tasks/recurring.
+      const dueToday = recurring.filter((t) => !t.isCompleted && isScheduledOn(t.recurringDays, today, repeatsUntil(t)));
       const state = await loadRecurringState(userId, dueToday, today);
       const todayRows = dueToday.map((t) => occurrenceRow(t, state.get(t.id)!, today));
 
@@ -297,17 +298,29 @@ export function setupTaskRoutes(router: Router): void {
         return;
       }
 
-      // A recurring task is done per DAY, in its completion log; the row's own
-      // isCompleted means nothing for it. Ticking one goes through
+      // A recurring task is done per DAY, in its completion log, through
       // PUT/DELETE /tasks/:id/completions/:date, which pays XP exactly once.
-      // Re-sending the unchanged value, as an edit form does, is harmless.
+      // Its own isCompleted means the whole SERIES was completed
+      // (docs/designs/tasks-recurring-blocks-sessions.md): allowed only once no
+      // scheduled day is left, paying nothing (each day was already paid), and
+      // undone by sending false. Re-sending the unchanged value, as an edit
+      // form does, is harmless.
       const isRecurring = data.isRecurring ?? existing.isRecurring;
-      if (isRecurring && data.isCompleted !== undefined && data.isCompleted !== existing.isCompleted) {
-        res.status(400).json({
-          success: false,
-          error: 'Tick off a recurring task with PUT /tasks/:id/completions/:date',
-        });
-        return;
+      const seriesCompletion = isRecurring
+        && data.isCompleted !== undefined && data.isCompleted !== existing.isCompleted;
+      if (seriesCompletion) {
+        if (data.isRecurring !== undefined && data.isRecurring !== existing.isRecurring) {
+          res.status(400).json({ success: false, error: 'Change the task kind and its completion separately' });
+          return;
+        }
+        const rule = {
+          recurringDays: data.recurringDays ?? existing.recurringDays,
+          dueDate: data.dueDate !== undefined ? (data.dueDate ? new Date(data.dueDate) : null) : existing.dueDate,
+        };
+        if (data.isCompleted && !isSeriesFinished(rule, requestToday(req, 'PATCH /tasks/:id'))) {
+          res.status(400).json({ success: false, error: 'End the series first' });
+          return;
+        }
       }
 
       // A task may only be attached to a goal the caller owns. Without this a
@@ -373,6 +386,9 @@ export function setupTaskRoutes(router: Router): void {
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.isCompleted !== undefined) updateData.isCompleted = data.isCompleted;
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
+      // A series completion is stamped here when the app sends no time, so the
+      // Completed list can order it with everything else.
+      if (seriesCompletion && data.completedAt === undefined) updateData.completedAt = data.isCompleted ? new Date() : null;
       if (data.taskGoalId  !== undefined) updateData.taskGoalId  = data.taskGoalId ?? null;
       if (data.order       !== undefined) updateData.order       = data.order ?? null;
       if (data.isRecurring   !== undefined) updateData.isRecurring   = data.isRecurring;
@@ -396,8 +412,9 @@ export function setupTaskRoutes(router: Router): void {
       // revokes exactly what completing granted, so the pair is a true undo and
       // toggling can't farm XP.
       let reward = null;
-      const completionChanged =
-        data.isCompleted !== undefined && existing.isCompleted !== data.isCompleted;
+      // A series completion pays nothing: every day was paid when it was ticked.
+      const completionChanged = !seriesCompletion
+        && data.isCompleted !== undefined && existing.isCompleted !== data.isCompleted;
 
       if (completionChanged) {
         const xp = taskCompletionXP(task.priority);

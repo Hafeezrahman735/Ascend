@@ -255,23 +255,24 @@ const TaskRow = memo(function TaskRow({ task, isActive, goals, onTap, onEdit, on
 });
 
 /**
- * A recurring task with no instance today, shown through its template.
+ * A recurring task with no row today (not due, finished, or completed as a
+ * series), shown through the task itself.
  *
  * No Swipeable, so it cannot be completed by gesture: there is no row for today
- * to complete. Tapping opens the template editor rather than the stats modal,
- * which exposes both completion and selectTask, and a template id in
- * selectedTaskId would leave the focus tab holding a dangling id.
+ * to complete. Tapping opens its details and stats; that sheet offers what the
+ * task allows (Mark yesterday done, Complete series, Reopen series) and never
+ * the timer, which works from today's list and has no row for it.
  */
-const DormantRecurringRow = memo(function DormantRecurringRow({ template, goals, subtitle, onEdit, onLongPressTag }: {
+const DormantRecurringRow = memo(function DormantRecurringRow({ template, goals, subtitle, onTap, onLongPressTag }: {
   template: Task; goals: TaskGoal[]; subtitle: string;
-  onEdit: (task: Task) => void; onLongPressTag?: (t: string) => void;
+  onTap: (task: Task) => void; onLongPressTag?: (t: string) => void;
 }) {
   return (
     <TaskRowBody
       task={template}
       isActive={false}
       goals={goals}
-      onTap={onEdit}
+      onTap={onTap}
       onLongPressTag={onLongPressTag}
       dormant
       subtitle={subtitle}
@@ -1281,8 +1282,25 @@ export default function TasksScreen() {
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
     await taskActions.toggleComplete(taskId);
-    showToast(task.isCompleted ? 'Marked incomplete' : '✓ Marked complete');
+    if (task.isOccurrence) showToast(task.isCompleted ? 'Not done today' : '✓ Done for today');
+    else showToast(task.isCompleted ? 'Marked incomplete' : '✓ Marked complete');
   }, [tasks, taskActions, showToast]);
+
+  // The details sheet's actions. A recurring task not due today is not in
+  // `tasks`, only in the recurring list, so Edit looks in both.
+  const editFromSheet = useCallback((id: string) => {
+    setStatsTask(null);
+    const task = tasks.find((x) => x.id === id) ?? recurringTemplates.find((x) => x.id === id);
+    if (task) openEdit(task);
+  }, [tasks, recurringTemplates, openEdit]);
+  const setDayFromSheet = useCallback(async (id: string, date: string, done: boolean) => {
+    const ok = await useTaskStore.getState().setOccurrenceCompletion(id, date, done);
+    showToast(ok ? (done ? '✓ Marked yesterday done' : 'Unmarked') : 'Could not save. Try again.');
+  }, [showToast]);
+  const setSeriesFromSheet = useCallback(async (id: string, completed: boolean) => {
+    const ok = await useTaskStore.getState().setSeriesCompleted(id, completed);
+    showToast(ok ? (completed ? '✓ Series completed' : 'Series reopened') : 'Could not save. Try again.');
+  }, [showToast]);
 
 
   /**
@@ -1310,7 +1328,7 @@ export default function TasksScreen() {
         template={item.template}
         goals={goals}
         subtitle={nextOccurrenceLabel(item.template)}
-        onEdit={openEdit}
+        onTap={setStatsTask}
         onLongPressTag={setOverrideTag}
       />
     )
@@ -1524,7 +1542,7 @@ export default function TasksScreen() {
             </>
           ) : undefined}
         />
-        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+        {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={editFromSheet} onSetDay={setDayFromSheet} onSetSeriesCompleted={setSeriesFromSheet} />}
         <TaskFormModal {...taskForm.props} />
         <TagOverrideSheet tag={overrideTag ?? ''} visible={!!overrideTag} onClose={() => setOverrideTag(null)} />
         <SessionsSheet target={sessionsTarget} onClose={() => setSessionsTarget(null)} />
@@ -1700,7 +1718,7 @@ export default function TasksScreen() {
       </ScrollView>
 
       {/* Modals */}
-      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={(id) => { setStatsTask(null); const t = tasks.find((x) => x.id === id); if (t) openEdit(t); }} />}
+      {statsTask && <TaskStatsModal task={statsTask} sessionLengthMinutes={sessionLengthMinutes} focused={statsFocused} onShowSessions={showTaskSessions} onClose={() => setStatsTask(null)} onLoadTimer={loadTaskIntoTimer} onToggleComplete={(id) => { handleComplete(id); setStatsTask(null); }} onEdit={editFromSheet} onSetDay={setDayFromSheet} onSetSeriesCompleted={setSeriesFromSheet} />}
       <GoalStatsModal
         goalId={statsGoalId}
         lastSessionAt={lastSessionOnGoal(statsGoalId, tasks, sessionHistory)}

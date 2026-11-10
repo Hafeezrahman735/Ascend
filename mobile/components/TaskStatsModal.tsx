@@ -8,7 +8,8 @@ import { BottomSheet, BentoCell, BentoRingCell, SCREEN_H } from './SheetPrimitiv
 import AppPressable from './AppPressable';
 import { api } from '../services/api';
 import { priorityColor, priorityLabel } from '../utils/priority';
-import { getLocalDateString, parseLocalDate } from '../utils/date';
+import { addDays, getLocalDateString, parseLocalDate } from '../utils/date';
+import { nextOccurrenceLabel } from '../lib/recurringDisplay';
 import { workBlocksSummary } from '../lib/taskForm';
 import { formatMinutes } from '../lib/calendarItems';
 import { Space, Radius } from '../constants/spacing';
@@ -34,7 +35,7 @@ export interface FocusedOnDay {
  * read here — the modal shows actual logged time, not the configured length.
  */
 export default function TaskStatsModal({
-  task, focused, onShowSessions, onClose, onLoadTimer, onToggleComplete, onEdit,
+  task, focused, onShowSessions, onClose, onLoadTimer, onToggleComplete, onEdit, onSetDay, onSetSeriesCompleted,
 }: {
   task: Task | null; sessionLengthMinutes: number;
   /** Shown as the first row when given; tapping it calls onShowSessions. */
@@ -43,6 +44,10 @@ export default function TaskStatsModal({
   onClose: () => void; onLoadTimer: (taskId: string) => void; onToggleComplete: (taskId: string) => void;
   /** Hidden when not given: the task form lives on Today (calendar opens without it). */
   onEdit?: (taskId: string) => void;
+  /** Tick or un-tick one day of a recurring task (here: yesterday, while it is still open). */
+  onSetDay?: (taskId: string, date: string, done: boolean) => void;
+  /** Complete a finished recurring series, or reopen a completed one. */
+  onSetSeriesCompleted?: (taskId: string, completed: boolean) => void;
 }) {
   const Colors = useTheme();
   const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
@@ -64,7 +69,6 @@ export default function TaskStatsModal({
   const tagStyle = useTagStyle(categoryTag ?? '');
 
   if (!task) return null;
-  const isPending = !task.isCompleted;
   const prioColor = priorityColor(task.priority);
   // Deliberately NOT clamped to 1. BentoRingCell clamps the arc it draws, so
   // the ring still reads correctly, while the centre label is free to say 240%
@@ -243,19 +247,29 @@ export default function TaskStatsModal({
             so there is no extra fetch. The 🔥 and ⏱️ emoji are gone — every
             other glyph in this sheet is an Ionicon, and a screen reader
             announced the old ones by name. */}
-        {task.isOccurrence && (
-          <View style={{ flexDirection: 'row', gap: Space.sm, marginBottom: Space.lg }}>
+        {task.isRecurring && (
+          <View style={{ gap: Space.sm, marginBottom: Space.lg }}>
+            <View style={{ flexDirection: 'row', gap: Space.sm }}>
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors} feature
+                icon="flame-outline" label="Current streak"
+                value={`${task.currentStreak}d`}
+                sub={`best ${task.longestStreak}d`}
+              />
+              <BentoCell
+                style={{ flex: 1 }} Colors={Colors}
+                icon="infinite-outline" label="Lifetime focus"
+                value={formatSeconds(task.totalFocusSeconds)}
+                sub={`Total ${task.totalCompletions}`}
+              />
+            </View>
+            {/* Missed days count only days that can no longer be ticked
+                (before yesterday), judged by the current schedule. */}
             <BentoCell
-              style={{ flex: 1 }} Colors={Colors} feature
-              icon="flame-outline" label="Current streak"
-              value={`${task.currentStreak}d`}
-              sub={`best ${task.longestStreak}d`}
-            />
-            <BentoCell
-              style={{ flex: 1 }} Colors={Colors}
-              icon="infinite-outline" label="Lifetime focus"
-              value={formatSeconds(task.totalFocusSeconds)}
-              sub={`${task.totalCompletions} completions`}
+              Colors={Colors}
+              icon="calendar-clear-outline" label="On schedule"
+              value={task.scheduledDays > 0 ? `${task.doneOnSchedule} of ${task.scheduledDays}` : '—'}
+              sub={task.scheduledDays > 0 ? `${task.missedDays} missed` : 'no past scheduled days yet'}
             />
           </View>
         )}
@@ -266,24 +280,14 @@ export default function TaskStatsModal({
 
       {/* footer */}
       <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 28 }}>
-        {isPending ? (
-          <AppPressable
-            onPress={() => { onLoadTimer(task.id); onClose(); }}
-            accessibilityRole="button"
-            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Space.sm, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 15 }}
-          >
-            <Ionicons name="play" size={15} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Load into Timer</Text>
-          </AppPressable>
-        ) : (
-          <AppPressable
-            onPress={() => { onToggleComplete(task.id); onClose(); }}
-            accessibilityRole="button"
-            style={{ borderRadius: Radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}
-          >
-            <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '600' }}>Mark Incomplete</Text>
-          </AppPressable>
-        )}
+        <SheetActions
+          task={task}
+          onClose={onClose}
+          onLoadTimer={onLoadTimer}
+          onToggleComplete={onToggleComplete}
+          onSetDay={onSetDay}
+          onSetSeriesCompleted={onSetSeriesCompleted}
+        />
         {onEdit && (
           <AppPressable
             onPress={() => onEdit(task.id)}
@@ -343,5 +347,98 @@ function FocusedRow({ focused, onPress }: { focused: FocusedOnDay; onPress?: () 
       </View>
       {tappable && <Ionicons name="chevron-forward" size={18} color={Colors.subtext} />}
     </AppPressable>
+  );
+}
+
+/**
+ * The sheet's one primary action and its alternatives, by what the task is
+ * (docs/designs/tasks-recurring-blocks-sessions.md):
+ *
+ *   one-off, open           Load into Timer · Mark complete
+ *   one-off, done           Mark incomplete
+ *   recurring, due today    Load into Timer · Done for today   (ticked: Not done today;
+ *                           another day's row from the calendar says "this day")
+ *   recurring, other day    "Next: Thu"                        (+ Mark yesterday done)
+ *   recurring, finished     Complete series                    (+ Mark yesterday done)
+ *   recurring, completed    "Series completed" · Reopen series
+ *
+ * A recurring task on a day it is not due is not offered to the timer: the
+ * timer works from today's task list, which has no row for it.
+ */
+function SheetActions({ task, onClose, onLoadTimer, onToggleComplete, onSetDay, onSetSeriesCompleted }: {
+  task: Task;
+  onClose: () => void;
+  onLoadTimer: (taskId: string) => void;
+  onToggleComplete: (taskId: string) => void;
+  onSetDay?: (taskId: string, date: string, done: boolean) => void;
+  onSetSeriesCompleted?: (taskId: string, completed: boolean) => void;
+}) {
+  const Colors = useTheme();
+  const run = (action: () => void) => () => { action(); onClose(); };
+
+  const primary = (label: string, onPress: () => void, icon?: keyof typeof Ionicons.glyphMap) => (
+    <AppPressable
+      onPress={run(onPress)}
+      accessibilityRole="button"
+      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Space.sm, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 15 }}
+    >
+      {icon && <Ionicons name={icon} size={15} color="#fff" />}
+      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{label}</Text>
+    </AppPressable>
+  );
+  const secondary = (label: string, onPress: () => void, first = false) => (
+    <AppPressable
+      onPress={run(onPress)}
+      accessibilityRole="button"
+      style={{ marginTop: first ? 0 : Space.sm, borderRadius: Radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.border }}
+    >
+      <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+    </AppPressable>
+  );
+  const note = (text: string) => (
+    <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', textAlign: 'center', paddingVertical: Space.sm }}>{text}</Text>
+  );
+
+  // A recurring task shown as itself: not due today, finished, or completed.
+  if (task.isRecurring && !task.isOccurrence) {
+    if (task.isCompleted) {
+      return (
+        <>
+          {note('Series completed')}
+          {onSetSeriesCompleted && secondary('Reopen series', () => onSetSeriesCompleted(task.id, false))}
+        </>
+      );
+    }
+    const yesterday = getLocalDateString(addDays(new Date(), -1));
+    const markYesterday = task.yesterdayOpen && onSetDay
+      ? secondary('Mark yesterday done', () => onSetDay(task.id, yesterday, true), true)
+      : null;
+    if (task.seriesFinished && onSetSeriesCompleted) {
+      return (
+        <>
+          {markYesterday && <View style={{ marginBottom: Space.sm }}>{markYesterday}</View>}
+          {primary('Complete series', () => onSetSeriesCompleted(task.id, true), 'checkmark-done')}
+        </>
+      );
+    }
+    return (
+      <>
+        {note(nextOccurrenceLabel(task))}
+        {markYesterday}
+      </>
+    );
+  }
+
+  // The calendar opens this sheet for a recurring task's other days too, so
+  // "today" is said only when the row is today's.
+  const isToday = task.occurrenceDate === getLocalDateString();
+  const doneLabel = !task.isOccurrence ? '✓ Mark complete' : isToday ? '✓ Done for today' : '✓ Mark this day done';
+  const undoLabel = !task.isOccurrence ? 'Mark incomplete' : isToday ? 'Not done today' : 'Mark this day not done';
+  if (task.isCompleted) return secondary(undoLabel, () => onToggleComplete(task.id), true);
+  return (
+    <>
+      {primary('Load into Timer', () => onLoadTimer(task.id), 'play')}
+      {secondary(doneLabel, () => onToggleComplete(task.id))}
+    </>
   );
 }

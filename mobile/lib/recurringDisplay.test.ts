@@ -120,3 +120,20 @@ describe('nextOccurrenceLabel — a habit that has stopped repeating', () => {
     )).toBe('Next: tomorrow');
   });
 });
+
+describe('nextOccurrenceLabel — finished and completed series (tasks-recurring-blocks-sessions)', () => {
+  it('invites completing a series the server says is finished', () => {
+    // R6b: the end date is ahead, but no scheduled day is left before it.
+    expect(nextOccurrenceLabel(
+      template({ id: 'a', nextOccurrence: null, dueDate: '2026-08-20T00:00:00.000Z', seriesFinished: true }),
+      TODAY,
+    )).toBe('Finished repeating · tap to complete');
+  });
+
+  it('says a completed series is completed', () => {
+    expect(nextOccurrenceLabel(
+      template({ id: 'a', isCompleted: true, seriesFinished: true, dueDate: '2026-08-01T00:00:00.000Z' }),
+      TODAY,
+    )).toBe('Series completed');
+  });
+});

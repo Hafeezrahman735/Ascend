@@ -33,7 +33,7 @@ async function setCompletion(req: Request, res: Response, done: boolean): Promis
     // so the endpoint reveals nothing about other users' tasks.
     const task = await prisma.task.findFirst({
       where: { id, userId, isRecurring: true, isArchived: false },
-      select: { recurringDays: true, dueDate: true, createdAt: true },
+      select: { recurringDays: true, dueDate: true, createdAt: true, isCompleted: true },
     });
     if (!task) {
       res.status(404).json({ success: false, error: 'Recurring task not found' });

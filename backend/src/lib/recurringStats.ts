@@ -23,10 +23,42 @@ export function repeatsUntil(task: Pick<Task, 'dueDate'>): string | null {
   return task.dueDate ? utcDateStr(task.dueDate) : null;
 }
 
-export type Rule = Pick<Task, 'recurringDays' | 'dueDate' | 'createdAt'>;
+/**
+ * The rule, plus `isCompleted` where the caller has it: on a recurring task it
+ * means the whole series was completed (docs/designs/tasks-recurring-blocks-sessions.md).
+ */
+export type Rule = Pick<Task, 'recurringDays' | 'dueDate' | 'createdAt'> & { isCompleted?: boolean };
+
+/** The earliest UTC offset on earth, for bounding a creation instant's local day. */
+const EARLIEST_UTC_OFFSET_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * The earliest local day the task could have been created on, in any zone.
+ *
+ * The row stores an instant, not the creator's zone, so the exact local day
+ * is unknown. Bounding by the westernmost zone never turns away a real tick;
+ * at worst it allows one day before creation for a user far east of UTC.
+ */
+export function earliestCreationDay(createdAt: Date): string {
+  return utcDateStr(new Date(createdAt.getTime() - EARLIEST_UTC_OFFSET_MS));
+}
+
+/**
+ * True when no scheduled day remains from `today` to the task's last day: it
+ * has ended, or its end comes before its next scheduled day. Only a finished
+ * series can be completed as a whole. One that repeats forever never is.
+ */
+export function isSeriesFinished(task: Pick<Task, 'recurringDays' | 'dueDate'>, today: string): boolean {
+  const lastDay = repeatsUntil(task);
+  if (!lastDay) return false;
+  for (let day = today; day <= lastDay; day = shiftDateKey(day, 1)) {
+    if (isScheduledOn(task.recurringDays, day, lastDay)) return false;
+  }
+  return true;
+}
 
 export interface RecurringStats {
-  /** Consecutive due days done, ending today (or yesterday while today is still open). */
+  /** Consecutive due days done, ending today. An unticked today or yesterday is still open. */
   currentStreak: number;
   longestStreak: number;
   totalCompletions: number;
@@ -35,40 +67,77 @@ export interface RecurringStats {
    * goal counts. Today, when it is due; otherwise the last due day before it.
    */
   latestDueDayDone: boolean;
+  /** Days the CURRENT rule schedules in the counting window (see recurringStats). */
+  scheduledDays: number;
+  /** Of those, the days ticked off. Never more than scheduledDays. */
+  doneOnSchedule: number;
+  /** scheduledDays − doneOnSchedule: scheduled days that can no longer be ticked. */
+  missedDays: number;
 }
 
 /**
- * Streaks and totals from the rule and the set of done days, in one pass from
- * the task's first day to `today`.
+ * Streaks, totals and missed days from the rule and the set of done days, in
+ * one pass from the task's first day to `today`.
  *
- * A day is due if the schedule says so or it was done. A due day not done
- * breaks the streak — except today, which is still open. The walk starts at
- * the task's UTC creation day, or an earlier done day: a user west of UTC can
- * tick off a local day that is before the creation instant's UTC day.
+ * A day is due if the schedule says so or it was done. Today and yesterday are
+ * still open (both can be ticked), so an unticked one neither breaks the
+ * streak nor counts as missed; a due day before them that was not done does.
+ * A completed series can no longer be ticked at all, so yesterday is not open
+ * for it.
+ *
+ * Missed days count only days the CURRENT rule schedules, from the first day
+ * to the day before yesterday (for a completed series, to its last day), and
+ * never past the series end. `totalCompletions` stays every log row, so it
+ * can exceed doneOnSchedule after a schedule is narrowed.
+ *
+ * The walk starts at the task's UTC creation day, or an earlier done day: a
+ * user west of UTC can tick off a local day before the creation instant's UTC
+ * day.
  */
 export function recurringStats(task: Rule, done: ReadonlySet<string>, today: string): RecurringStats {
   let first = utcDateStr(task.createdAt);
   for (const day of done) if (day < first) first = day;
 
   const lastDay = repeatsUntil(task);
+  const completed = task.isCompleted === true;
+  const yesterday = shiftDateKey(today, -1);
+  const openUntil = completed ? today : shiftDateKey(today, -2);
+  const windowEnd = lastDay && lastDay < openUntil ? lastDay : openUntil;
+  const isOpen = (day: string) => day === today || (!completed && day === yesterday);
+
   let run = 0;
   let longest = 0;
   let latestDueDayDone = false;
+  let scheduledDays = 0;
+  let doneOnSchedule = 0;
 
   for (let day = first; day <= today; day = shiftDateKey(day, 1)) {
     const isDone = done.has(day);
-    if (!isDone && !isScheduledOn(task.recurringDays, day, lastDay)) continue;
+    const scheduled = isScheduledOn(task.recurringDays, day, lastDay);
+    if (scheduled && day <= windowEnd) {
+      scheduledDays += 1;
+      if (isDone) doneOnSchedule += 1;
+    }
+    if (!isDone && !scheduled) continue;
 
     latestDueDayDone = isDone;
     if (isDone) {
       run += 1;
       longest = Math.max(longest, run);
-    } else if (day !== today) {
+    } else if (!isOpen(day)) {
       run = 0;
     }
   }
 
-  return { currentStreak: run, longestStreak: longest, totalCompletions: done.size, latestDueDayDone };
+  return {
+    currentStreak: run,
+    longestStreak: longest,
+    totalCompletions: done.size,
+    latestDueDayDone,
+    scheduledDays,
+    doneOnSchedule,
+    missedDays: scheduledDays - doneOnSchedule,
+  };
 }
 
 export interface RecurringState extends RecurringStats {
@@ -165,19 +234,38 @@ export function occurrenceRow<T extends Task>(task: T, state: RecurringState, da
     longestStreak: state.longestStreak,
     totalCompletions: state.totalCompletions,
     totalFocusSeconds: state.totalFocusSeconds,
+    scheduledDays: state.scheduledDays,
+    doneOnSchedule: state.doneOnSchedule,
+    missedDays: state.missedDays,
   };
 }
 
-/** The habit-level figures, for a recurring task shown as itself. */
+/**
+ * The habit-level figures, for a recurring task shown as itself. Here the
+ * task's own `isCompleted` means the whole series was completed; a day row
+ * (occurrenceRow) uses the same name for that day's tick, and is never built
+ * for a completed series.
+ */
 export function withRecurringStats<T extends Task>(task: T, state: RecurringState, today: string) {
+  const lastDay = repeatsUntil(task);
+  const yesterday = shiftDateKey(today, -1);
   return {
     ...task,
-    repeatsUntil: repeatsUntil(task),
-    scheduledToday: isScheduledOn(task.recurringDays, today, repeatsUntil(task)),
+    repeatsUntil: lastDay,
+    scheduledToday: isScheduledOn(task.recurringDays, today, lastDay),
     completedToday: state.done.has(today),
     currentStreak: state.currentStreak,
     longestStreak: state.longestStreak,
     totalCompletions: state.totalCompletions,
     totalFocusSeconds: state.totalFocusSeconds,
+    scheduledDays: state.scheduledDays,
+    doneOnSchedule: state.doneOnSchedule,
+    missedDays: state.missedDays,
+    seriesFinished: isSeriesFinished(task, today),
+    // Yesterday can still be ticked: scheduled, inside the task's life, not done.
+    yesterdayOpen: !task.isCompleted
+      && !state.done.has(yesterday)
+      && isScheduledOn(task.recurringDays, yesterday, lastDay)
+      && yesterday >= earliestCreationDay(task.createdAt),
   };
 }
