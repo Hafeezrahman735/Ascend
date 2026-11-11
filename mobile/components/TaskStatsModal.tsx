@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { Task, TaskAnalytics } from '../types';
 import { useTheme } from '../hooks/useTheme';
@@ -363,6 +363,9 @@ function FocusedRow({ focused, onPress }: { focused: FocusedOnDay; onPress?: () 
  *   recurring, finished     Complete series                    (+ Mark yesterday done)
  *   recurring, completed    "Series completed" · Reopen series
  *
+ * A series that still repeats can be completed too (it then stops after
+ * today; past days stay): offered last, behind a confirmation.
+ *
  * A recurring task on a day it is not due is not offered to the timer: the
  * timer works from today's task list, which has no row for it.
  */
@@ -396,6 +399,29 @@ function SheetActions({ task, onClose, onLoadTimer, onToggleComplete, onSetDay, 
       <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '600' }}>{label}</Text>
     </AppPressable>
   );
+  // Completing a series that still has days ahead stops it, so it is confirmed.
+  const confirmCompleteSeries = () => {
+    if (!onSetSeriesCompleted) return;
+    Alert.alert(
+      'Complete this series?',
+      'It stops repeating after today. Past days, done and missed, stay on your calendar. You can reopen it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Complete series', onPress: () => { onSetSeriesCompleted(task.id, true); onClose(); } },
+      ],
+    );
+  };
+  const completeSeriesLink = onSetSeriesCompleted ? (
+    <AppPressable
+      onPress={confirmCompleteSeries}
+      accessibilityRole="button"
+      scaleOnPress={false}
+      style={{ alignItems: 'center', justifyContent: 'center', marginTop: Space.sm, minHeight: 44 }}
+    >
+      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>Complete series</Text>
+    </AppPressable>
+  ) : null;
+
   const note = (text: string) => (
     <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', textAlign: 'center', paddingVertical: Space.sm }}>{text}</Text>
   );
@@ -426,6 +452,7 @@ function SheetActions({ task, onClose, onLoadTimer, onToggleComplete, onSetDay, 
       <>
         {note(nextOccurrenceLabel(task))}
         {markYesterday}
+        {completeSeriesLink}
       </>
     );
   }
@@ -440,6 +467,7 @@ function SheetActions({ task, onClose, onLoadTimer, onToggleComplete, onSetDay, 
     <>
       {primary('Load into Timer', () => onLoadTimer(task.id), 'play')}
       {secondary(doneLabel, () => onToggleComplete(task.id))}
+      {task.isOccurrence && completeSeriesLink}
     </>
   );
 }

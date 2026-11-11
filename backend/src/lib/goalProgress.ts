@@ -182,7 +182,11 @@ async function loadRecurringProgress(
 ): Promise<{ goalId: string; done: boolean }[]> {
   const tasks = await db.task.findMany({
     where: { userId, isRecurring: true, isArchived: false, taskGoalId: { in: goalIds } },
-    select: { id: true, taskGoalId: true, recurringDays: true, dueDate: true, createdAt: true },
+    select: {
+      id: true, taskGoalId: true, recurringDays: true, dueDate: true, createdAt: true,
+      // A completed series stops on its completion day (lastScheduledDay).
+      isCompleted: true, completedAt: true,
+    },
   });
   const state = await loadRecurringState(userId, tasks, today, db);
   return tasks.map((t) => ({ goalId: t.taskGoalId!, done: state.get(t.id)!.latestDueDayDone }));

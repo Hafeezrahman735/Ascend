@@ -1,4 +1,5 @@
 import { dayNameFromLocalDate, utcDateStr } from '../../lib/localDate';
+import { lastScheduledDay } from '../../lib/recurringStats';
 
 /**
  * Projects recurring tasks across a date range.
@@ -29,10 +30,12 @@ export interface RecurringLike {
   /** A deleted task shows the days it was done, and is not projected. */
   isArchived: boolean;
   /**
-   * On a recurring task: the whole series was completed. Like a deleted task
-   * it keeps the days it was done and drops the rest, missed days included.
+   * A completed series is projected up to the day it was completed (its
+   * completedAt's UTC date is that local day), done and missed days alike,
+   * and never after: it no longer repeats.
    */
   isCompleted: boolean;
+  completedAt: Date | null;
 }
 
 export interface Occurrence<T extends RecurringLike> {
@@ -82,7 +85,7 @@ export function projectRecurring<T extends RecurringLike>(params: {
   const bounds = new Map(
     tasks.map((t) => [t.id, {
       from: utcDateStr(t.createdAt),
-      until: t.dueDate ? utcDateStr(t.dueDate) : null,
+      until: lastScheduledDay(t),
     }] as const),
   );
 
@@ -94,7 +97,6 @@ export function projectRecurring<T extends RecurringLike>(params: {
       const { from, until } = bounds.get(task.id)!;
       const scheduled =
         !task.isArchived &&
-        !task.isCompleted &&
         date >= from &&
         (!until || date <= until) &&
         (task.recurringDays.length === 0 || task.recurringDays.includes(dayName));

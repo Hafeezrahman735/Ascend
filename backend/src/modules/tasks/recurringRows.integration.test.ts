@@ -152,13 +152,16 @@ describe('GET /tasks/recurring and GET /tasks/:id — streaks from the log', () 
 });
 
 describe('PATCH /tasks/:id — a recurring task', () => {
-  it('rejects ticking it off directly, which would bypass the log', async () => {
+  it('treats isCompleted as completing the whole series, which pays nothing', async () => {
+    // Days are ticked through the log; isCompleted on the task itself ends the
+    // series (seriesCompletion.integration.test.ts covers the rest).
     const user = await createUser();
     const habit = await makeHabit(user);
 
     const res = await authed(user).patch(`/tasks/${habit.id}`).send({ isCompleted: true });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(await prisma.recurringCompletion.count({ where: { taskId: habit.id } })).toBe(0);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).xp).toBe(0);
   });
 

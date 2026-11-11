@@ -96,16 +96,31 @@ describe('PATCH /tasks/:id — completing a recurring series', () => {
     expect(res.body.data.isCompleted).toBe(true);
   });
 
-  it('R6c: refuses to complete a series that still has scheduled days', async () => {
+  it('R6c: completes a series with no end date, which then stops repeating', async () => {
     const user = await createUser();
     const habit = await makeHabit(user, { endsOn: null });
+    const before = await userStats(user);
 
     const res = await patch(user, habit.id, { isCompleted: true });
 
+    expect(res.status).toBe(200);
+    expect(res.body.data.isCompleted).toBe(true);
+    // Stamped with the local completion day: noon UTC of it.
+    expect(res.body.data.completedAt).toBe(`${today()}T12:00:00.000Z`);
+    expect(await userStats(user)).toEqual(before);
+    const listed = await authed(user).get(`/tasks?${q()}`);
+    expect(listed.body.data.some((t: { id: string }) => t.id === habit.id)).toBe(false);
+  });
+
+  it('refuses changing the task kind and completing it in one request', async () => {
+    const user = await createUser();
+    const habit = await makeHabit(user, { endsOn: dayOffset(-3) });
+
+    const res = await patch(user, habit.id, { isCompleted: true, isRecurring: false });
+
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('End the series first');
     const stored = await prisma.task.findUniqueOrThrow({ where: { id: habit.id } });
-    expect(stored.isCompleted).toBe(false);
+    expect(stored).toMatchObject({ isCompleted: false, isRecurring: true });
   });
 
   it("returns 404 for another user's series", async () => {
@@ -181,13 +196,13 @@ describe('GET /tasks/recurring — missed days', () => {
 });
 
 describe('GET /calendar — a completed series', () => {
-  it('keeps the days it was done and drops its missed days', async () => {
+  it('keeps its past days, done and missed, and drops every later day', async () => {
     const user = await createUser();
-    // Daily, created six days ago, ended three days ago; done only four days ago.
-    const habit = await makeHabit(user, { createdOn: dayOffset(-6), endsOn: dayOffset(-3) });
-    await prisma.recurringCompletion.create({ data: { userId: user.id, taskId: habit.id, date: dayOffset(-4) } });
+    // Daily with no end date, created three days ago; done only two days ago.
+    const habit = await makeHabit(user, { createdOn: dayOffset(-3), endsOn: null });
+    await prisma.recurringCompletion.create({ data: { userId: user.id, taskId: habit.id, date: dayOffset(-2) } });
     const days = async () => {
-      const res = await authed(user).get(`/calendar?start=${dayOffset(-6)}&end=${today()}`);
+      const res = await authed(user).get(`/calendar?start=${dayOffset(-3)}&end=${dayOffset(3)}`);
       expect(res.status).toBe(200);
       return res.body.data.items
         .filter((i: { type: string; data: { id?: string } }) => i.type === 'habit_instance' && i.data?.id === habit.id)
@@ -195,11 +210,16 @@ describe('GET /calendar — a completed series', () => {
         .sort();
     };
 
-    // Before completing: every scheduled day, missed ones included.
-    expect(await days()).toEqual([dayOffset(-6), dayOffset(-5), dayOffset(-4), dayOffset(-3)]);
+    // Before completing: every day, forever.
+    expect(await days()).toEqual([-3, -2, -1, 0, 1, 2, 3].map(dayOffset));
 
     await patch(user, habit.id, { isCompleted: true });
 
-    expect(await days()).toEqual([dayOffset(-4)]);
+    // After: up to and including the completion day (today), nothing later.
+    expect(await days()).toEqual([-3, -2, -1, 0].map(dayOffset));
+
+    // Reopening brings the future back.
+    await patch(user, habit.id, { isCompleted: false });
+    expect(await days()).toEqual([-3, -2, -1, 0, 1, 2, 3].map(dayOffset));
   });
 });

@@ -24,10 +24,33 @@ export function repeatsUntil(task: Pick<Task, 'dueDate'>): string | null {
 }
 
 /**
- * The rule, plus `isCompleted` where the caller has it: on a recurring task it
- * means the whole series was completed (docs/designs/tasks-recurring-blocks-sessions.md).
+ * The rule, plus `isCompleted` and `completedAt` where the caller has them: on
+ * a recurring task they mean the whole series was completed, and when
+ * (docs/designs/tasks-recurring-blocks-sessions.md).
  */
-export type Rule = Pick<Task, 'recurringDays' | 'dueDate' | 'createdAt'> & { isCompleted?: boolean };
+export type Rule = Pick<Task, 'recurringDays' | 'dueDate' | 'createdAt'>
+  & { isCompleted?: boolean; completedAt?: Date | null };
+
+/**
+ * The stored completedAt of a series is noon UTC of the user's LOCAL day of
+ * completion (PATCH /tasks/:id), so its UTC date is that local day with no
+ * time zone needed to read it back.
+ */
+export function seriesCompletedAt(localDay: string): Date {
+  return new Date(`${localDay}T12:00:00.000Z`);
+}
+
+/**
+ * The last day a recurring task is on: its end date, or for a completed series
+ * the day it was completed if that comes first. A series completed with no end
+ * date would otherwise repeat forever; completing it stops every later day.
+ */
+export function lastScheduledDay(task: Pick<Task, 'dueDate'> & { isCompleted?: boolean; completedAt?: Date | null }): string | null {
+  const end = repeatsUntil(task);
+  if (!task.isCompleted || !task.completedAt) return end;
+  const completedOn = utcDateStr(task.completedAt);
+  return end && end < completedOn ? end : completedOn;
+}
 
 /** The earliest UTC offset on earth, for bounding a creation instant's local day. */
 const EARLIEST_UTC_OFFSET_MS = 12 * 60 * 60 * 1000;
@@ -97,7 +120,7 @@ export function recurringStats(task: Rule, done: ReadonlySet<string>, today: str
   let first = utcDateStr(task.createdAt);
   for (const day of done) if (day < first) first = day;
 
-  const lastDay = repeatsUntil(task);
+  const lastDay = lastScheduledDay(task);
   const yesterday = shiftDateKey(today, -1);
   const windowEnd = lastDay && lastDay < yesterday ? lastDay : yesterday;
 
@@ -243,11 +266,11 @@ export function occurrenceRow<T extends Task>(task: T, state: RecurringState, da
  * for a completed series.
  */
 export function withRecurringStats<T extends Task>(task: T, state: RecurringState, today: string) {
-  const lastDay = repeatsUntil(task);
+  const lastDay = lastScheduledDay(task);
   const yesterday = shiftDateKey(today, -1);
   return {
     ...task,
-    repeatsUntil: lastDay,
+    repeatsUntil: repeatsUntil(task),
     scheduledToday: isScheduledOn(task.recurringDays, today, lastDay),
     completedToday: state.done.has(today),
     currentStreak: state.currentStreak,

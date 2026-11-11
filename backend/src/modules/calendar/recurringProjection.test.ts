@@ -8,9 +8,14 @@ const task = (
   days: string[] = [],
   {
     createdAt = new Date('2020-01-01T00:00:00.000Z'), dueDate = null as Date | null,
-    isArchived = false, isCompleted = false,
+    isArchived = false, completedOn = null as string | null,
   } = {},
-) => ({ id, recurringDays: days, createdAt, dueDate, isArchived, isCompleted });
+) => ({
+  id, recurringDays: days, createdAt, dueDate, isArchived,
+  isCompleted: completedOn !== null,
+  // As PATCH /tasks/:id stores it: noon UTC of the local completion day.
+  completedAt: completedOn ? new Date(`${completedOn}T12:00:00.000Z`) : null,
+});
 
 /** A task that stops repeating after `date`, inclusive. */
 const endingOn = (id: string, days: string[], date: string) =>
@@ -86,10 +91,10 @@ describe('projectRecurring', () => {
     expect(project([deleted], MON, WED, doneOn({ a: [TUE] }))).toEqual([['a', TUE, true]]);
   });
 
-  it('shows only the done days of a completed series, dropping its missed days', () => {
-    // Daily; Monday missed, Tuesday done, then the series was completed.
-    const completed = task('a', [], { isCompleted: true });
-    expect(project([completed], MON, WED, doneOn({ a: [TUE] }))).toEqual([['a', TUE, true]]);
+  it('keeps a completed series up to its completion day, missed days included, and nothing after', () => {
+    // Daily with no end date; Monday done, completed on Tuesday without ticking it.
+    const completed = task('a', [], { completedOn: TUE });
+    expect(project([completed], MON, WED, doneOn({ a: [MON] }))).toEqual([['a', MON, true], ['a', TUE, false]]);
   });
 });
 

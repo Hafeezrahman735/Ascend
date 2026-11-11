@@ -6,7 +6,7 @@ import { handleAuthError } from '../../lib/errors';
 import { resolveLocalDate } from '../../lib/localDate';
 import { isScheduledOn, nextOccurrence } from '../../lib/recurrence';
 import { syncGoalCompletion, userOwnsGoal } from '../../lib/goalProgress';
-import { isSeriesFinished, loadRecurringState, occurrenceRow, repeatsUntil, withRecurringStats } from '../../lib/recurringStats';
+import { loadRecurringState, occurrenceRow, repeatsUntil, seriesCompletedAt, withRecurringStats } from '../../lib/recurringStats';
 import { computeTaskAnalytics, safeTimeZone } from '../../lib/taskAnalytics';
 import { awardXp } from '../../lib/gamification';
 import { taskCompletionXP } from '../../lib/xp';
@@ -301,27 +301,21 @@ export function setupTaskRoutes(router: Router): void {
       // A recurring task is done per DAY, in its completion log, through
       // PUT/DELETE /tasks/:id/completions/:date, which pays XP exactly once.
       // Its own isCompleted means the whole SERIES was completed
-      // (docs/designs/tasks-recurring-blocks-sessions.md): allowed only once no
-      // scheduled day is left, paying nothing (each day was already paid), and
-      // undone by sending false. Re-sending the unchanged value, as an edit
-      // form does, is harmless.
+      // (docs/designs/tasks-recurring-blocks-sessions.md): it stops repeating
+      // after the day it was completed, even with no end date or an end still
+      // ahead. Past days, done and missed, stay. It pays nothing (each day was
+      // paid when ticked) and is undone by sending false. Re-sending the
+      // unchanged value, as an edit form does, is harmless.
       const isRecurring = data.isRecurring ?? existing.isRecurring;
-      const seriesCompletion = isRecurring
-        && data.isCompleted !== undefined && data.isCompleted !== existing.isCompleted;
-      if (seriesCompletion) {
-        if (data.isRecurring !== undefined && data.isRecurring !== existing.isRecurring) {
-          res.status(400).json({ success: false, error: 'Change the task kind and its completion separately' });
-          return;
-        }
-        const rule = {
-          recurringDays: data.recurringDays ?? existing.recurringDays,
-          dueDate: data.dueDate !== undefined ? (data.dueDate ? new Date(data.dueDate) : null) : existing.dueDate,
-        };
-        if (data.isCompleted && !isSeriesFinished(rule, requestToday(req, 'PATCH /tasks/:id'))) {
-          res.status(400).json({ success: false, error: 'End the series first' });
-          return;
-        }
+      const completionChanges = data.isCompleted !== undefined && data.isCompleted !== existing.isCompleted;
+      const kindChanges = data.isRecurring !== undefined && data.isRecurring !== existing.isRecurring;
+      // Either order would be ambiguous (a series completion paying nothing, or
+      // a one-off completion paying XP), so the two go in separate requests.
+      if (completionChanges && kindChanges) {
+        res.status(400).json({ success: false, error: 'Change the task kind and its completion separately' });
+        return;
       }
+      const seriesCompletion = isRecurring && completionChanges;
 
       // A task may only be attached to a goal the caller owns. Without this a
       // user could point their task at someone else's goal id and pollute that
@@ -386,9 +380,12 @@ export function setupTaskRoutes(router: Router): void {
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.isCompleted !== undefined) updateData.isCompleted = data.isCompleted;
       if (data.completedAt !== undefined) updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
-      // A series completion is stamped here when the app sends no time, so the
-      // Completed list can order it with everything else.
-      if (seriesCompletion && data.completedAt === undefined) updateData.completedAt = data.isCompleted ? new Date() : null;
+      // A series completion is stamped with the user's local day (see
+      // seriesCompletedAt): every later day of the series is then off the
+      // calendar and out of the missed-day count.
+      if (seriesCompletion) {
+        updateData.completedAt = data.isCompleted ? seriesCompletedAt(requestToday(req, 'PATCH /tasks/:id')) : null;
+      }
       if (data.taskGoalId  !== undefined) updateData.taskGoalId  = data.taskGoalId ?? null;
       if (data.order       !== undefined) updateData.order       = data.order ?? null;
       if (data.isRecurring   !== undefined) updateData.isRecurring   = data.isRecurring;

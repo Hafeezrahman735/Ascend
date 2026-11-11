@@ -130,6 +130,23 @@ describe('recurringStats: missed days (docs/designs/tasks-recurring-blocks-sessi
   });
 });
 
+describe('recurringStats: a completed series stops on its completion day', () => {
+  // Stored as PATCH /tasks/:id stores it: noon UTC of the local completion day.
+  const completedOn = (offset: number) => ({ isCompleted: true, completedAt: new Date(`${day(offset)}T12:00:00.000Z`) });
+
+  it('stops counting days after completion, even with no end date', () => {
+    // Daily, no end; Mon and Tue done, completed on Wednesday; today is next Monday.
+    const stats = recurringStats({ ...rule(), ...completedOn(2) }, done(0, 1), day(7));
+    // Mon-Wed scheduled; Wednesday counts (not ticked), nothing after it.
+    expect(stats).toMatchObject({ scheduledDays: 3, doneOnSchedule: 2, missedDays: 1 });
+  });
+
+  it('keeps the earlier end date when the series ended before it was completed', () => {
+    const stats = recurringStats({ ...rule([], day(1)), ...completedOn(5) }, done(0, 1), day(7));
+    expect(stats).toMatchObject({ scheduledDays: 2, missedDays: 0 });
+  });
+});
+
 describe('isSeriesFinished', () => {
   it('is finished once the end date has passed', () => {
     expect(isSeriesFinished(rule([], day(3)), day(3))).toBe(false);
